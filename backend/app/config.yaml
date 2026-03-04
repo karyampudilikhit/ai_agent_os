@@ -1,0 +1,82 @@
+# backend/app/config.yaml
+system:
+  name: "AI Workforce OS"
+  version: "1.0.0"
+  environment: "development"
+
+limits:
+  max_total_agents: 50
+  max_adaptive_cycles: 2
+  max_agents_per_cycle: 3
+  max_spawn_rate_per_minute: 5
+  max_total_cost: 100.0
+  max_refinement_depth: 3
+  min_confidence_threshold: 0.6
+  min_completeness_threshold: 0.7
+  max_error_rate: 0.2
+  max_dependency_depth: 10
+
+models:
+  default_model: "gpt-4o-mini"
+  high_complexity_model: "gpt-4o"
+  cost_optimized_model: "gpt-3.5-turbo"
+  providers:
+    openai:
+      enabled: true
+      api_base: "https://api.openai.com/v1"
+    anthropic:
+      enabled: true
+      api_base: "https://api.anthropic.com"
+    gemini:
+      enabled: false
+      api_base: "https://generativelanguage.googleapis.com"
+
+routing:
+  high_complexity_threshold: 0.7
+  cost_optimization_enabled: true
+  fallback_model: "gpt-4o-mini"
+
+traits:
+  default_values:
+    exploration_bias: 0.5
+    risk_sensitivity: "neutral"
+    refinement_depth: 2
+    validation_intensity: "medium"
+    confidence_threshold: 0.8
+  limits:
+    max_refinement_depth: 3
+    min_confidence_threshold: 0.6
+    max_exploration_bias: 1.0
+    min_exploration_bias: 0.0
+
+memory:
+  mistake_repository:
+    enabled: true
+    retention_days: 30
+    max_patterns: 1000
+  embedding_store:
+    enabled: false
+    provider: "pinecone"
+
+safety:
+  recursion_protection: true
+  constraint_enforcement: true
+  input_validation: true
+  output_validation: true
+
+logging:
+  level: "INFO"
+  audit_trail: true
+  performance_monitoring: true
+
+api:
+  rate_limit:
+    requests_per_minute: 60
+    burst_limit: 10
+  timeout_seconds: 300
+  max_payload_size_mb: 10
+
+tools:
+  max_concurrent_tools: 5
+  timeout_seconds: 120
+  budget_limit: 50.0
