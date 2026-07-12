@@ -111,13 +111,15 @@ class ExecutionEngine:
                 len(layers), sum(len(l) for l in layers),
             )
 
+            full_objective = self._get(contract, "objective", "")
+
             for layer_index, layer in enumerate(layers):
                 logger.info(
                     "Running layer %d/%d (%d agents)",
                     layer_index + 1, len(layers), len(layer),
                 )
                 for agent in layer:
-                    self._run_one(agent, manager)
+                    self._run_one(agent, manager, full_objective)
 
         except DependencyError as exc:
             logger.error("Dependency plan invalid: %s", exc)
@@ -166,7 +168,7 @@ class ExecutionEngine:
                 )
         return valid
 
-    def _run_one(self, agent: Any, manager: StateManager) -> None:
+    def _run_one(self, agent: Any, manager: StateManager, full_objective: str = "") -> None:
         agent_id = self._agent_id(agent)
 
         if not self.guard.can_spawn(manager.state.context):
@@ -194,7 +196,11 @@ class ExecutionEngine:
             logger.exception("record_spawn failed; continuing")
 
         manager.mark_agent_running(agent_id)
-        result = self.executor.execute(agent)
+        # Prior completed results, in the order they finished — by the
+        # time agent N runs, manager.state.agent_results already holds
+        # every result from agents 1..N-1 (this loop is sequential).
+        prior_results = list(manager.state.agent_results.values())
+        result = self.executor.execute(agent, full_objective=full_objective, prior_results=prior_results)
         manager.mark_result(agent_id, result)
         logger.info(
             "Agent %s finished: status=%s confidence=%.2f",

@@ -61,6 +61,11 @@ class OllamaAdapter:
                 "model": self.model,
                 "prompt": prompt,
                 "stream": False,
+                # Forces valid-JSON-constrained decoding. Every caller in
+                # this codebase asks for JSON back; without this, small
+                # models like phi3 free-generate near-JSON and break
+                # unpredictably (same prompt, run twice, different result).
+                "format": kwargs.get("format", "json"),
                 "options": {
                     "temperature": temperature,
                     "num_predict": max_tokens

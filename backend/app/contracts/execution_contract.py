@@ -170,8 +170,17 @@ class ExecutionContractGenerator:
         # raises AttributeError and silently drops us to the 1-deliverable
         # default. Use the generator's schema, and only fall back on real
         # validation failures.
+        #
+        # `get_schema()` requires "objective", but contract_data here is
+        # only the LLM-extracted deliverables/constraints/etc — the LLM
+        # is never asked to echo the objective back, so this key is
+        # never present. Without injecting it, validation fails on every
+        # single run regardless of how good the extracted data is, and
+        # we silently discard it for the 1-deliverable default every
+        # time. Inject the objective we already have before validating.
+        validation_data = {**contract_data, "objective": objective}
         try:
-            validate_json_schema(contract_data, self.get_schema())
+            validate_json_schema(validation_data, self.get_schema())
         except Exception as e:
             logger.warning(f"Contract validation failed, using default structure: {e}")
             contract_data = self._create_default_contract_structure(objective)
@@ -343,18 +352,26 @@ class ExecutionContractGenerator:
             coerced = []
             for item in items:
                 if isinstance(item, str):
-                    coerced.append(item)
+                    if item.strip():
+                        coerced.append(item)
+                    # empty string — nothing meaningful, drop it
                 elif isinstance(item, dict):
+                    if not item:
+                        continue  # {} has nothing to extract — drop, don't stringify
                     for key in key_priority:
-                        if key in item and isinstance(item[key], str):
+                        if key in item and isinstance(item[key], str) and item[key].strip():
                             coerced.append(item[key])
                             break
                     else:
-                        # No known key — flatten values or dump.
+                        # No known key — flatten non-empty values.
                         vals = [str(v) for v in item.values() if v]
-                        coerced.append(" — ".join(vals) if vals else str(item))
+                        if vals:
+                            coerced.append(" — ".join(vals))
+                        # else: dict had only falsy values — nothing usable, drop it
                 else:
-                    coerced.append(str(item))
+                    text = str(item).strip()
+                    if text and text not in ("{}", "[]", "None", "null"):
+                        coerced.append(text)
             data[field] = coerced
 
         return data

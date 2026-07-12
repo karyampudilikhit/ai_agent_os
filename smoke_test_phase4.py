@@ -43,6 +43,9 @@ def main() -> int:
         model=args.model,
         use_mock=not args.real,
         verbose=False,
+        # Smoke test must stay non-interactive even with --real — never
+        # block on stdin waiting for clarification answers.
+        skip_clarify=True,
     )
 
     _print_section("Contract & execution summary")

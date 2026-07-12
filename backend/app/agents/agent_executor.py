@@ -82,8 +82,25 @@ class AgentExecutor:
         self.max_retries = max_retries
         self.timeout_seconds = timeout_seconds
 
-    def execute(self, agent: Any) -> AgentResult:
-        """Run one agent, return an AgentResult. Never raises."""
+    def execute(
+        self,
+        agent: Any,
+        full_objective: Optional[str] = None,
+        prior_results: Optional[List[Any]] = None,
+    ) -> AgentResult:
+        """Run one agent, return an AgentResult. Never raises.
+
+        full_objective: the whole contract's original objective, not
+        just this agent's narrow deliverable slice — without it, an
+        agent working on "implement OAuth2" has no idea it's for a
+        50-person company on a small budget, and defaults to generic
+        enterprise patterns.
+
+        prior_results: completed AgentResults from earlier in this
+        same run. Without these, every agent works in total isolation
+        and nothing stops two agents from independently picking AWS
+        and Azure for the same system.
+        """
         agent_id = self._get(agent, "id", "<unknown>")
         agent_name = self._get(agent, "name", "<unnamed>")
 
@@ -94,7 +111,7 @@ class AgentExecutor:
             started_at=datetime.utcnow(),
         )
 
-        prompt = self._build_prompt(agent)
+        prompt = self._build_prompt(agent, full_objective, prior_results)
         temperature, max_tokens = self._llm_params(agent)
 
         last_error: Optional[str] = None
@@ -166,7 +183,12 @@ class AgentExecutor:
     # Prompt construction
     # ------------------------------------------------------------------
 
-    def _build_prompt(self, agent: Any) -> str:
+    def _build_prompt(
+        self,
+        agent: Any,
+        full_objective: Optional[str] = None,
+        prior_results: Optional[List[Any]] = None,
+    ) -> str:
         role = self._get(agent, "role", "Specialist")
         name = self._get(agent, "name", "Agent")
         objective = self._get(agent, "objective", "")
@@ -179,22 +201,73 @@ class AgentExecutor:
 
         expected_json = json.dumps(expected_output, indent=2)
 
-        return f"""You are {name}, a {role} inside an autonomous agent workforce.
+        project_block = ""
+        if full_objective and full_objective.strip() and full_objective.strip() != objective.strip():
+            project_block = f"""
+The overall project this is part of:
+{full_objective.strip()}
 
-Your cognitive traits for this task: {traits_summary}.
+Stay consistent with the scale, budget, and constraints implied above
+— do not assume a bigger or more complex deployment than what was
+actually asked for.
+"""
 
-Your objective:
+        context_block = self._render_prior_context(prior_results)
+
+        return f"""You are {name}, a {role} inside a team of specialists working on one shared project.
+{project_block}
+Your specific piece of it:
 {objective}
+{context_block}
+Your cognitive traits for this task: {traits_summary}.
 
 You MUST return a single JSON object matching this expected shape.
 The keys must be present; replace each value with your actual answer,
 keeping values grounded and concrete. If a field does not apply, return
-an empty string or empty list — never null.
+an empty string or empty list — never null. Do not invent test results,
+metrics, or sign-offs that didn't actually happen — describe the design
+and approach, not fabricated proof it was already validated.
 
 Expected output shape:
 {expected_json}
 
 Respond with JSON only. No markdown, no prose, no code fences.
+"""
+
+    # Cap how much prior context we inject: with runs that spawn 10+
+    # agents, including every predecessor in full would make the last
+    # agent's prompt enormous. Most-recent-N is a reasonable proxy for
+    # "what's most likely to conflict with what I'm about to decide."
+    _MAX_PRIOR_AGENTS_SHOWN = 4
+    _MAX_PRIOR_EXCERPT_CHARS = 350
+
+    def _render_prior_context(self, prior_results: Optional[List[Any]]) -> str:
+        if not prior_results:
+            return ""
+
+        completed = [
+            r for r in prior_results
+            if self._get(r, "status", None) == "completed" and self._get(r, "output", None)
+        ]
+        if not completed:
+            return ""
+
+        recent = completed[-self._MAX_PRIOR_AGENTS_SHOWN:]
+        entries = []
+        for r in recent:
+            name = self._get(r, "agent_name", "A teammate")
+            output = self._get(r, "output", {}) or {}
+            excerpt = json.dumps(output)[: self._MAX_PRIOR_EXCERPT_CHARS]
+            entries.append(f"- {name} already produced: {excerpt}")
+
+        joined = "\n".join(entries)
+        return f"""
+Other specialists on this same project have already produced:
+{joined}
+
+Stay consistent with their choices — same technology stack, same cloud
+provider, same scale of company, same terminology. Do not contradict
+what's already been decided above.
 """
 
     def _llm_params(self, agent: Any) -> tuple[float, int]:

@@ -20,6 +20,7 @@ import logging
 import sys
 from typing import Any, Dict, Optional
 
+from backend.app.contracts.clarification import ClarificationEngine
 from backend.app.models.provider_adapters.ollama_adapter import OllamaAdapter
 from backend.app.orchestrator.pipeline_controller import Pipeline
 
@@ -117,16 +118,54 @@ def _load_config() -> Dict[str, Any]:
     return data
 
 
+def _clarify_objective(
+    objective: str,
+    adapter: Any,
+    config: Dict[str, Any],
+    skip_clarify: bool,
+) -> str:
+    """Ask grounding questions before contract generation, if needed.
+
+    Skips entirely for MockAdapter (nothing to ask a template engine)
+    and when the caller opts out via --skip-clarify / skip_clarify=True.
+    """
+    if skip_clarify or isinstance(adapter, MockAdapter):
+        return objective
+
+    clarification_cfg = config.get("clarification", {})
+    if not clarification_cfg.get("enabled", True):
+        return objective
+
+    engine = ClarificationEngine(clarification_cfg)
+    questions = engine.assess(objective, adapter)
+    if not questions:
+        return objective
+
+    print("\nA few quick questions before I start building:\n")
+    qa_pairs = []
+    for q in questions:
+        answer = input(f"[{q.category}] {q.question}\n> ").strip()
+        qa_pairs.append((q, answer or "(no preference)"))
+
+    brief = engine.build_brief(objective, qa_pairs)
+    enriched = engine.enrich_objective(brief)
+    print("\nGot it — building based on your answers.\n")
+    return enriched
+
+
 def run(
     objective: str,
     model: str = "llama3",
     use_mock: bool = False,
     verbose: bool = False,
+    skip_clarify: bool = False,
 ) -> Dict[str, Any]:
     _configure_logging(verbose)
 
     adapter = _build_adapter(model=model, use_mock=use_mock)
     config = _load_config()
+
+    objective = _clarify_objective(objective, adapter, config, skip_clarify)
 
     pipeline = Pipeline(model_adapter=adapter, config=config)
     manager = pipeline.run_objective(objective)
@@ -150,6 +189,11 @@ def main() -> int:
         action="store_true",
         help="Force MockAdapter instead of Ollama (offline mode).",
     )
+    parser.add_argument(
+        "--skip-clarify",
+        action="store_true",
+        help="Skip the pre-contract clarification questions (for scripted/automated runs).",
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -159,6 +203,7 @@ def main() -> int:
         model=args.model,
         use_mock=args.mock,
         verbose=args.verbose,
+        skip_clarify=args.skip_clarify,
     )
     print(json.dumps(snapshot, indent=2, default=str))
     return 0 if snapshot.get("status") in {"completed", "partial"} else 1

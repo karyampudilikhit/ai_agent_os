@@ -68,6 +68,12 @@ class MemoryConfig(BaseModel):
     mistake_repository: MistakeRepositoryConfig = MistakeRepositoryConfig()
     embedding_store: EmbeddingStoreConfig = EmbeddingStoreConfig()
 
+class ClarificationConfig(BaseModel):
+    """Configuration for the pre-contract clarification stage"""
+    enabled: bool = True
+    max_questions: int = Field(default=5, ge=0, le=10)
+    min_objective_words: int = Field(default=25, ge=1)
+
 class SafetyConfig(BaseModel):
     """Configuration for safety systems"""
     recursion_protection: bool = True
@@ -136,6 +142,7 @@ class Config(BaseSettings):
     """Main configuration model for AI_AGENT_OS"""
     system: SystemConfig = SystemConfig()
     limits: LimitsConfig = LimitsConfig()
+    clarification: ClarificationConfig = ClarificationConfig()
     models: ModelsConfig = ModelsConfig()
     routing: RoutingConfig = RoutingConfig()
     traits: TraitsConfig = TraitsConfig()

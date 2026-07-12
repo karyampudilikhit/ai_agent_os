@@ -49,6 +49,15 @@ class ExecutionState:
     # Free-form context for guards & later phases (e.g. RecursionGuard reads it).
     context: Dict[str, Any] = field(default_factory=dict)
 
+    # One coherent final document combining every completed agent's
+    # output. None until Pipeline runs the synthesis stage; falls back
+    # to None (never a crash) if synthesis itself fails.
+    synthesized_output: Optional[str] = None
+
+    # Critique/refine stage output (R&D, see critique/critique_agent.py).
+    critique: Optional[Dict[str, Any]] = None
+    was_refined: bool = False
+
 
 class StateManager:
     """Owns an ExecutionState and keeps its indices consistent."""
@@ -133,6 +142,15 @@ class StateManager:
     def get_result(self, agent_id: str) -> Optional[Any]:
         return self.state.agent_results.get(agent_id)
 
+    def set_synthesized_output(self, text: Optional[str]) -> None:
+        self.state.synthesized_output = text
+
+    def set_critique(self, critique: Optional[Dict[str, Any]]) -> None:
+        self.state.critique = critique
+
+    def set_was_refined(self, refined: bool) -> None:
+        self.state.was_refined = refined
+
     def snapshot(self) -> Dict[str, Any]:
         """Return a JSON-serializable summary of the current state."""
         return {
@@ -158,6 +176,9 @@ class StateManager:
             "finished_at": (
                 self.state.finished_at.isoformat() if self.state.finished_at else None
             ),
+            "synthesized_output": self.state.synthesized_output,
+            "critique": self.state.critique,
+            "was_refined": self.state.was_refined,
             "results": [
                 self._result_to_dict(agent_id, res)
                 for agent_id, res in self.state.agent_results.items()

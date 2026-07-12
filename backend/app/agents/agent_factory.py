@@ -90,10 +90,25 @@ class AgentFactory:
             else:
                 raise AgentFactoryError("Invalid contract format")
             
-            # Validate we have deliverables
-            deliverables = contract_data.get("deliverables", [])
+            # Validate we have deliverables. Defense-in-depth: even though
+            # the contract generator's normalizer now drops empty/garbage
+            # items, filter here too — this factory has no way to know
+            # what upstream produced the contract (mock data, a future
+            # provider adapter, hand-built dicts in tests), and a
+            # deliverable like "{}" or "" previously became a real agent
+            # that hallucinated unrelated output ("Analysis of Local
+            # Economies" for a student task app — nothing to do with the
+            # deliverable). Never spawn an agent for nothing.
+            raw_deliverables = contract_data.get("deliverables", [])
+            deliverables = [
+                d for d in raw_deliverables
+                if isinstance(d, str) and d.strip() and d.strip() not in ("{}", "[]", "None", "null")
+            ]
+            skipped = len(raw_deliverables) - len(deliverables)
+            if skipped:
+                logger.warning(f"Dropped {skipped} empty/garbage deliverable(s) before agent creation")
             if not deliverables:
-                raise AgentFactoryError("No deliverables found in contract")
+                raise AgentFactoryError("No usable deliverables found in contract")
             
             # Check agent limit
             if len(deliverables) > self.config["max_agents"]:
