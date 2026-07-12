@@ -1,0 +1,5 @@
+pydantic>=2.5
+pydantic-settings>=2.1
+httpx>=0.25
+PyYAML>=6.0
+jsonschema>=4.20

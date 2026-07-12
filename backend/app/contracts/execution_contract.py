@@ -165,9 +165,13 @@ class ExecutionContractGenerator:
             contract_data = self._mock_initial_contract(objective)
             logger.warning("Using mock contract generation - no model adapter provided")
         
-        # Validate and create contract
+        # Validate and create contract. `get_schema` is defined on the
+        # generator (not the pydantic model) — calling it on the model
+        # raises AttributeError and silently drops us to the 1-deliverable
+        # default. Use the generator's schema, and only fall back on real
+        # validation failures.
         try:
-            validate_json_schema(contract_data, ExecutionContract.get_schema())
+            validate_json_schema(contract_data, self.get_schema())
         except Exception as e:
             logger.warning(f"Contract validation failed, using default structure: {e}")
             contract_data = self._create_default_contract_structure(objective)
@@ -278,10 +282,10 @@ class ExecutionContractGenerator:
     def _extract_contract_from_response(self, response: str) -> Dict[str, Any]:
         """
         Extract contract data from model response
-        
+
         Args:
             response: Raw model response
-            
+
         Returns:
             Dict: Extracted contract data
         """
@@ -289,11 +293,11 @@ class ExecutionContractGenerator:
         if JSON_UTILS_AVAILABLE:
             extracted_json = extract_json_from_response(response)
             if extracted_json:
-                return extracted_json
-        
+                return self._normalize_contract_data(extracted_json)
+
         # Fallback to parsing entire response
         try:
-            return parse_json_safely(response)
+            return self._normalize_contract_data(parse_json_safely(response))
         except Exception as e:
             logger.warning(f"Failed to parse JSON from response: {e}")
             # Return basic structure from response text
@@ -305,6 +309,55 @@ class ExecutionContractGenerator:
                 "risk_factors": [],
                 "execution_plan": []
             }
+
+    def _normalize_contract_data(self, data: Any) -> Dict[str, Any]:
+        """Coerce loose LLM output into a strict Contract-shaped dict.
+
+        Small models often return list items as dicts like
+        ``{"task": "Do X"}`` or ``{"step": "Do X"}`` instead of plain
+        strings. Pydantic then rejects the whole contract with a
+        validation error and we silently fall back to the 1-item
+        default. This normalizer walks each list and coerces items
+        back into strings using the value of a known key, or a JSON
+        dump as a last resort.
+        """
+        if not isinstance(data, dict):
+            # LLM returned a list or scalar — downstream expects a dict,
+            # so surface an empty dict rather than propagating the wrong type.
+            return {}
+
+        list_fields = (
+            "deliverables",
+            "constraints",
+            "success_criteria",
+            "assumptions",
+            "risk_factors",
+            "execution_plan",
+        )
+        key_priority = ("task", "step", "item", "description", "text", "name", "goal")
+
+        for field in list_fields:
+            items = data.get(field)
+            if not isinstance(items, list):
+                continue
+            coerced = []
+            for item in items:
+                if isinstance(item, str):
+                    coerced.append(item)
+                elif isinstance(item, dict):
+                    for key in key_priority:
+                        if key in item and isinstance(item[key], str):
+                            coerced.append(item[key])
+                            break
+                    else:
+                        # No known key — flatten values or dump.
+                        vals = [str(v) for v in item.values() if v]
+                        coerced.append(" — ".join(vals) if vals else str(item))
+                else:
+                    coerced.append(str(item))
+            data[field] = coerced
+
+        return data
     
     def _create_initial_generation_prompt(self, objective: str) -> str:
         """Create prompt for initial contract generation"""
