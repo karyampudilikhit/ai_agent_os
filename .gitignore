@@ -16,6 +16,15 @@ env/
 phase4_run.json
 *.log
 
+# Benchmark scratch (raw judge splits, crash dumps, one-off probes —
+# regenerable from the rerun_*.py / build_blind_report_*.py scripts)
+judge_tmp/
+judge_tmp2/
+judge_tmp3/
+critique_raw_debug*.txt
+gptoss_test.txt
+context_share_summary.txt
+
 # Environment
 .env
 .env.local
