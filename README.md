@@ -69,10 +69,10 @@ diff.
 | 4 — Orchestration engine | ✅ committed, then extended uncommitted | the reusable engine every future AI employee calls |
 | 5 — Safety & cost guardrails | ❌ not built | `constraints_enforcer.py`, `input_output_validator.py` are empty stubs — more urgent now that employees will eventually hold real tool permissions |
 | 6 — Adaptive supervision & critique loop | 🟡 in progress, being validated | see "Benchmark" below — the fabrication-scrubbing bug is fixed and independently confirmed; the pairwise judge itself is not reliable yet |
-| 7 — Employee abstraction (was "Memory & learning") | ❌ not started | redesigned: per-employee/per-startup persistent memory, not a global mistake repository |
+| 7 — Employee abstraction (was "Memory & learning") | 🟡 v0 built | `backend/app/employees/employee.py` + `memory_store.py` — persistent role, JSON-file memory, task inbox. Memory is v0 (last-N entries, no embeddings yet) |
 | 8 — MCP connector layer (was "Tools, multi-provider, workflows") | ❌ not started | redesigned: adopt MCP instead of hand-rolled tool integrations |
 | 9 — Manager terminal (was "API, frontend & ship") | ❌ not started | redesigned: roster/dashboard for directing employees, not a task-submission form |
-| 10 — First flagship employee: Idea Validation | ❌ not started | raw idea in, market/competitor research + a clear validation verdict out. The narrowest end-to-end useful slice — build and prove this before Builder/Marketing/Ops employees |
+| 10 — First flagship employee: Idea Validation | 🟡 v0 built and verified | `idea_validation_employee.py` — raw idea in, market/competitor research + feasibility + a direct go/no-go verdict out. Verified end-to-end against real Ollama, memory confirmed working (see below) |
 
 ### Known gap: Phase 6 work landed before Phase 5
 
@@ -85,6 +85,51 @@ semantics still marked "Phase 5" in a comment there). This hasn't bitten
 us because Ollama is free — a spiral costs time/CPU, not money — but it's
 still open, and it matters a lot more once employees hold real tool
 permissions (Phase 8) and paid providers (OpenAI/Anthropic) enter the mix.
+
+## Employee abstraction: first working proof (Phase 7 + 10 v0)
+
+Built and verified end-to-end against real Ollama (`gpt-oss:120b-cloud`),
+not just structurally:
+
+- `backend/app/employees/employee.py` — `Employee` base class: persistent
+  role, memory, task inbox. Wraps `Pipeline` rather than replacing it —
+  `run_task()` builds an objective (folding in relevant memory), runs it
+  through the existing engine, records the result. Deliberately
+  role-generic (see "Audience rollout" above) — nothing employee-specific
+  lives here.
+- `backend/app/employees/memory_store.py` — v0 memory: one JSON file per
+  employee, last-N-entries recall folded into the next objective. No
+  embeddings yet (that's the full Phase 7 design once an employee's
+  history outgrows what fits in a prompt).
+- `backend/app/employees/idea_validation_employee.py` — the first
+  flagship employee (Phase 10): raw idea in, market research + competitor
+  analysis + feasibility + a direct go/no-go verdict out. Explicitly
+  instructed not to fabricate statistics — the exact failure mode found
+  and fixed in the benchmark work above.
+- `run_idea_validation_employee.py` — demo: runs the *same* employee_id
+  through two tasks (an idea, then a repositioning of it) to prove memory
+  actually carries over, which is the whole point of this abstraction
+  over a stateless `Pipeline.run_objective()` call.
+
+**Result:** both tasks completed. Task 1 (original idea) — critique
+caught 5 fabricated claims pre-refine, 0 post-refine, completeness 0.94.
+Task 2 (repositioned idea) — 5 fabricated claims + over-engineering
+flagged, both cleared post-refine, completeness 0.92. **Memory
+confirmed working**: Task 2's verdict opened with *"This concept is a
+direct revision of the earlier 'curated office-snack box for
+small-business owners'..."* — unprompted, pulled from memory, not
+restated in the task text. Ended with a direct "Proceed, but..."
+verdict, not a hedge.
+
+Employee memory (`backend/app/employees/data/`) is gitignored — real
+founders' idea/task history is personal and business data, not source.
+
+**Not yet built:** `spawn_child_employee` (employees creating persistent
+mini-employees, not just ephemeral task-agents) — deliberately deferred.
+Discussed and designed conceptually, but recursive employee-spawning is
+exactly the spiral risk Phase 5 exists to prevent, one layer deeper than
+agent-spawning. Don't build until Phase 5 guardrails aggregate cost/depth
+across a whole employee tree, not per-node.
 
 ## What's beyond Phase 4 in the current code
 
@@ -181,8 +226,10 @@ backend/app/
   critique/          critique_agent.py ✅  confidence_evaluator.py ❌
   safety/            recursion_guard.py ✅ (174 lines, ad hoc)  constraints_enforcer.py ❌
                       input_output_validator.py ❌ (Phase 5)
-  memory/            all stubs ❌ (becomes the Employee abstraction's per-employee
-                      memory, Phase 7 — not a global mistake repository anymore)
+  memory/            all stubs ❌ (old Phase 7 location — real memory now
+                      lives in employees/memory_store.py instead)
+  employees/         employee.py ✅  memory_store.py ✅  idea_validation_employee.py ✅
+                      (Phase 7 + 10 v0 — see "Employee abstraction" above)
   tools/ workflows/  all stubs ❌ (becomes the MCP connector layer, Phase 8)
   api/               all stubs ❌ (becomes the manager terminal, Phase 9)
 frontend/            all 27 files stubs ❌ (manager terminal, Phase 9)
@@ -214,10 +261,9 @@ gitignored — regenerable, no lasting value.
    whether multi-agent reasons better than one call
 
 **Vision AI layer (the pivot — new work, not in the original plan):**
-7. Employee abstraction — a persistent role (e.g. "Growth Marketing
-   Employee") with scoped memory of *this specific startup* (the idea,
-   decisions already made, brand voice) and a task inbox instead of a
-   one-shot contract
+7. Employee abstraction — 🟡 **v0 built and verified**, see above. Still
+   needed: richer memory (embeddings, not last-N), more employee types
+   beyond idea validation.
 8. MCP connector layer — employees reach real tools (Slack, GitHub,
    Stripe, browsers, databases) through the Model Context Protocol instead
    of hand-rolled integrations
@@ -227,9 +273,9 @@ gitignored — regenerable, no lasting value.
 
 **First flagship employee (prove one narrow slice before building the
 whole roster):**
-10. Idea-Validation Employee — raw idea in, market/competitor research +
-    a clear-eyed validation verdict out. Standalone-useful on its own,
-    and the template for how every later employee gets built.
+10. Idea-Validation Employee — 🟡 **v0 built and verified end-to-end**,
+    see above. Not yet built: `spawn_child_employee` (mini-agents),
+    deliberately deferred until Phase 5 is real.
 
 ## Picking this back up
 
@@ -241,10 +287,12 @@ whole roster):**
    Next step: an absolute-scoring judge, not pairwise.
 3. Decide Phase 5 (safety guardrails) timing — still just a stopgap. Gets
    materially more important once Phase 8 (MCP connectors) gives employees
-   real tool access, and once paid providers enter the mix.
-4. The Employee abstraction (Phase 7 redesign) is the next real design
-   work — nothing today models a persistent role with memory and an
-   inbox, only one-shot task decomposition.
+   real tool access, once employees can spawn mini-employees, and once
+   paid providers enter the mix.
+4. The Employee abstraction has a working v0 (Idea-Validation Employee) —
+   next real work is either richer memory (embeddings), a second employee
+   type to prove the abstraction generalizes, or MCP connectors so
+   employees can act on real tools instead of only generating text.
 5. `git status` — there is usually uncommitted work in progress; check
    before assuming the phase table above is fully reflected in the working
    tree.
