@@ -25,6 +25,10 @@ critique_raw_debug*.txt
 gptoss_test.txt
 context_share_summary.txt
 
+# Employee runtime memory (real founders' idea/task history — personal
+# and business data, not source; regenerated fresh per employee_id)
+backend/app/employees/data/
+
 # Environment
 .env
 .env.local
