@@ -125,36 +125,67 @@ class Pipeline:
             logger.warning("Synthesis stage failed, continuing without it: %s", exc)
 
     def _critique_and_refine(self, objective: str, manager: StateManager) -> None:
-        """Review the synthesized draft; refine once if it's incomplete,
-        over-engineered for the stated scale, or contains fabricated
-        completed-test claims. Never raises — any failure here just
-        leaves the pre-critique synthesized output in place."""
+        """Review the synthesized draft; refine (up to max_refinement_depth
+        times) if it's incomplete, over-engineered for the stated scale, or
+        contains fabricated completed-test claims. Never raises — any
+        failure here just leaves the last good synthesized output in place.
+
+        Re-critiques after every refine pass, not just once before the
+        first one. The previous version stored the PRE-refine critique and
+        never updated it — so completeness_score/fabricated_claims kept
+        describing a draft that no longer shipped. That let a refined
+        output still containing fabricated claims get reported (and
+        benchmarked) as a clean 0.9+ score, because nothing ever re-checked
+        whether the rewrite actually fixed what it was told to fix.
+        """
         draft = manager.state.synthesized_output
         if not draft:
             return
+
+        max_depth = self.config.get("limits", {}).get("max_refinement_depth", 2)
+        attempts = 0
         try:
             critique = self.critique_engine.critique(objective, draft)
             if not critique:
                 return
             manager.set_critique(critique)
 
-            if not self.critique_engine.needs_refinement(
+            while attempts < max_depth and self.critique_engine.needs_refinement(
                 critique, self.min_completeness_threshold
             ):
-                logger.info("Critique passed all checks, no refinement needed")
-                return
-
-            logger.info(
-                "Refining: completeness=%.2f over_engineered=%s fabricated_claims=%d",
-                critique.get("completeness_score", 0.0),
-                critique.get("over_engineered", False),
-                len(critique.get("fabricated_claims") or []),
-            )
-            refined = self.critique_engine.refine(objective, draft, critique)
-            if refined:
-                manager.set_synthesized_output(refined)
+                attempts += 1
+                logger.info(
+                    "Refining (attempt %d/%d): completeness=%.2f over_engineered=%s fabricated_claims=%d",
+                    attempts, max_depth,
+                    critique.get("completeness_score", 0.0),
+                    critique.get("over_engineered", False),
+                    len(critique.get("fabricated_claims") or []),
+                )
+                refined = self.critique_engine.refine(objective, draft, critique)
+                if not refined:
+                    break
+                draft = refined
+                manager.set_synthesized_output(draft)
                 manager.set_was_refined(True)
-                logger.info("Refinement produced %d chars", len(refined))
+                logger.info("Refinement produced %d chars", len(draft))
+
+                # Verify against the text that will actually ship, not the
+                # draft that prompted this refinement pass.
+                new_critique = self.critique_engine.critique(objective, draft)
+                if not new_critique:
+                    break
+                critique = new_critique
+                manager.set_critique(critique)
+
+            if attempts == 0:
+                logger.info("Critique passed all checks, no refinement needed")
+            else:
+                logger.info(
+                    "Post-refinement (after %d attempt(s)): completeness=%.2f fabricated_claims=%d",
+                    attempts,
+                    critique.get("completeness_score", 0.0),
+                    len(critique.get("fabricated_claims") or []),
+                )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Critique/refine stage failed, continuing without it: %s", exc)
 
