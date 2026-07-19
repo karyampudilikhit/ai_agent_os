@@ -3,3 +3,13 @@ pydantic-settings>=2.1
 httpx>=0.25
 PyYAML>=6.0
 jsonschema>=4.20
+# fastapi >=0.120 required after mcp SDK pulled in newer starlette
+# (older fastapi passes `on_startup` to Router which starlette removed)
+fastapi>=0.120
+uvicorn>=0.34
+# For .env loading (Tavily key, Notion token, other connector creds)
+python-dotenv>=1.0
+# Web fetch connector — read-only page extraction
+beautifulsoup4>=4.12
+# MCP client layer (Days 3-4 of connectors sequence)
+mcp>=1.0

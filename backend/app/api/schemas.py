@@ -1,0 +1,172 @@
+"""Request/response models for the thin API slice (README Phase 9).
+
+Deliberately minimal — one endpoint (validate an idea) to get the
+Idea-Validation Employee in front of someone who isn't running Python
+scripts, not the full manager terminal. Expand as more employee types
+and phases land.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field
+
+
+class ValidateIdeaRequest(BaseModel):
+    idea: str = Field(..., min_length=1, description="The founder's raw idea, in their own words.")
+    employee_id: Optional[str] = Field(
+        None,
+        description="Reuse a specific founder's memory across follow-up ideas. "
+        "Omit for a fresh one-off validation (default — different people's "
+        "ideas should never share context).",
+    )
+
+
+class ValidateIdeaResponse(BaseModel):
+    employee_id: str
+    verdict: str
+    completeness_score: Optional[float] = None
+    fabricated_claims: List[str] = Field(default_factory=list)
+    over_engineered: Optional[bool] = None
+    was_refined: bool = False
+
+
+class HistoryEntry(BaseModel):
+    timestamp: str
+    task: str
+    summary: str
+    completeness_score: Optional[float] = None
+
+
+class HistoryResponse(BaseModel):
+    employee_id: str
+    entries: List[HistoryEntry]
+
+
+class TeamMemberSummary(BaseModel):
+    role: str
+    completeness_score: Optional[float] = None
+    fabricated_claims: List[str] = Field(default_factory=list)
+    was_refined: Optional[bool] = None
+
+
+class OrchestrateRequest(BaseModel):
+    prompt: str = Field(..., min_length=1, description="The user's raw request in their own words.")
+    session_id: Optional[str] = Field(
+        None,
+        description="Reuse to make follow-up prompts share memory with the same team. "
+        "Omit for a fresh session.",
+    )
+    force_team: bool = Field(
+        False,
+        description="If True, always spawn a team of employees even for simple tasks. "
+        "Off by default — the supervisor picks the cheapest tier that fits.",
+    )
+
+
+class OrchestrateResponse(BaseModel):
+    session_id: str
+    mode: str  # "single_call" | "single_call_critique" | "team"
+    team: List[TeamMemberSummary] = Field(default_factory=list)
+    final_output: str
+
+
+# --- Playground / session UI ---
+
+class TeamMemberSpec(BaseModel):
+    role: str = Field(..., min_length=1)
+    mandate: str = Field(..., min_length=1)
+    is_supervisor: bool = False
+
+
+class SessionSummary(BaseModel):
+    session_id: str
+    member_count: int
+    created_at: Optional[str] = None
+    name: Optional[str] = None
+    purpose: Optional[str] = None
+
+
+class SessionCreateResponse(BaseModel):
+    session_id: str
+
+
+class TeamListResponse(BaseModel):
+    session_id: str
+    members: List[TeamMemberSpec] = Field(default_factory=list)
+    created_at: Optional[str] = None
+
+
+class DesignTeamRequest(BaseModel):
+    prompt: str = Field(..., min_length=1, description="What the user wants the team to help with — used to design the initial roster.")
+    replace: bool = Field(True, description="If True (default), replace any existing team; if False, append the designed team to the existing one.")
+
+
+class AddMemberRequest(BaseModel):
+    role: str = Field(..., min_length=1)
+    mandate: str = Field(..., min_length=1)
+
+
+class RunTaskRequest(BaseModel):
+    task: str = Field(..., min_length=1)
+
+
+class RunTaskResponse(BaseModel):
+    session_id: str
+    task: str
+    team: List[TeamMemberSummary] = Field(default_factory=list)
+    final_output: str
+
+
+# --- MCP connectors ---
+
+class MCPConnectionSpec(BaseModel):
+    name: str = Field(..., min_length=1, description="Short slug (letters/numbers/dashes/underscores) — used as the tool namespace, e.g. 'notion' -> tools become 'notion.search_pages'.")
+    transport: str = Field("stdio", description="'stdio' (subprocess) or 'http' (SSE endpoint). Only 'stdio' supported today.")
+    command: Optional[str] = Field(None, description="stdio only — the binary to run, e.g. 'npx'.")
+    args: List[str] = Field(default_factory=list, description="stdio only — args to the command.")
+    url: Optional[str] = Field(None, description="http only — the server URL.")
+    env: Dict[str, str] = Field(default_factory=dict, description="Extra env vars for the subprocess (API tokens etc.).")
+    enabled: bool = True
+
+
+class MCPConnectionResponse(BaseModel):
+    name: str
+    transport: str
+    command: Optional[str] = None
+    args: List[str] = Field(default_factory=list)
+    url: Optional[str] = None
+    enabled: bool = True
+    added_at: Optional[str] = None
+    # env is intentionally NOT returned (contains secrets)
+
+
+class MCPToolInfo(BaseModel):
+    qualified_name: str
+    connection: str
+    tool: str
+    description: str = ""
+
+
+class MCPListResponse(BaseModel):
+    connections: List[MCPConnectionResponse] = Field(default_factory=list)
+    tools: List[MCPToolInfo] = Field(default_factory=list)
+
+
+# --- Chat routing ---
+
+class ChatRequest(BaseModel):
+    message: str = Field(..., min_length=1)
+
+
+class ChatResponse(BaseModel):
+    session_id: str
+    intent: str  # "add_employee" | "remove_employee" | "modify_employee" | "design_team" | "clear_team" | "run_task" | "unclear"
+    reply: str   # Human-facing response to show in the chat
+    # For team-changing intents: the updated team afterwards
+    team: List[TeamMemberSpec] = Field(default_factory=list)
+    # For run_task: pass this text back to /run to actually execute (kept
+    # separate so the chat endpoint stays fast and the long run streams
+    # through the existing progress polling on /run).
+    task_to_run: Optional[str] = None
