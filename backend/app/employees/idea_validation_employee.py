@@ -15,6 +15,11 @@ from backend.app.employees.employee import Employee
 
 class IdeaValidationEmployee(Employee):
     role = "Idea Validation"
+    # The whole pitch is "doesn't fabricate evidence" — verification must
+    # never be optional here, regardless of what the generic router
+    # thinks a validation-shaped prompt's stakes are. Found the hard way:
+    # a real run got classified single_call and skipped critique entirely.
+    min_tier = "single_call_critique"
 
     def build_objective(self, task: str) -> str:
         context = self.memory.relevant_context(task)

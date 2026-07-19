@@ -30,6 +30,17 @@ class Employee:
     """Base class for a persistent, role-based AI employee."""
 
     role: str = "General Employee"
+    # Floor for the adaptive router's tier choice (see
+    # pipeline_controller.Pipeline.run_objective's min_tier). None means
+    # "trust the router fully." Subclasses whose whole value proposition
+    # depends on verification (e.g. IdeaValidationEmployee) should set
+    # this rather than risk the router silently skipping critique on a
+    # task it reads as low-stakes text.
+    min_tier: Optional[str] = None
+    # Ceiling for the router's tier choice. None = uncapped. A specialist
+    # employee (see DynamicEmployee) sets this to single_call_critique so
+    # it doesn't spawn ANOTHER team inside itself.
+    max_tier: Optional[str] = None
 
     def __init__(
         self,
@@ -57,7 +68,12 @@ class Employee:
         objective = self.build_objective(task)
         logger.info("[%s/%s] running task: %s", self.role, self.employee_id, task[:80])
 
-        manager = self.pipeline.run_objective(objective, max_refinements=max_refinements)
+        manager = self.pipeline.run_objective(
+            objective,
+            max_refinements=max_refinements,
+            min_tier=self.min_tier,
+            max_tier=self.max_tier,
+        )
         snap = manager.snapshot()
 
         result = {

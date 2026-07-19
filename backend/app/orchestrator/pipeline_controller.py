@@ -17,16 +17,24 @@ Composition:
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 from backend.app.agents.agent_factory import AgentFactory
-from backend.app.contracts.execution_contract import ExecutionContractGenerator
+from backend.app.contracts.execution_contract import ExecutionContract, ExecutionContractGenerator
+from backend.app.orchestrator.adaptive_supervisor import TIERS, AdaptiveSupervisor
 from backend.app.orchestrator.execution_engine import ExecutionEngine
 from backend.app.orchestrator.state_manager import StateManager
 from backend.app.orchestrator.synthesis import SynthesisEngine
 from backend.app.critique.critique_agent import CritiqueEngine
 
 logger = logging.getLogger(__name__)
+
+SINGLE_CALL_PROMPT = """{objective}
+
+Give a complete, thorough, well-organized answer in plain written prose
+with markdown headings. Cover everything the request asks for. Do not
+output JSON."""
 
 
 class Pipeline:
@@ -41,6 +49,7 @@ class Pipeline:
         execution_engine: Optional[ExecutionEngine] = None,
         synthesis_engine: Optional[SynthesisEngine] = None,
         critique_engine: Optional[CritiqueEngine] = None,
+        adaptive_supervisor: Optional[AdaptiveSupervisor] = None,
     ):
         if model_adapter is None:
             raise ValueError("Pipeline requires a model_adapter")
@@ -65,8 +74,14 @@ class Pipeline:
         self.critique_engine = critique_engine or CritiqueEngine(
             model_adapter=model_adapter,
         )
+        self.adaptive_supervisor = adaptive_supervisor or AdaptiveSupervisor(
+            model_adapter=model_adapter,
+        )
         self.min_completeness_threshold = self.config.get("limits", {}).get(
             "min_completeness_threshold", 0.7
+        )
+        self.single_call_max_tokens = self.config.get("limits", {}).get(
+            "single_call_max_tokens", 5000
         )
 
     # ------------------------------------------------------------------
@@ -75,12 +90,51 @@ class Pipeline:
         self,
         objective: str,
         max_refinements: Optional[int] = None,
+        tier: Optional[str] = None,
+        min_tier: Optional[str] = None,
+        max_tier: Optional[str] = None,
     ) -> StateManager:
-        """Take a natural-language objective, run the whole pipeline."""
+        """Take a natural-language objective, run the whole pipeline.
+
+        Routes through the adaptive supervisor first (unless `tier` is
+        passed explicitly, e.g. for testing/comparison) — see
+        adaptive_supervisor.py for why this exists: every objective used
+        to pay the full multi-agent cost regardless of whether
+        decomposition actually helped it.
+
+        `min_tier`: a floor the classifier's choice can't go below. The
+        router reads raw text and doesn't know a task's real stakes — a
+        specific caller (e.g. an Employee whose whole value proposition
+        is "verified, no fabricated evidence") can and should assert its
+        own minimum verification level rather than silently trusting a
+        generic classification. Found the hard way: a real
+        IdeaValidationEmployee run got classified `single_call` and
+        skipped critique entirely, on the exact task type this system
+        exists to verify.
+        """
         if not objective or not objective.strip():
             raise ValueError("objective must be non-empty")
 
         logger.info("Pipeline start: %s", objective[:80])
+
+        chosen_tier = tier or self.adaptive_supervisor.classify(objective)
+        if min_tier and TIERS.index(chosen_tier) < TIERS.index(min_tier):
+            logger.info("Routing tier %s below floor %s, bumping up", chosen_tier, min_tier)
+            chosen_tier = min_tier
+        if max_tier and TIERS.index(chosen_tier) > TIERS.index(max_tier):
+            # Ceiling — a caller that IS already a specialist (a
+            # DynamicEmployee doing its slice of a team task) shouldn't
+            # nest ANOTHER team decomposition inside itself. That's how a
+            # 3-employee run turns into 3 × 5 = 15 minutes of sub-team
+            # spawning; cap it here.
+            logger.info("Routing tier %s above ceiling %s, capping down", chosen_tier, max_tier)
+            chosen_tier = max_tier
+        logger.info("Routing tier: %s", chosen_tier)
+
+        if chosen_tier == "single_call":
+            return self._run_single_call(objective, do_critique=False)
+        if chosen_tier == "single_call_critique":
+            return self._run_single_call(objective, do_critique=True)
 
         contract = self.contract_generator.generate_contract(
             objective, max_refinements=max_refinements
@@ -98,6 +152,48 @@ class Pipeline:
         manager = self.engine.run(contract, agents)
         self._synthesize(objective, manager)
         self._critique_and_refine(objective, manager)
+        return manager
+
+    def _run_single_call(self, objective: str, do_critique: bool) -> StateManager:
+        """Tier 1/2 path: no contract refinement, no agent spawning — one
+        direct call, optionally followed by the same critique/refine loop
+        the multi-agent path uses. Still returns a StateManager so every
+        caller (Employee, CLI, benchmarks) sees the same snapshot shape
+        regardless of which tier ran.
+        """
+        contract = ExecutionContract(objective=objective, deliverables=[objective])
+        manager = StateManager(contract)
+        manager.state.started_at = datetime.utcnow()
+
+        prompt = SINGLE_CALL_PROMPT.format(objective=objective)
+        try:
+            output = self.adapter.chat_completion(
+                prompt, temperature=0.6, max_tokens=self.single_call_max_tokens, format=None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Single-call stage failed: %s", exc)
+            output = None
+
+        # mark_result() (the usual place total_tokens gets incremented) is
+        # never called on this path — no agents run. Same char/4 estimate
+        # the benchmark scripts use elsewhere, so tier comparisons aren't
+        # comparing a real number against a misleading zero. Note this was
+        # already an undercount pre-router too: synthesis/critique tokens
+        # were never tracked into total_tokens on the multi-agent path
+        # either, only per-agent execution tokens.
+        if output:
+            manager.state.total_tokens += (len(prompt) + len(output)) // 4
+
+        manager.set_synthesized_output(output)
+        # total=0 (no agents were ever spawned, by design for this tier) —
+        # StateManager.mark_finished() would read that as "failed"; that
+        # status logic assumes the multi-agent path, so set it directly.
+        manager.state.status = "completed" if output else "failed"
+        manager.state.finished_at = datetime.utcnow()
+
+        if do_critique:
+            self._critique_and_refine(objective, manager)
+
         return manager
 
     def run_contract(self, contract: Any) -> StateManager:
