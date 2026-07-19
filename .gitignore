@@ -25,9 +25,19 @@ critique_raw_debug*.txt
 gptoss_test.txt
 context_share_summary.txt
 
+# CLI test outputs (regenerable by running validate_idea.py; not source)
+verdict_test.md
+verdict_*.md
+
 # Employee runtime memory (real founders' idea/task history — personal
 # and business data, not source; regenerated fresh per employee_id)
 backend/app/employees/data/
+
+# Persisted team specs per session (same reason: personal roster data,
+# regenerated per session via the spawner or hand-editing in the UI).
+# Also contains _mcp_connections.json which can hold API tokens in
+# each connection's `env` block — never commit.
+backend/app/employees/team_data/
 
 # Environment
 .env

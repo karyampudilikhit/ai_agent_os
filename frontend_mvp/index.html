@@ -1,0 +1,1413 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vision AI — Playground</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --bg-2: #fafbfc;
+    --panel: #ffffff;
+    --panel-2: #f6f7f9;
+    --panel-3: #eef0f4;
+    --border: #e5e7ec;
+    --border-strong: #cfd3db;
+    --text: #17181c;
+    --text-muted: #6b7180;
+    --text-dim: #9ba0ac;
+    --accent: #6d47ff;
+    --accent-2: #8f6bff;
+    --accent-fg: #ffffff;
+    --accent-soft: rgba(109, 71, 255, 0.09);
+    --ok: #16a34a;
+    --warn: #d97706;
+    --danger: #dc2626;
+    --info: #2563eb;
+    --shadow-sm: 0 1px 2px rgba(23, 24, 28, 0.06);
+    --shadow-md: 0 4px 12px rgba(23, 24, 28, 0.06), 0 20px 40px -20px rgba(23, 24, 28, 0.1);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0a0b0f;
+      --bg-2: #101218;
+      --panel: #14161d;
+      --panel-2: #191c25;
+      --panel-3: #1f2330;
+      --border: #262a35;
+      --border-strong: #363b48;
+      --text: #f2f3f5;
+      --text-muted: #9098a4;
+      --text-dim: #5b6270;
+      --accent: #8f6bff;
+      --accent-2: #b092ff;
+      --accent-soft: rgba(143, 107, 255, 0.14);
+      --info: #7fa2ff;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+      --shadow-md: 0 4px 12px rgba(0,0,0,0.3), 0 20px 40px -20px rgba(0,0,0,0.5);
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100vh; overflow: hidden; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.55;
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    letter-spacing: -0.005em;
+  }
+
+  /* ---------- App layout ---------- */
+  .app {
+    display: grid;
+    grid-template-columns: 340px 1fr 340px;
+    grid-template-rows: 56px 1fr;
+    grid-template-areas:
+      "header  header  header"
+      "left    center  right";
+    height: 100vh;
+  }
+
+  /* Header */
+  header {
+    grid-area: header;
+    padding: 0 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    background: var(--bg);
+  }
+  header .brand { display: flex; align-items: center; gap: 12px; }
+  .brand-mark {
+    width: 28px; height: 28px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    display: flex; align-items: center; justify-content: center;
+    color: white; font-weight: 700; font-size: 13px;
+  }
+  .brand h1 { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.2; }
+  .brand .subtitle { color: var(--text-muted); font-size: 12.5px; }
+  header .header-status {
+    font-size: 12.5px;
+    color: var(--text-muted);
+    display: flex; align-items: center; gap: 8px;
+  }
+  header .pulse {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--info);
+    animation: pulse 1.4s ease-in-out infinite;
+    display: none;
+  }
+  header.busy .pulse { display: inline-block; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+  /* ---------- LEFT: Studio Chat ---------- */
+  .left {
+    grid-area: left;
+    background: var(--bg-2);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .chat-header {
+    padding: 14px 18px 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+  }
+  .chat-header .title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .chat-header .actions { display: flex; gap: 6px; align-items: center; }
+
+  .chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 16px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+  }
+
+  .msg {
+    max-width: 90%;
+    padding: 10px 14px;
+    border-radius: 12px;
+    font-size: 13px;
+    line-height: 1.5;
+    animation: msg-in 0.2s ease-out;
+  }
+  @keyframes msg-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  .msg.user {
+    align-self: flex-end;
+    background: var(--accent);
+    color: white;
+    border-bottom-right-radius: 4px;
+  }
+  .msg.assistant {
+    align-self: flex-start;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 4px;
+  }
+  .msg.assistant.status {
+    background: transparent;
+    border: none;
+    padding: 4px 4px;
+    color: var(--text-muted);
+    font-size: 12.5px;
+    max-width: 100%;
+  }
+  .msg-steps { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+  .step {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    color: var(--text-muted);
+  }
+  .step .icon {
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    border: 1.5px solid var(--text-dim);
+    background: transparent;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    flex-shrink: 0;
+    color: transparent;
+  }
+  .step.working .icon {
+    border-color: var(--info);
+    color: var(--info);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  .step.working .icon::before { content: '●'; font-size: 8px; }
+  .step.done .icon {
+    background: var(--ok);
+    border-color: var(--ok);
+    color: white;
+  }
+  .step.done .icon::before { content: '✓'; font-size: 9px; font-weight: 700; }
+  .step.done { color: var(--text); }
+
+  .chat-input {
+    padding: 12px 16px 16px;
+    border-top: 1px solid var(--border);
+    background: var(--bg-2);
+  }
+  .chat-input-inner {
+    display: flex;
+    gap: 8px;
+    align-items: flex-end;
+    background: var(--panel);
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    padding: 8px 8px 8px 14px;
+    box-shadow: var(--shadow-sm);
+    transition: border-color 0.14s, box-shadow 0.14s;
+  }
+  .chat-input-inner:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .chat-input textarea {
+    flex: 1;
+    background: transparent;
+    border: none;
+    padding: 6px 0;
+    font-size: 13.5px;
+    font-family: inherit;
+    resize: none;
+    min-height: 24px;
+    max-height: 140px;
+    line-height: 1.5;
+    color: var(--text);
+  }
+  .chat-input textarea:focus { outline: none; }
+  .chat-input textarea::placeholder { color: var(--text-dim); }
+
+  .chat-empty {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 13px;
+    padding: 40px 20px;
+    line-height: 1.6;
+  }
+
+  /* ---------- Buttons / inputs ---------- */
+  button {
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    background: var(--accent);
+    color: var(--accent-fg);
+    border: none;
+    border-radius: 8px;
+    padding: 8px 14px;
+    cursor: pointer;
+    transition: filter 0.14s, transform 0.05s;
+    letter-spacing: -0.005em;
+  }
+  button:hover { filter: brightness(1.06); }
+  button:active { transform: translateY(1px); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; filter: none; transform: none; }
+  button.secondary {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+    font-weight: 500;
+  }
+  button.secondary:hover { background: var(--panel-2); }
+  button.ghost {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+  button.ghost:hover { color: var(--text); border-color: var(--border-strong); background: var(--panel); }
+  button.small { padding: 4px 10px; font-size: 12px; }
+  button.icon {
+    background: transparent;
+    color: var(--text-dim);
+    padding: 2px 8px;
+    font-size: 15px;
+    font-weight: 400;
+    line-height: 1;
+    border-radius: 4px;
+  }
+  button.icon:hover { color: var(--danger); background: transparent; }
+  button.send-btn { padding: 8px 14px; border-radius: 8px; }
+
+  input, textarea, select {
+    font-family: inherit;
+    font-size: 13px;
+    color: var(--text);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 11px;
+    width: 100%;
+    transition: border-color 0.14s;
+  }
+  input::placeholder, textarea::placeholder { color: var(--text-dim); }
+  input:focus, textarea:focus, select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  textarea { resize: vertical; min-height: 56px; line-height: 1.5; font-family: inherit; }
+
+  /* ---------- CENTER: Canvas ---------- */
+  .center {
+    grid-area: center;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--bg);
+  }
+  .tabs {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 12px 24px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .tab {
+    background: transparent;
+    color: var(--text-muted);
+    border: none;
+    padding: 8px 14px;
+    font-weight: 500;
+    font-size: 13px;
+    border-radius: 8px 8px 0 0;
+    position: relative;
+    top: 1px;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    letter-spacing: -0.005em;
+  }
+  .tab:hover { color: var(--text); background: transparent; filter: none; }
+  .tab.active {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+    font-weight: 600;
+  }
+  .tab .dot {
+    display: none;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .tab.has-new .dot { display: inline-block; }
+  .tabs .spacer { flex: 1; }
+  .canvas-count { font-size: 12px; color: var(--text-dim); padding-right: 6px; }
+
+  .canvas-body {
+    flex: 1;
+    overflow: auto;
+    padding: 28px 32px;
+    background:
+      radial-gradient(circle at 12px 12px, var(--border) 1px, transparent 1px) 0 0 / 20px 20px,
+      var(--bg);
+    position: relative;
+  }
+  .canvas-body.hidden { display: none; }
+
+  /* Flow layout — sequential horizontal chain of employees */
+  .flow-container {
+    display: flex;
+    align-items: stretch;
+    gap: 32px;
+    flex-wrap: wrap;
+  }
+  .flow-container.empty { justify-content: center; }
+
+  .emp-node {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    position: relative;
+    width: 240px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    animation: card-in 0.3s ease-out;
+    transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+    box-shadow: var(--shadow-sm);
+  }
+  /* Arrow between adjacent nodes in the flow */
+  .emp-node:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    right: -32px;
+    top: 50%;
+    width: 32px;
+    height: 2px;
+    background: var(--border-strong);
+    transform: translateY(-1px);
+  }
+  .emp-node:not(:last-child)::before {
+    content: '';
+    position: absolute;
+    right: -12px;
+    top: 50%;
+    width: 0; height: 0;
+    border-left: 8px solid var(--border-strong);
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+    transform: translateY(-5px);
+    z-index: 1;
+  }
+  @keyframes card-in {
+    from { opacity: 0; transform: translateY(6px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .emp-node:hover { border-color: var(--border-strong); }
+  .emp-node.is-working {
+    border-color: var(--info);
+    box-shadow: 0 0 0 1px var(--info), 0 0 24px -8px rgba(37, 99, 235, 0.5);
+  }
+  .emp-node.has-result { border-color: rgba(22, 163, 74, 0.4); }
+  .emp-node.has-fabrication { border-color: rgba(217, 119, 6, 0.4); }
+  /* Arrow line color when the source has completed */
+  .emp-node.has-result:not(:last-child)::after,
+  .emp-node.has-result:not(:last-child)::before {
+    background: var(--ok);
+    border-left-color: var(--ok);
+  }
+
+  .emp-node .top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .emp-node .top-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    flex: 1;
+  }
+  .emp-node .avatar {
+    width: 32px; height: 32px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .emp-node.is-working .avatar {
+    background: linear-gradient(135deg, var(--info), #a5b8ff);
+    animation: avatar-pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes avatar-pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.08)} }
+
+  /* Supervisor is visually distinct — sits at the front of the flow */
+  .emp-node.is-supervisor {
+    background: linear-gradient(180deg, rgba(109, 71, 255, 0.06), var(--panel));
+    border-color: var(--accent);
+  }
+  .emp-node.is-supervisor .avatar {
+    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  }
+  .emp-node.is-supervisor .role-badge {
+    display: inline-block;
+    background: var(--accent);
+    color: white;
+    font-size: 9.5px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 4px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .team-list-item.is-supervisor .mini-avatar {
+    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  }
+  .team-list-item.is-supervisor .role::after {
+    content: 'SUPERVISOR';
+    font-size: 9px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 0.06em;
+    margin-left: 6px;
+  }
+
+  /* Connectors */
+  .connector-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 6px;
+    font-size: 12.5px;
+  }
+  .connector-item .name { flex: 1; font-weight: 600; color: var(--text); }
+  .connector-item .tool-count { color: var(--text-dim); font-size: 11px; font-family: ui-monospace, monospace; }
+  .connector-item.disabled { opacity: 0.5; }
+  #connectors-form input { margin-bottom: 6px; font-size: 12.5px; }
+  #connectors-form button { width: 100%; margin-top: 4px; }
+  .emp-node .role-name {
+    font-weight: 600;
+    font-size: 13.5px;
+    color: var(--text);
+    line-height: 1.25;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .emp-node .working-badge, .emp-node .done-badge {
+    display: none;
+    font-size: 10.5px;
+    font-weight: 600;
+    margin-top: 2px;
+    letter-spacing: 0.02em;
+  }
+  .emp-node .working-badge { color: var(--info); }
+  .emp-node .done-badge { color: var(--ok); }
+  .emp-node.is-working .working-badge { display: block; }
+  .emp-node.has-result:not(.is-working) .done-badge { display: block; }
+  .emp-node .mandate {
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.5;
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .emp-node .metadata {
+    font-size: 10.5px;
+    color: var(--text-dim);
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    display: none;
+    font-family: ui-monospace, monospace;
+  }
+  .emp-node.has-result:not(.is-working) .metadata { display: block; }
+  .fab-warn { color: var(--warn); font-weight: 600; }
+  .fab-ok { color: var(--ok); }
+
+  .canvas-empty {
+    margin: 60px auto;
+    max-width: 460px;
+    text-align: center;
+    padding: 36px 24px;
+    border: 1.5px dashed var(--border-strong);
+    border-radius: 14px;
+    background: var(--panel-2);
+  }
+  .canvas-empty .headline {
+    font-size: 15px;
+    color: var(--text);
+    margin-bottom: 6px;
+    font-weight: 600;
+  }
+  .canvas-empty .hint { color: var(--text-muted); font-size: 13px; line-height: 1.55; }
+
+  /* Output tab */
+  .result-panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px 28px;
+    box-shadow: var(--shadow-sm);
+    max-width: 900px;
+    margin: 0 auto;
+  }
+  .result-body {
+    white-space: pre-wrap;
+    font-size: 13.5px;
+    line-height: 1.7;
+    color: var(--text);
+  }
+  .result-empty {
+    color: var(--text-dim);
+    text-align: center;
+    padding: 60px 20px;
+    font-size: 14px;
+  }
+
+  /* ---------- RIGHT: Edit ---------- */
+  .right {
+    grid-area: right;
+    background: var(--bg-2);
+    border-left: 1px solid var(--border);
+    padding: 18px 16px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    min-height: 0;
+  }
+  .right .section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .right .section .head {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .right .section .hint {
+    font-size: 12px;
+    color: var(--text-dim);
+    line-height: 1.5;
+  }
+  .team-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .team-list-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .team-list-item .mini-avatar {
+    width: 22px; height: 22px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: white;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 700;
+    flex-shrink: 0;
+  }
+  .team-list-item .role {
+    flex: 1;
+    font-size: 12.5px;
+    color: var(--text);
+    font-weight: 500;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Sessions selector at top of right panel */
+  .session-select {
+    display: flex; gap: 6px; align-items: center;
+  }
+  .session-select select { flex: 1; }
+
+  /* Scrollbars */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <header id="app-header">
+    <div class="brand">
+      <div class="brand-mark">V</div>
+      <div>
+        <h1>Vision AI <span class="subtitle">· Playground</span></h1>
+      </div>
+    </div>
+    <div class="header-status">
+      <span class="pulse"></span>
+      <span id="header-status"></span>
+    </div>
+  </header>
+
+  <!-- LEFT: Studio Chat -->
+  <aside class="left">
+    <div class="chat-header">
+      <div class="title">Studio Chat</div>
+      <div class="actions">
+        <button class="ghost small" id="new-session-btn">+ New</button>
+      </div>
+    </div>
+
+    <div class="chat-messages" id="chat-messages"></div>
+
+    <div class="chat-input">
+      <div class="chat-input-inner">
+        <textarea id="chat-input" rows="1" placeholder="Ask, build…  (Shift + Enter for new line)"></textarea>
+        <button class="send-btn" id="send-btn">Send ↑</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- CENTER: Canvas / Output tabs -->
+  <main class="center">
+    <div class="tabs">
+      <button class="tab active" data-tab="canvas">Canvas</button>
+      <button class="tab" data-tab="output">Output<span class="dot"></span></button>
+      <div class="spacer"></div>
+      <span class="canvas-count" id="canvas-count"></span>
+    </div>
+
+    <div class="canvas-body" id="tab-canvas">
+      <div id="flow-container" class="flow-container"></div>
+    </div>
+
+    <div class="canvas-body hidden" id="tab-output">
+      <div class="result-panel">
+        <div class="result-body" id="result-body">
+          <div class="result-empty">No output yet — send a task to your team and it will show up here.</div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- RIGHT: Edit / manage employees -->
+  <aside class="right">
+    <div class="section">
+      <div class="head">Unit</div>
+      <div class="session-select">
+        <select id="session-selector"></select>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="head">
+        <span>Your Team</span>
+        <span id="team-list-count" style="text-transform:none;letter-spacing:0;color:var(--text-dim);font-weight:400;font-size:11px;"></span>
+      </div>
+      <div class="team-list" id="team-list"></div>
+      <div class="hint" id="team-list-empty" style="display:none;">No employees yet — describe your project in the chat and the AI will build a team for you.</div>
+    </div>
+
+    <div class="section">
+      <div class="head">Add Employee</div>
+      <input id="new-role" type="text" placeholder="Role (e.g. Growth Lead)">
+      <textarea id="new-mandate" placeholder="Mandate — what they own on this team"></textarea>
+      <button class="secondary" id="add-btn">+ Add</button>
+    </div>
+
+    <div class="section">
+      <div class="head">
+        <span>Connectors</span>
+        <button class="ghost small" id="connectors-toggle">▾</button>
+      </div>
+      <div class="hint" id="connectors-hint">Give your team access to real tools (Notion, Slack, GitHub…) via MCP. Nothing connected yet.</div>
+      <div id="connectors-list" style="display:none;"></div>
+      <div id="connectors-form" style="display:none; margin-top:10px;">
+        <input id="conn-name" type="text" placeholder="Short name (e.g. notion)">
+        <input id="conn-command" type="text" placeholder="Command (e.g. npx)">
+        <input id="conn-args" type="text" placeholder="Args, space-separated">
+        <input id="conn-env" type="text" placeholder="ENV_VAR=value ENV_VAR2=value (optional)">
+        <button class="secondary" id="conn-add-btn">+ Connect</button>
+      </div>
+    </div>
+  </aside>
+
+</div>
+
+<script>
+const API_BASE = (window.location.protocol === 'http:' || window.location.protocol === 'https:')
+  ? window.location.origin
+  : 'http://127.0.0.1:8000';
+
+const $ = id => document.getElementById(id);
+const chatMessagesEl = $('chat-messages');
+const chatInputEl = $('chat-input');
+const flowContainer = $('flow-container');
+const teamListEl = $('team-list');
+const teamListCount = $('team-list-count');
+const teamListEmpty = $('team-list-empty');
+const sessionSelector = $('session-selector');
+const canvasCount = $('canvas-count');
+const headerEl = $('app-header');
+const headerStatus = $('header-status');
+const resultBody = $('result-body');
+
+let currentSessionId = null;
+let lastRunByRole = {};
+let progressTimer = null;
+let currentSteps = null;  // active step-list in the chat log
+
+// ------------------------------------------------------------
+// API helper
+async function api(method, path, body) {
+  const res = await fetch(API_BASE + path, {
+    method,
+    headers: body ? { 'Content-Type': 'application/json' } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `${method} ${path} failed (${res.status})`);
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+// ------------------------------------------------------------
+// Chat message rendering
+function appendMessage(role, text, className) {
+  const msg = document.createElement('div');
+  msg.className = 'msg ' + role + (className ? ' ' + className : '');
+  msg.textContent = text;
+  chatMessagesEl.appendChild(msg);
+  chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+  return msg;
+}
+
+function appendStatusWithSteps(text, steps) {
+  // Assistant status message with a checklist of steps below
+  const msg = document.createElement('div');
+  msg.className = 'msg assistant status';
+  const label = document.createElement('div');
+  label.textContent = text;
+  const stepsWrap = document.createElement('div');
+  stepsWrap.className = 'msg-steps';
+  steps.forEach((s, i) => {
+    const step = document.createElement('div');
+    step.className = 'step';
+    step.dataset.role = s;
+    const icon = document.createElement('span');
+    icon.className = 'icon';
+    const lbl = document.createElement('span');
+    lbl.textContent = s;
+    step.appendChild(icon);
+    step.appendChild(lbl);
+    stepsWrap.appendChild(step);
+  });
+  msg.appendChild(label);
+  msg.appendChild(stepsWrap);
+  chatMessagesEl.appendChild(msg);
+  chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+  currentSteps = stepsWrap;
+  return msg;
+}
+
+function updateStep(role, phase) {
+  if (!currentSteps) return;
+  currentSteps.querySelectorAll('.step').forEach(step => {
+    if (step.dataset.role === role) {
+      step.classList.remove('working', 'done');
+      if (phase === 'working') step.classList.add('working');
+      if (phase === 'done') step.classList.add('done');
+    }
+  });
+}
+
+function clearChat() {
+  chatMessagesEl.innerHTML = `
+    <div class="chat-empty">
+      Type what you want to get done. The AI will design your team, show you who they are, and get to work — all right here.
+    </div>`;
+  currentSteps = null;
+}
+
+// ------------------------------------------------------------
+// Team rendering (center canvas + right panel list)
+function initials(role) {
+  return role.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
+}
+
+function renderTeam(members) {
+  // Center canvas: sequential flow
+  flowContainer.innerHTML = '';
+  canvasCount.textContent = members.length ? `${members.length} employee${members.length===1?'':'s'}` : '';
+
+  if (!members.length) {
+    flowContainer.classList.add('empty');
+    const empty = document.createElement('div');
+    empty.className = 'canvas-empty';
+    empty.innerHTML = `
+      <div class="headline">No employees on this team yet</div>
+      <div class="hint">Send a message in the chat on the left. The AI will design a team and show it here as a visual flow.</div>
+    `;
+    flowContainer.appendChild(empty);
+  } else {
+    flowContainer.classList.remove('empty');
+    // Supervisor first, always — visual reinforcement that they're at
+    // the head of the org chart.
+    const sorted = [...members].sort((a, b) => (b.is_supervisor ? 1 : 0) - (a.is_supervisor ? 1 : 0));
+    sorted.forEach(m => {
+      const card = document.createElement('div');
+      card.className = 'emp-node';
+      if (m.is_supervisor) card.classList.add('is-supervisor');
+      const meta = lastRunByRole[m.role];
+      if (meta) {
+        card.classList.add('has-result');
+        if ((meta.fabricated_claims || []).length) card.classList.add('has-fabrication');
+      }
+      const top = document.createElement('div'); top.className = 'top';
+      const topLeft = document.createElement('div'); topLeft.className = 'top-left';
+      const avatar = document.createElement('div');
+      avatar.className = 'avatar'; avatar.textContent = m.is_supervisor ? '★' : initials(m.role);
+      const roleBlock = document.createElement('div');
+      const roleName = document.createElement('div');
+      roleName.className = 'role-name';
+      roleName.textContent = m.role;
+      if (m.is_supervisor) {
+        const badge = document.createElement('span');
+        badge.className = 'role-badge';
+        badge.textContent = 'Supervisor';
+        roleName.appendChild(badge);
+      }
+      const workingBadge = document.createElement('div');
+      workingBadge.className = 'working-badge'; workingBadge.textContent = '● working…';
+      const doneBadge = document.createElement('div');
+      doneBadge.className = 'done-badge'; doneBadge.textContent = '✓ done';
+      roleBlock.appendChild(roleName);
+      roleBlock.appendChild(workingBadge);
+      roleBlock.appendChild(doneBadge);
+      topLeft.appendChild(avatar); topLeft.appendChild(roleBlock);
+      // Supervisor cannot be removed — they're the org's spine
+      if (!m.is_supervisor) {
+        const delBtn = document.createElement('button');
+        delBtn.className = 'icon'; delBtn.textContent = '×'; delBtn.title = 'Remove this employee';
+        delBtn.onclick = () => removeMember(m.role);
+        top.appendChild(topLeft); top.appendChild(delBtn);
+      } else {
+        top.appendChild(topLeft);
+      }
+
+      const mandate = document.createElement('div');
+      mandate.className = 'mandate'; mandate.textContent = m.mandate;
+
+      const metadataEl = document.createElement('div');
+      metadataEl.className = 'metadata';
+      if (meta) {
+        const fabCount = (meta.fabricated_claims || []).length;
+        const fab = fabCount ? `<span class="fab-warn">⚠ ${fabCount} fabricated</span>` : `<span class="fab-ok">✓ clean</span>`;
+        metadataEl.innerHTML = `completeness ${meta.completeness_score ?? 'n/a'} · ${fab}`;
+      }
+
+      card.appendChild(top);
+      card.appendChild(mandate);
+      card.appendChild(metadataEl);
+      flowContainer.appendChild(card);
+    });
+  }
+
+  // Right panel: compact list — Supervisor first, no delete button
+  teamListEl.innerHTML = '';
+  teamListCount.textContent = members.length ? `${members.length}` : '';
+  teamListEmpty.style.display = members.length ? 'none' : 'block';
+  const sortedList = [...members].sort((a, b) => (b.is_supervisor ? 1 : 0) - (a.is_supervisor ? 1 : 0));
+  sortedList.forEach(m => {
+    const item = document.createElement('div');
+    item.className = 'team-list-item';
+    if (m.is_supervisor) item.classList.add('is-supervisor');
+    const avatar = document.createElement('div');
+    avatar.className = 'mini-avatar';
+    avatar.textContent = m.is_supervisor ? '★' : initials(m.role);
+    const role = document.createElement('div');
+    role.className = 'role'; role.textContent = m.role;
+    item.appendChild(avatar);
+    item.appendChild(role);
+    if (!m.is_supervisor) {
+      const del = document.createElement('button');
+      del.className = 'icon'; del.textContent = '×';
+      del.onclick = () => removeMember(m.role);
+      item.appendChild(del);
+    }
+    teamListEl.appendChild(item);
+  });
+}
+
+// ------------------------------------------------------------
+// Sessions
+async function refreshSessions() {
+  const sessions = await api('GET', '/api/sessions');
+  sessionSelector.innerHTML = '';
+  if (!sessions.length) {
+    const opt = document.createElement('option');
+    opt.value = ''; opt.textContent = '(none)';
+    sessionSelector.appendChild(opt);
+  } else {
+    sessions.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s.session_id;
+      opt.textContent = `${s.session_id.replace('session_', '')} · ${s.member_count} member${s.member_count===1?'':'s'}`;
+      sessionSelector.appendChild(opt);
+    });
+    if (currentSessionId) sessionSelector.value = currentSessionId;
+  }
+  return sessions;
+}
+
+async function selectSession(id) {
+  currentSessionId = id;
+  lastRunByRole = {};
+  resultBody.innerHTML = '<div class="result-empty">No output yet — send a task to your team and it will show up here.</div>';
+  clearChat();
+  switchTab('canvas');
+  await refreshSessions();
+  sessionSelector.value = id;
+  await loadTeam(id);
+}
+
+async function loadTeam(sessionId) {
+  const data = await api('GET', `/api/sessions/${sessionId}/team`);
+  renderTeam(data.members);
+}
+
+async function newSession() {
+  try {
+    const { session_id } = await api('POST', '/api/sessions');
+    await selectSession(session_id);
+  } catch (e) { appendMessage('assistant', 'Error creating session: ' + e.message); }
+}
+
+// ------------------------------------------------------------
+// Progress polling
+function applyProgressToCards(progress) {
+  const doneMap = {};
+  (progress.completed || []).forEach(c => { doneMap[c.role] = c; });
+
+  document.querySelectorAll('.emp-node').forEach(card => {
+    const role = card.querySelector('.role-name').textContent;
+    card.classList.remove('is-working', 'has-result', 'has-fabrication');
+    if (progress.current_role === role) {
+      card.classList.add('is-working');
+      updateStep(role, 'working');
+    } else if (doneMap[role]) {
+      const meta = doneMap[role];
+      lastRunByRole[role] = meta;
+      card.classList.add('has-result');
+      if ((meta.fabricated_claims || []).length) card.classList.add('has-fabrication');
+      updateStep(role, 'done');
+      const metadataEl = card.querySelector('.metadata');
+      if (metadataEl) {
+        const fabCount = (meta.fabricated_claims || []).length;
+        const fab = fabCount ? `<span class="fab-warn">⚠ ${fabCount} fabricated</span>` : `<span class="fab-ok">✓ clean</span>`;
+        metadataEl.innerHTML = `completeness ${meta.completeness_score ?? 'n/a'} · ${fab}`;
+      }
+    }
+  });
+
+  if (progress.phase === 'role_working' && progress.current_role) {
+    headerStatus.textContent = `${progress.current_role} is working…`;
+  } else if (progress.phase === 'synthesizing') {
+    headerStatus.textContent = 'Merging everyone\'s work…';
+  } else if (progress.phase === 'starting') {
+    headerStatus.textContent = 'Kicking off the team…';
+  }
+}
+
+async function pollProgress() {
+  if (!currentSessionId) return;
+  try {
+    const p = await api('GET', `/api/sessions/${currentSessionId}/progress`);
+    applyProgressToCards(p);
+    if (p.phase === 'complete' || p.phase === 'error' || p.phase === 'idle') {
+      if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
+    }
+  } catch (e) { /* silent */ }
+}
+function startProgressPolling() {
+  if (progressTimer) clearInterval(progressTimer);
+  progressTimer = setInterval(pollProgress, 2000);
+  pollProgress();
+}
+function stopProgressPolling() {
+  if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
+}
+
+function setBusy(busy, msg) {
+  document.querySelectorAll('button').forEach(b => b.disabled = busy);
+  headerEl.classList.toggle('busy', busy);
+  headerStatus.textContent = busy ? (msg || 'Working…') : '';
+}
+
+// ------------------------------------------------------------
+// The main "send a message" flow — this is what the chat does
+async function sendMessage() {
+  const text = chatInputEl.value.trim();
+  if (!text) return;
+
+  chatInputEl.value = '';
+  chatInputEl.style.height = 'auto';
+
+  if (!currentSessionId) await newSession();
+
+  const emptyState = chatMessagesEl.querySelector('.chat-empty');
+  if (emptyState) emptyState.remove();
+
+  appendMessage('user', text);
+
+  try {
+    setBusy(true, 'Understanding…');
+
+    // Route the message through the intent classifier first — every
+    // request goes to /chat, which decides whether it's a team edit or
+    // a task to run.
+    const chatRes = await api('POST', `/api/sessions/${currentSessionId}/chat`,
+                              { message: text });
+
+    // Team-changing intents came back with the updated team — render it
+    if (['add_employee', 'remove_employee', 'modify_employee', 'design_team', 'clear_team'].includes(chatRes.intent)) {
+      renderTeam(chatRes.team || []);
+      await refreshSessions();
+      sessionSelector.value = currentSessionId;
+      appendMessage('assistant', chatRes.reply);
+      setBusy(false);
+      return;
+    }
+
+    if (chatRes.intent === 'unclear') {
+      appendMessage('assistant', chatRes.reply);
+      setBusy(false);
+      return;
+    }
+
+    // run_task: reply, then trigger the actual run
+    appendMessage('assistant', chatRes.reply);
+
+    // If the Unit has NO specialists (only the Supervisor exists),
+    // auto-design specialists from the task first — otherwise the run
+    // executes with just a Supervisor and nothing to synthesize.
+    const teamNow = await api('GET', `/api/sessions/${currentSessionId}/team`);
+    const specialists = (teamNow.members || []).filter(m => !m.is_supervisor);
+    let showedTeamReport = false;
+    if (specialists.length === 0) {
+      appendMessage('assistant', 'You only have a Supervisor so far — hiring the specialists needed for this task…');
+      const designed = await api('POST', `/api/sessions/${currentSessionId}/team/design`,
+                                { prompt: chatRes.task_to_run || text, replace: true });
+      renderTeam(designed.members);
+      await refreshSessions();
+      sessionSelector.value = currentSessionId;
+      const specialistRoles = (designed.members || []).filter(m => !m.is_supervisor).map(m => m.role);
+      appendStatusWithSteps(
+        `Team hired — ${specialistRoles.length} specialist${specialistRoles.length===1?'':'s'}:`,
+        specialistRoles
+      );
+      // Show the team-hired report on the Output tab RIGHT NOW so the
+      // user has something concrete to look at while the actual work
+      // grinds on. This gets replaced with the final deliverable when
+      // the run finishes.
+      resultBody.textContent = buildTeamHiredReport(designed.members, chatRes.task_to_run || text);
+      switchTab('output');
+      showedTeamReport = true;
+    }
+
+    // Run the extracted task against the current team
+    const teamData = await api('GET', `/api/sessions/${currentSessionId}/team`);
+    if (teamData.members.length) {
+      appendStatusWithSteps('Running:', teamData.members.map(m => m.role));
+    }
+
+    setBusy(true, showedTeamReport
+      ? 'Team is working — the report is on Output; click Canvas to watch them work.'
+      : 'Team is working — watch the Canvas tab.');
+    if (!showedTeamReport) switchTab('canvas');
+    lastRunByRole = {};
+    startProgressPolling();
+
+    const runRes = await api('POST', `/api/sessions/${currentSessionId}/run`,
+                             { task: chatRes.task_to_run || text });
+    (runRes.team || []).forEach(m => {
+      lastRunByRole[m.role] = m;
+      updateStep(m.role, 'done');
+    });
+
+    renderTeam((await api('GET', `/api/sessions/${currentSessionId}/team`)).members);
+    resultBody.textContent = runRes.final_output;
+    switchTab('output');
+    appendMessage('assistant', 'Done. The full deliverable is on the Output tab.');
+  } catch (e) {
+    appendMessage('assistant', 'Something went wrong: ' + e.message);
+  } finally {
+    stopProgressPolling();
+    setBusy(false);
+  }
+}
+
+async function addMember() {
+  const role = $('new-role').value.trim();
+  const mandate = $('new-mandate').value.trim();
+  if (!role || !mandate) { appendMessage('assistant', 'Both role and mandate are required to add an employee.'); return; }
+  if (!currentSessionId) await newSession();
+  setBusy(true, 'Adding…');
+  try {
+    const data = await api('POST', `/api/sessions/${currentSessionId}/team/members`, { role, mandate });
+    renderTeam(data.members);
+    await refreshSessions();
+    sessionSelector.value = currentSessionId;
+    $('new-role').value = '';
+    $('new-mandate').value = '';
+    appendMessage('assistant', `Added ${role} to your team.`);
+  } catch (e) {
+    appendMessage('assistant', 'Error adding: ' + e.message);
+  } finally { setBusy(false); }
+}
+
+async function removeMember(role) {
+  if (!currentSessionId) return;
+  if (!confirm(`Remove "${role}" from this team?`)) return;
+  setBusy(true, 'Removing…');
+  try {
+    const data = await api('DELETE', `/api/sessions/${currentSessionId}/team/members/${encodeURIComponent(role)}`);
+    delete lastRunByRole[role];
+    renderTeam(data.members);
+    await refreshSessions();
+    sessionSelector.value = currentSessionId;
+    appendMessage('assistant', `Removed ${role} from your team.`);
+  } catch (e) {
+    appendMessage('assistant', 'Error removing: ' + e.message);
+  } finally { setBusy(false); }
+}
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.tab === name);
+    if (t.dataset.tab === name) t.classList.remove('has-new');
+  });
+  $('tab-canvas').classList.toggle('hidden', name !== 'canvas');
+  $('tab-output').classList.toggle('hidden', name !== 'output');
+}
+
+function buildTeamHiredReport(members, task) {
+  // Fast, LLM-free "here's who I hired and what they'll do" summary —
+  // shown on the Output tab right after specialists are created so the
+  // user has something concrete to look at before the actual run
+  // finishes. Gets overwritten with the real deliverable when the run
+  // completes.
+  const supervisor = members.find(m => m.is_supervisor);
+  const specialists = members.filter(m => !m.is_supervisor);
+  const divider = '━'.repeat(56);
+  let out = '';
+  out += divider + '\n';
+  out += '  YOUR TEAM IS ON IT\n';
+  out += divider + '\n\n';
+  if (task) {
+    out += 'TASK\n';
+    const trimmed = task.length > 220 ? task.slice(0, 220) + '…' : task;
+    out += trimmed + '\n\n';
+  }
+  if (supervisor) {
+    out += '★ ' + supervisor.role + '\n';
+    out += 'Every task comes to them first. They design the delegation plan, ';
+    out += 'keep the specialists coordinated, and deliver the merged result ';
+    out += 'back to you in one voice.\n';
+  }
+  if (specialists.length) {
+    out += '\nSPECIALISTS (' + specialists.length + ')\n';
+    specialists.forEach((m, i) => {
+      out += '\n' + (i + 1) + '. ' + m.role + '\n';
+      out += '   ' + m.mandate.replace(/\n/g, '\n   ') + '\n';
+    });
+  }
+  out += '\n' + divider + '\n\n';
+  out += 'Working on it now. Watch the Canvas tab to see each specialist\n';
+  out += 'in progress — the full deliverable will replace this report here\n';
+  out += 'when the team finishes (usually a few minutes).\n';
+  return out;
+}
+
+// ------------------------------------------------------------
+// Chat input handlers
+chatInputEl.addEventListener('input', () => {
+  chatInputEl.style.height = 'auto';
+  chatInputEl.style.height = Math.min(140, chatInputEl.scrollHeight) + 'px';
+});
+chatInputEl.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+
+// ------------------------------------------------------------
+// Connectors — MCP servers the team can call as tools
+
+async function refreshConnectors() {
+  try {
+    const data = await api('GET', '/api/connectors');
+    const conns = data.connections || [];
+    const tools = data.tools || [];
+    const listEl = $('connectors-list');
+    const hintEl = $('connectors-hint');
+    listEl.innerHTML = '';
+    if (!conns.length) {
+      hintEl.textContent = 'Give your team access to real tools (Notion, Slack, GitHub…) via MCP. Nothing connected yet.';
+      hintEl.style.display = 'block';
+      listEl.style.display = 'none';
+    } else {
+      hintEl.style.display = 'none';
+      listEl.style.display = 'block';
+      // Tool counts per connection
+      const toolCountByConn = {};
+      tools.forEach(t => {
+        toolCountByConn[t.connection] = (toolCountByConn[t.connection] || 0) + 1;
+      });
+      conns.forEach(c => {
+        const item = document.createElement('div');
+        item.className = 'connector-item' + (c.enabled ? '' : ' disabled');
+        const count = toolCountByConn[c.name] || 0;
+        item.innerHTML = `
+          <div class="name">${c.name}</div>
+          <div class="tool-count">${count} tool${count===1?'':'s'}</div>
+        `;
+        const del = document.createElement('button');
+        del.className = 'icon';
+        del.textContent = '×';
+        del.title = 'Remove connector';
+        del.onclick = () => removeConnector(c.name);
+        item.appendChild(del);
+        listEl.appendChild(item);
+      });
+    }
+  } catch (e) {
+    // Silently ignore — connectors are optional
+    console.warn('Failed to refresh connectors:', e);
+  }
+}
+
+async function addConnector() {
+  const name = $('conn-name').value.trim();
+  const command = $('conn-command').value.trim();
+  const argsRaw = $('conn-args').value.trim();
+  const envRaw = $('conn-env').value.trim();
+  if (!name || !command) {
+    appendMessage('assistant', 'Connector needs at least a name and a command.');
+    return;
+  }
+  const args = argsRaw ? argsRaw.split(/\s+/) : [];
+  // Parse ENV_VAR=value ENV_VAR2=value pairs
+  const env = {};
+  if (envRaw) {
+    envRaw.split(/\s+/).forEach(pair => {
+      const eq = pair.indexOf('=');
+      if (eq > 0) env[pair.slice(0, eq)] = pair.slice(eq + 1);
+    });
+  }
+  try {
+    await api('POST', '/api/connectors', {
+      name, transport: 'stdio', command, args, env, enabled: true,
+    });
+    $('conn-name').value = '';
+    $('conn-command').value = '';
+    $('conn-args').value = '';
+    $('conn-env').value = '';
+    $('connectors-form').style.display = 'none';
+    $('connectors-toggle').textContent = '▾';
+    appendMessage('assistant', `Connected ${name}. Fetching its tools now — the team will use them automatically.`);
+    await refreshConnectors();
+  } catch (e) {
+    appendMessage('assistant', 'Connect failed: ' + e.message);
+  }
+}
+
+async function removeConnector(name) {
+  if (!confirm(`Disconnect "${name}"? Its tools will no longer be available to your team.`)) return;
+  try {
+    await api('DELETE', `/api/connectors/${encodeURIComponent(name)}`);
+    appendMessage('assistant', `Disconnected ${name}.`);
+    await refreshConnectors();
+  } catch (e) {
+    appendMessage('assistant', 'Disconnect failed: ' + e.message);
+  }
+}
+
+function toggleConnectorsForm() {
+  const form = $('connectors-form');
+  const btn = $('connectors-toggle');
+  const show = form.style.display === 'none';
+  form.style.display = show ? 'block' : 'none';
+  btn.textContent = show ? '▴' : '▾';
+}
+
+// ------------------------------------------------------------
+// Wire the rest
+$('send-btn').onclick = sendMessage;
+$('new-session-btn').onclick = newSession;
+$('add-btn').onclick = addMember;
+$('connectors-toggle').onclick = toggleConnectorsForm;
+$('conn-add-btn').onclick = addConnector;
+sessionSelector.onchange = () => { if (sessionSelector.value) selectSession(sessionSelector.value); };
+document.querySelectorAll('.tab').forEach(t => { t.onclick = () => switchTab(t.dataset.tab); });
+
+(async function init() {
+  const sessions = await refreshSessions();
+  if (sessions.length) {
+    await selectSession(sessions[0].session_id);
+  } else {
+    await newSession();
+  }
+  await refreshConnectors();
+})();
+</script>
+</body>
+</html>

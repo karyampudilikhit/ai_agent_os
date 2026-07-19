@@ -1,298 +1,278 @@
 # Vision AI (repo: `ai_agent_os`)
 
-**The vision, as of this pivot:** a person has a raw startup idea. Instead
-of learning and juggling a dozen separate tools to validate it, build it,
-market it, and run it, they spin up **AI employees** — persistent, named
-agents with real roles — and manage their entire operation from one
-terminal. The AI employees connect to and operate real tools on the
-person's behalf (research, code, marketing channels, ops) instead of the
-founder doing it by hand.
+**A co-founder for solo founders.** You give it what you're building — a
+raw idea, a launch to plan, a customer to reach — and it spins up a
+persistent team of AI employees who don't fabricate evidence and
+actually do the work using the tools you already use.
 
-This is a sharper, more concrete version of the original idea ("AI
-Workforce OS" — a multi-agent orchestration OS), not a different one. The
-name changes; the underlying engine being built does not get thrown away
-(see "What carries over" below). The GitHub repo is still `ai_agent_os`
-for now — rename it separately if you want the URL to match the new name.
+**The pitch, in one sentence:** everyone else's AI writes about the work;
+ours does it, and every deliverable is verification-gated so nothing
+hallucinated ships.
 
-**Audience rollout: founders first, everyone later.** The MVP targets
-founders specifically — narrow, high-pain, easy to define "done" for
-(validate → build → market → run a startup). A later version opens this to
-any person, same underlying concept (AI employees managing your work from
-one terminal), just not restricted to startup-building tasks. This means
-the Employee abstraction (Phase 7) must be designed **role-generic** from
-day one — "a persistent agent with a role, scoped memory, and a task
-inbox" — not hard-coded around startup-specific concepts like "raw idea"
-or "validation verdict." V2 should be able to add new employee types
-(personal admin, health, home, whatever) without rebuilding the core
-abstraction that shipped for founders.
+Founders first, general audience later. Flat-monthly SaaS pricing
+(~$29-49/mo unlimited, small free tier) — no per-seat, no per-task
+metering.
 
 This file is the state-of-the-project snapshot. It gets rewritten every
-time work is pushed, specifically so a new chat (no memory of this
-session) can read it and pick up without re-deriving everything from the
-diff.
+time work is pushed so a new chat (no memory of the last session) can
+read it and pick up without re-deriving anything from the diff.
 
-## What carries over from "AI Workforce OS", and what's genuinely new
+---
 
-**Directly reusable — real, working infrastructure:**
-- The core engine (contract → decompose → spawn agents → execute →
-  synthesize → critique/refine) is exactly what an AI Employee needs
-  internally every time it's given a task. An employee doesn't need a
-  different execution engine — it needs *this* engine, called repeatedly,
-  with memory attached.
-- The critique/refine quality-control loop matters *more* under this
-  vision, not less — an employee doing real ongoing work for someone's
-  actual startup needs to be trustworthy, not just good enough for a demo.
-- Ollama/multi-provider routing, config-driven limits, the safety-guardrail
-  groundwork — all still exactly the right foundation.
+## Vocabulary (locked, use everywhere)
 
-**Genuinely new — not in the original plan, needs real design:**
-- The **Employee abstraction** itself. Today the system spawns agents *for
-  one objective* and they're done. Nothing models "a persistent role with
-  its own memory and inbox that keeps existing across weeks." This sits on
-  top of the engine, not inside the old Phase 7.
-- The **MCP connector layer** — the original Phase 8 plan was a hand-rolled
-  `tool_registry.py`/`api_tool_handler.py`. Building on the Model Context
-  Protocol instead gets access to an existing ecosystem of tool
-  integrations (Slack, GitHub, browsers, databases, etc.) instead of
-  writing every integration from scratch.
-- The **manager terminal** — the original Phase 9 was a generic
-  task-submission dashboard. Now it's a roster view: what is each employee
-  doing, approve/reject its actions, cost and output per employee.
+- **Employee** — one AI worker, one role, persistent memory, verified output.
+- **Team** — one Supervisor + N specialists, working together on one project.
+- **Unit** — a group of Teams. (First-class objects: not built yet.)
+- **Company** — a group of Units. (First-class objects: not built yet.)
 
-## Where things actually stand
+Sessions in the codebase are effectively Teams-with-a-Unit-wrapper today
+— the Supervisor + specialists model works, but the Unit/Company
+hierarchy above it is deferred until connectors are proven end to end.
 
-| Phase | Status | Notes |
-|---|---|---|
-| 1 — Scaffolding | ✅ committed | repo layout, `config.yaml` |
-| 2 — Execution contracts | ✅ committed | `execution_contract.py`, `agent_schema.py` |
-| 3 — Agent creation + Ollama | ✅ committed | `agent_factory.py`, `model_router.py`, `ollama_adapter.py` |
-| 4 — Orchestration engine | ✅ committed, then extended uncommitted | the reusable engine every future AI employee calls |
-| 5 — Safety & cost guardrails | ❌ not built | `constraints_enforcer.py`, `input_output_validator.py` are empty stubs — more urgent now that employees will eventually hold real tool permissions |
-| 6 — Adaptive supervision & critique loop | 🟡 in progress, being validated | see "Benchmark" below — the fabrication-scrubbing bug is fixed and independently confirmed; the pairwise judge itself is not reliable yet |
-| 7 — Employee abstraction (was "Memory & learning") | 🟡 v0 built | `backend/app/employees/employee.py` + `memory_store.py` — persistent role, JSON-file memory, task inbox. Memory is v0 (last-N entries, no embeddings yet) |
-| 8 — MCP connector layer (was "Tools, multi-provider, workflows") | ❌ not started | redesigned: adopt MCP instead of hand-rolled tool integrations |
-| 9 — Manager terminal (was "API, frontend & ship") | ❌ not started | redesigned: roster/dashboard for directing employees, not a task-submission form |
-| 10 — First flagship employee: Idea Validation | 🟡 v0 built and verified | `idea_validation_employee.py` — raw idea in, market/competitor research + feasibility + a direct go/no-go verdict out. Verified end-to-end against real Ollama, memory confirmed working (see below) |
+---
 
-### Known gap: Phase 6 work landed before Phase 5
+## Where things stand
 
-The original plan has Phase 6 depending on Phase 5 — refinement/critique
-loops need cost and spawn-rate limits enforced first, or they can spiral.
-That didn't happen: `critique_agent.py` and the refinement loop got built
-and benchmarked directly on top of Phase 4, with only a stopgap in place
-(`max_agents_per_cycle` raised in `config.yaml`, throttle-instead-of-abort
-semantics still marked "Phase 5" in a comment there). This hasn't bitten
-us because Ollama is free — a spiral costs time/CPU, not money — but it's
-still open, and it matters a lot more once employees hold real tool
-permissions (Phase 8) and paid providers (OpenAI/Anthropic) enter the mix.
+| | |
+|---|---|
+| **Foundation** | Phases 1-4 committed on `feat/phase-4-orchestration`: contracts, agent creation, orchestration engine, memory. |
+| **Employee abstraction** | ✅ live — `Employee`, `DynamicEmployee`, per-employee memory, min/max tier verification floor. |
+| **Supervisor pattern** | ✅ live — every Unit auto-hires a Supervisor. User only talks to the Supervisor. Supervisor plans delegation, dispatches sub-tasks per specialist, then synthesizes in one voice. |
+| **Adaptive router** | ✅ live — team-first bias, 10/10 accuracy across trivial/verify/team-shaped tasks in the retune test. |
+| **Chat with intent classification** | ✅ live — `add_employee`, `remove_employee`, `modify_employee`, `design_team`, `clear_team`, `run_task`. Kills the "add a supervisor got interpreted as a task" bug. |
+| **Playground UI** | ✅ live at `frontend_mvp/index.html` — crew.ai-style Studio Chat + Canvas + Output tabs + Edit/Connectors sidebar with live per-employee progress. |
+| **Verification / no-fabrication** | ✅ live — critique/refine loop, measured working (multi-agent 1/10 vs single-call 3/10 in the independent-judge benchmarks). |
+| **Tavily web search** | ✅ live — real search results injected into specialists' prompts when tasks are research-shaped. |
+| **Read-only web fetch** | ✅ live — any URL mentioned in a task gets fetched (BeautifulSoup extract); top-2 Tavily URLs also get deep-read. |
+| **MCP client layer** | ✅ live — persistent asyncio loop + registry with cached sessions + pre-flight tool planner. `POST /api/connectors` to add any MCP server; employees discover tools and call them automatically. |
+| **Notion via MCP** | ⏳ walkthrough documented, integration + `NOTION_TOKEN` not yet set up locally. |
+| **Reddit / Twitter / other post-write connectors** | ❌ v2. |
+| **AI hierarchy (Team/Unit/Company as first-class objects)** | ❌ deferred; ~2.5-3 week build parked until connectors are proven end to end. |
+| **User accounts / auth** | ❌ deferred until we're ready to host. |
 
-## Employee abstraction: first working proof (Phase 7 + 10 v0)
+---
 
-Built and verified end-to-end against real Ollama (`gpt-oss:120b-cloud`),
-not just structurally:
-
-- `backend/app/employees/employee.py` — `Employee` base class: persistent
-  role, memory, task inbox. Wraps `Pipeline` rather than replacing it —
-  `run_task()` builds an objective (folding in relevant memory), runs it
-  through the existing engine, records the result. Deliberately
-  role-generic (see "Audience rollout" above) — nothing employee-specific
-  lives here.
-- `backend/app/employees/memory_store.py` — v0 memory: one JSON file per
-  employee, last-N-entries recall folded into the next objective. No
-  embeddings yet (that's the full Phase 7 design once an employee's
-  history outgrows what fits in a prompt).
-- `backend/app/employees/idea_validation_employee.py` — the first
-  flagship employee (Phase 10): raw idea in, market research + competitor
-  analysis + feasibility + a direct go/no-go verdict out. Explicitly
-  instructed not to fabricate statistics — the exact failure mode found
-  and fixed in the benchmark work above.
-- `run_idea_validation_employee.py` — demo: runs the *same* employee_id
-  through two tasks (an idea, then a repositioning of it) to prove memory
-  actually carries over, which is the whole point of this abstraction
-  over a stateless `Pipeline.run_objective()` call.
-
-**Result:** both tasks completed. Task 1 (original idea) — critique
-caught 5 fabricated claims pre-refine, 0 post-refine, completeness 0.94.
-Task 2 (repositioned idea) — 5 fabricated claims + over-engineering
-flagged, both cleared post-refine, completeness 0.92. **Memory
-confirmed working**: Task 2's verdict opened with *"This concept is a
-direct revision of the earlier 'curated office-snack box for
-small-business owners'..."* — unprompted, pulled from memory, not
-restated in the task text. Ended with a direct "Proceed, but..."
-verdict, not a hedge.
-
-Employee memory (`backend/app/employees/data/`) is gitignored — real
-founders' idea/task history is personal and business data, not source.
-
-**Not yet built:** `spawn_child_employee` (employees creating persistent
-mini-employees, not just ephemeral task-agents) — deliberately deferred.
-Discussed and designed conceptually, but recursive employee-spawning is
-exactly the spiral risk Phase 5 exists to prevent, one layer deeper than
-agent-spawning. Don't build until Phase 5 guardrails aggregate cost/depth
-across a whole employee tree, not per-node.
-
-## What's beyond Phase 4 in the current code
-
-On top of the committed Phase 4 orchestration engine, the following got
-built and benchmarked (all real code):
-
-- **`backend/app/contracts/clarification.py`** — `ClarificationEngine`.
-  Before decomposing an objective, asks up to 5 clarifying questions if the
-  objective is short/ambiguous, and enriches it with the answers.
-- **`backend/app/orchestrator/synthesis.py`** — `SynthesisEngine`. Merges
-  every sub-agent's output into one coherent deliverable.
-- **`backend/app/critique/critique_agent.py`** — `CritiqueEngine`. Scores
-  the synthesized output for completeness, flags over-engineering and
-  fabricated claims, and can trigger refinement.
-- **Context-sharing fix** — sub-agents now see earlier agents' results
-  instead of running blind to each other.
-- **Sharpened critique** — tightened scope-mismatch and fabricated-claim
-  detection, which had been too lenient to be reliable.
-- **Verified-refine fix (`pipeline_controller.py`)** — the critique/refine
-  loop used to report the score of the *pre-refine* draft even after
-  refinement changed the shipped output, so a fabrication-containing
-  final answer could still carry a clean 0.9+ score. Now it re-critiques
-  after every refine pass (up to `max_refinement_depth`) and reports
-  against the text that actually ships.
-
-## Benchmark: single LLM call vs. the full multi-agent product
-
-Ongoing effort to answer "does the multi-agent pipeline actually produce a
-better result than just asking the model directly?" — same 5 large
-business-automation objectives each round, same model both arms
-(`gpt-oss:120b-cloud` unless noted).
-
-**Rounds 1–4** (phi3 invalid → first gpt-oss test → context-sharing fix →
-sharpened critique): multi-agent token cost stabilized around 4-9x the
-single-call baseline while self-assessed critique score went from
-partially-failing to a reliable ~0.93 average — but this was the system
-grading itself, unverified against anything external.
-
-**Round 5** — fresh full regeneration of both arms. 5 calls / 23,250
-tokens (single) vs. 70 calls / 219,218 tokens (multi-agent, ~9.4x).
-Critique scores 0.90/0.95/0.93/0.85/0.95 (avg ≈0.92). Two of five tasks
-didn't finish every spawned agent (11/12, 6/7) despite scoring well.
-
-**Independent judge, attempt 1 (`judge_benchmark.py`)** — the first real
-attempt to get a verdict from something other than the pipeline grading
-itself. `deepseek-v3.1:671b-cloud` turned out to require a paid Ollama
-subscription (not usable); switched to `qwen3-coder:480b-cloud` (different
-model family from the generator, so not self-grading). Each task judged
-twice with A/B swapped, to control for position bias. **Result: single_call
-1, multiagent 0, tie 4** (4 of 5 position-inconsistent, i.e. the raw
-verdict flipped depending on which side was shown first, so discarded).
-The one clean, order-independent verdict went to single-call, specifically
-because the multi-agent answer fabricated evidence ("tested at 3
-locations") that the critique step was supposed to catch and didn't.
-
-**Root cause found and fixed** — see "verified-refine fix" above. Traced
-directly to `pipeline_controller.py` reporting a stale pre-refine critique
-score instead of re-checking the shipped output.
-
-**Round 6 (`rerun_verified_refine.py`, fix applied)** — multi-agent arm
-regenerated, single-call baseline reused from Round 5. All 5 tasks now
-self-report `fabricated_claims: []` post-refine (down from confirmed
-leakage before the fix). Cost: 78 calls / 239,828 tokens (~10.3x single-
-call, ~9% more than Round 5 due to the extra verification pass).
-
-**Independent judge, attempt 2** — re-judged Round 6 with the same
-position-swap methodology. **The judge saturated**: picked "Response A" in
-10 of 10 passes regardless of content, so every winner verdict was
-discarded as position-inconsistent (0/0/5). Pairwise judging with this
-judge model is not reliable — next step is switching to independent
-absolute scoring (rate each response alone, 0-10, never side-by-side) to
-remove position bias structurally instead of just detecting it.
-
-However, the **fabrication flags are still valid signal** — they're
-independent per-response checks, not a forced pick. Cross-referenced
-against which system produced which response: **multi-agent fabricated on
-1 of 10 independent checks (and even that one was inconsistent between its
-own two passes); single-call fabricated on 3 of 10, across 3 of the 5
-tasks.** So the specific fix is confirmed working and multi-agent's
-fabrication rate is now measurably lower than single-call's, which has no
-check at all. The bigger "which is smarter overall" question is still open
-pending a non-pairwise judge.
-
-## Repo map (what's real vs. stub)
+## Architecture: how work actually flows
 
 ```
-backend/app/
-  contracts/        execution_contract.py ✅  agent_schema.py ✅  clarification.py ✅
-  agents/            agent_factory.py ✅  agent_executor.py ✅  agent_validator.py ✅
-  models/            model_router.py ✅  provider_adapters/ollama_adapter.py ✅
-                      provider_adapters/openai_adapter.py ❌  anthropic_adapter.py ❌
-  orchestrator/      execution_engine.py ✅  state_manager.py ✅  dependency_validator.py ✅
-                      pipeline_controller.py ✅  synthesis.py ✅  adaptive_supervisor.py ❌
-  critique/          critique_agent.py ✅  confidence_evaluator.py ❌
-  safety/            recursion_guard.py ✅ (174 lines, ad hoc)  constraints_enforcer.py ❌
-                      input_output_validator.py ❌ (Phase 5)
-  memory/            all stubs ❌ (old Phase 7 location — real memory now
-                      lives in employees/memory_store.py instead)
-  employees/         employee.py ✅  memory_store.py ✅  idea_validation_employee.py ✅
-                      (Phase 7 + 10 v0 — see "Employee abstraction" above)
-  tools/ workflows/  all stubs ❌ (becomes the MCP connector layer, Phase 8)
-  api/               all stubs ❌ (becomes the manager terminal, Phase 9)
-frontend/            all 27 files stubs ❌ (manager terminal, Phase 9)
+User's chat message
+    ↓
+ChatIntentClassifier (LLM)
+    ↓
+    ├── add_employee / remove_employee / modify_employee → TeamStore update, done
+    ├── design_team → EmployeeSpawner writes N specialists to TeamStore
+    ├── clear_team → TeamStore.clear(keep_supervisor=True)
+    └── run_task ↓
+        │
+        EmployeeCoordinator.run_with_supervisor(task, supervisor, specialists)
+            │
+            1. SupervisorPlanner.design_delegation(task, specialists)
+            │      → [{role, sub_task}, …]  (one specific sub-task per specialist)
+            │
+            2. For each specialist in order:
+            │      DynamicEmployee.run_task(sub_task, teammates_context=…)
+            │          ├─ (pre-flight) URLs in task → WebFetchTool → inject
+            │          ├─ (pre-flight) research-shaped → TavilySearch → inject
+            │          ├─ (pre-flight) top-2 Tavily URLs → deep-read → inject
+            │          ├─ (pre-flight) MCP tools available → MCPPlanner → call → inject
+            │          ├─ Pipeline.run_objective(objective, min_tier, max_tier)
+            │          │      → AdaptiveSupervisor.classify(objective)
+            │          │      → single_call | single_call_critique | multi_agent_critique
+            │          │      → CritiqueEngine loop: verify, refine, verify shipped text
+            │          └─ Store result in EmployeeMemoryStore
+            │
+            3. SupervisorPlanner.synthesize(task, contributions)
+                   → one merged deliverable in the Supervisor's voice
 ```
 
-Benchmark/experiment scripts at repo root (`benchmark_*.py`,
-`build_blind_report_*.py`, `rerun_*.py`, `judge_benchmark.py`,
-`clarification_simulation.py`, `test_verify_refine_fix.py`) are
-throwaway-but-kept — each documents a specific hypothesis test. Their
-outputs (`benchmark_result_*.json`, `blind_report_*.html`,
-`judge_result_*.json`) are the actual data. Raw judge-splitting temp files
-and crash-dump scratch (`judge_tmp*/`, `critique_raw_debug*.txt`, etc.) are
-gitignored — regenerable, no lasting value.
+Every specialist has `max_tier = "single_call_critique"` — they never spawn
+nested sub-teams inside themselves, which is where the previous 15+
+minute run times were coming from (a 3-employee team wasn't 3 runs, it
+was 3 × N nested spawns). Post-fix: ~5-8 min for a 3-4 person team.
 
-## Phase plan
+---
 
-**Foundation (built):**
-1. Scaffolding
-2. Execution contracts
-3. Agent creation + Ollama integration
-4. Core orchestration engine — the reusable engine every AI employee calls
-   internally when given a task
+## Employee abstraction — key files
 
-**Trust core (must be solid before employees get real tool access):**
-5. Safety & cost guardrails — `max_total_cost` / `max_spawn_rate_per_minute`
-   actually block execution; malformed I/O rejected before burning a call
-6. Adaptive supervision & critique loop — in progress; next step is an
-   independent absolute-scoring judge (not pairwise) to finally answer
-   whether multi-agent reasons better than one call
+```
+backend/app/employees/
+├── employee.py                     Base Employee class (role, memory, tier floor/ceiling)
+├── dynamic_employee.py             Instance-configurable Employee — role and mandate
+│                                   passed at spawn time, not baked into a subclass.
+│                                   THIS is what every specialist is.
+├── supervisor.py                   SupervisorPlanner (design_delegation + synthesize) +
+│                                   default_supervisor_spec() used on Unit creation.
+├── employee_spawner.py             EmployeeSpawner: prompt → team spec (list of roles +
+│                                   mandates) via an LLM call.
+├── employee_coordinator.py         Runs a team on a task. run_with_supervisor is the
+│                                   Supervisor-pattern entry point.
+├── chat_intent.py                  ChatIntentClassifier — routes chat messages to
+│                                   team-management vs task-run.
+├── team_store.py                   Per-Unit team spec persistence (name, purpose, members).
+│                                   Enforces "every Unit has a Supervisor".
+├── memory_store.py                 Per-Employee JSON memory (last-N-entries recall).
+├── progress_store.py               In-memory progress state per session for the UI to
+│                                   poll — {phase, current_role, completed, …}.
+└── idea_validation_employee.py     Legacy: the first hand-coded flagship employee.
+                                    Still works; DynamicEmployee is the general path now.
+```
 
-**Vision AI layer (the pivot — new work, not in the original plan):**
-7. Employee abstraction — 🟡 **v0 built and verified**, see above. Still
-   needed: richer memory (embeddings, not last-N), more employee types
-   beyond idea validation.
-8. MCP connector layer — employees reach real tools (Slack, GitHub,
-   Stripe, browsers, databases) through the Model Context Protocol instead
-   of hand-rolled integrations
-9. Manager terminal — a dashboard for directing a roster of employees:
-   what each is doing, approve/reject its actions (ties into Phase 5's
-   permission tiers), cost and output per employee
+---
 
-**First flagship employee (prove one narrow slice before building the
-whole roster):**
-10. Idea-Validation Employee — 🟡 **v0 built and verified end-to-end**,
-    see above. Not yet built: `spawn_child_employee` (mini-agents),
-    deliberately deferred until Phase 5 is real.
+## Connectors — how real work happens
+
+Every specialist runs a **pre-flight** before writing anything. Four
+mechanisms, in order:
+
+1. **URLs in the task text** → `WebFetchTool` fetches each one, extracts
+   main content (`bs4`), injects up to 4000 chars per page.
+2. **Research-shaped tasks** (heuristic-triggered by words like
+   *research, analyze, competitor, latest, current, market*) →
+   `TavilySearchTool` returns top-5 results with titles + snippets.
+3. **Deep-read** → top 2 Tavily result URLs get fetched fully (not just
+   snippets).
+4. **MCP tools** — if any MCP servers are connected, `MCPPlanner` does
+   one cheap LLM call: *"given this task and these tools, which should
+   you call?"* Calls execute on the persistent asyncio loop, results
+   inject as source data.
+
+```
+backend/app/tools/
+├── web_search.py                   Tavily client + should_search() heuristic
+├── web_fetch.py                    Read-only page fetch + extract_urls()
+├── mcp_runtime.py                  Persistent background asyncio loop (MCP is
+│                                   async-first; the rest of the app is sync)
+├── mcp_store.py                    Per-connection specs (name, transport, command,
+│                                   args, env) persisted to team_data/_mcp_connections.json
+├── mcp_client.py                   MCPConnection (one live session per server) +
+│                                   MCPRegistry (unified tool catalog)
+└── mcp_planner.py                  Pre-flight LLM call: pick + invoke tools,
+                                    format results for prompt injection.
+```
+
+Credentials live in `.env` (gitignored). Standard flow: add
+`SOME_TOKEN=…` to `.env`, restart uvicorn, add the connector via
+`POST /api/connectors` (or the UI's Connectors section).
+
+---
+
+## API
+
+```
+GET    /api/sessions                          List all Units (name it says "sessions" internally)
+POST   /api/sessions                          Create a new Unit (auto-hires Supervisor)
+GET    /api/sessions/{id}/team                Current roster
+POST   /api/sessions/{id}/team/design         Design specialists from a prompt
+POST   /api/sessions/{id}/team/members        Add one employee
+DELETE /api/sessions/{id}/team/members/{role} Remove one employee
+POST   /api/sessions/{id}/run                 Run a task on the team (Supervisor pattern)
+GET    /api/sessions/{id}/progress            Poll target for live UI updates
+POST   /api/sessions/{id}/chat                Intent classifier — routes to the right action
+
+GET    /api/connectors                        List MCP connections + available tools
+POST   /api/connectors                        Add/update a connector (name, transport, command, args, env)
+DELETE /api/connectors/{name}                 Remove a connector
+PATCH  /api/connectors/{name}?enabled=false   Toggle without removing
+```
+
+---
+
+## Frontend
+
+Single-file Playground at `frontend_mvp/index.html`. Layout:
+
+- **Left — Studio Chat.** User messages + AI replies + step-checklists as
+  the team works. Chat input at the bottom. Enter to send.
+- **Middle — Canvas / Output tabs.** Canvas shows the team as a
+  horizontal sequential flow with arrows between specialist cards.
+  Cards pulse blue while working, turn green with completeness/fabrication
+  metadata when done. Supervisor card is visually distinct (gold ★
+  avatar, "SUPERVISOR" badge, cannot be deleted). Output tab shows the
+  merged deliverable — and, immediately after specialists are hired, a
+  team-hired report (fast, LLM-free) so the user has something to look
+  at during the ~5-8 min run.
+- **Right — Session / Team / Add Employee / Connectors.** Session
+  dropdown, compact team list (Supervisor pinned first, no × on it),
+  role+mandate add form, expandable Connectors section.
+
+Static file — served by FastAPI from `/`. No build step.
+
+---
+
+## Local run
+
+```bash
+# From the repo root:
+pip install -r backend/requirements.txt
+
+# .env in repo root — add API keys as you configure connectors:
+#   TAVILY_API_KEY=tvly-…
+#   NOTION_TOKEN=ntn_…   (once you set up Notion)
+
+py -3 -m uvicorn backend.app.api.main:app --port 8000
+```
+
+Playground: [http://127.0.0.1:8000](http://127.0.0.1:8000).
+
+**Ollama** (default LLM): the code targets `gpt-oss:120b-cloud` on a
+local Ollama daemon. Free tier of Ollama's cloud-hosted models works
+today; verify at [ollama.com](https://ollama.com) if usage gets heavy.
+
+---
+
+## Setting up connectors
+
+### Tavily search (already live if `.env` has the key)
+
+1. Sign up at [tavily.com](https://tavily.com), grab the API key.
+2. `TAVILY_API_KEY=tvly-…` in `.env`.
+3. Restart uvicorn. Done — every research-shaped task now uses real search.
+
+### Notion via MCP (walkthrough — not yet set up)
+
+1. Create integration at
+   [notion.so/my-integrations](https://www.notion.so/my-integrations).
+   Copy the **Internal Integration Secret** (`ntn_…`).
+2. Share a page/database with the integration (**"…"** → **Connections** →
+   **Add connections** → your integration). Access cascades to child pages.
+3. `NOTION_TOKEN=ntn_…` in `.env`. Restart uvicorn.
+4. In the Playground → Connectors ▾:
+   - Name: `notion`
+   - Command: `npx`
+   - Args: `-y @notionhq/notion-mcp-server`
+   - Env: leave blank (token inherits from `.env`).
+5. First connect takes ~30s (npx download). After that you should see
+   `notion` with a tool count > 0.
+
+### Any other MCP server
+
+Same pattern. Any server that speaks MCP over stdio (subprocess) works
+right now. HTTP transport is scaffolded but not fully implemented yet.
+
+---
+
+## Benchmark thread (context, not action items)
+
+Older but still true: independent judge (`qwen3-coder:480b-cloud`, a
+different model family from the generator) with position-swap control
+showed that multi-agent's *fabrication rate* is measurably lower than
+single-call — **1/10 vs 3/10** across independent checks. The broader
+"is multi-agent smarter overall" question is still open because the
+pairwise judge saturated on position bias in a second run. Next step
+whenever we return to it: absolute-scoring judge instead of pairwise.
+
+Details and the full four-round history are in prior commits and the
+old README (in git history).
+
+---
 
 ## Picking this back up
 
-1. Read "Where things actually stand" above — it's the ground truth, more
-   current than any phase-count in commit messages.
-2. The core-engine question is still open: Round 6 fixed a real fabrication
-   bug (verified independently), but the pairwise judge broke on position
-   bias, so "is multi-agent actually smarter than one call" is unresolved.
-   Next step: an absolute-scoring judge, not pairwise.
-3. Decide Phase 5 (safety guardrails) timing — still just a stopgap. Gets
-   materially more important once Phase 8 (MCP connectors) gives employees
-   real tool access, once employees can spawn mini-employees, and once
-   paid providers enter the mix.
-4. The Employee abstraction has a working v0 (Idea-Validation Employee) —
-   next real work is either richer memory (embeddings), a second employee
-   type to prove the abstraction generalizes, or MCP connectors so
-   employees can act on real tools instead of only generating text.
-5. `git status` — there is usually uncommitted work in progress; check
-   before assuming the phase table above is fully reflected in the working
-   tree.
+1. Read this file — it's the ground truth as of the last push.
+2. Check `HANDOFF.md` in the repo root — session-level details on
+   what was in progress at the end of the previous work day.
+3. Sanity-check: `git status` (uncommitted work), `curl
+   http://127.0.0.1:8000/api/connectors` (is the server up).
+4. Standing rule: every `push` rewrites this README as a full state
+   snapshot, not just the changed diff. Keep that going.
