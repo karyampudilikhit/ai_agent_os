@@ -17,9 +17,21 @@ from backend.app.api.schemas import (
     AddMemberRequest,
     ChatRequest,
     ChatResponse,
+    CompanyCreateRequest,
+    CompanyListResponse,
+    CompanyResponse,
+    CompanyUpdateRequest,
     DesignTeamRequest,
+    EmployeeCreateRequest,
+    EmployeeListResponse,
+    EmployeeResponse,
+    EmployeeUpdateRequest,
+    HireEmployeeRequest,
     HistoryEntry,
     HistoryResponse,
+    HTTPToolListResponse,
+    HTTPToolResponse,
+    HTTPToolSpec,
     MCPConnectionResponse,
     MCPConnectionSpec,
     MCPListResponse,
@@ -44,6 +56,12 @@ from backend.app.employees.idea_validation_employee import IdeaValidationEmploye
 from backend.app.employees.memory_store import EmployeeMemoryStore
 from backend.app.employees.supervisor import default_supervisor_spec
 from backend.app.employees.team_store import TeamStore
+from backend.app.employees.company_store import CompanyStoreError
+from backend.app.employees.company_store import get_store as get_company_store
+from backend.app.employees.employee_registry import EmployeeRegistryError
+from backend.app.employees.employee_registry import get_registry as get_employee_registry
+from backend.app.tools.http_tool_store import HTTPToolStoreError
+from backend.app.tools.http_tool_store import get_store as get_http_tool_store
 from backend.app.tools.mcp_client import get_registry as get_mcp_registry
 from backend.app.tools.mcp_store import get_store as get_mcp_store
 from backend.app.main import _build_adapter, _load_config
@@ -469,3 +487,236 @@ def toggle_connector(name: str, enabled: bool):
         raise HTTPException(status_code=404, detail=f"No connector named {name!r}.")
     get_mcp_registry().reload()
     return {"name": name, "enabled": enabled}
+
+
+# --- Custom HTTP tools: connect any API without an MCP server -------
+#
+# Option B: instead of requiring users to install / find an MCP server
+# for every service, they can paste a curl-shaped spec (URL, method,
+# auth, params) into the UI and it becomes a callable tool for their
+# employees. The MCP planner sees these alongside MCP tools and picks
+# from a unified list.
+
+
+def _http_tool_to_response(spec: dict) -> HTTPToolResponse:
+    """Sanitize a stored HTTP tool spec for the wire — never send
+    auth token or static headers (may contain secrets)."""
+    return HTTPToolResponse(
+        name=spec["name"],
+        description=spec.get("description", ""),
+        method=spec["method"],
+        url=spec["url"],
+        parameters=[
+            {
+                "name": p["name"],
+                "in": p["in"],
+                "description": p.get("description", ""),
+                "required": p.get("required", False),
+            }
+            for p in spec.get("parameters", [])
+        ],
+        enabled=spec.get("enabled", True),
+        auth_type=(spec.get("auth") or {}).get("type", "none"),
+    )
+
+
+@router.get("/http-tools", response_model=HTTPToolListResponse)
+def list_http_tools() -> HTTPToolListResponse:
+    """Every user-defined HTTP tool. Secrets (tokens, basic-auth
+    credentials, static headers) are stripped before returning."""
+    tools = [_http_tool_to_response(t) for t in get_http_tool_store().list()]
+    return HTTPToolListResponse(tools=tools)
+
+
+@router.post("/http-tools", response_model=HTTPToolResponse)
+def add_http_tool(spec: HTTPToolSpec) -> HTTPToolResponse:
+    """Register a new HTTP tool. Store validates method / URL / auth
+    shape and rejects malformed specs with a 400."""
+    payload = spec.model_dump(by_alias=True)
+    try:
+        added = get_http_tool_store().add(payload)
+    except HTTPToolStoreError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _http_tool_to_response(added)
+
+
+@router.delete("/http-tools/{name}")
+def remove_http_tool(name: str):
+    if not get_http_tool_store().delete(name):
+        raise HTTPException(status_code=404, detail=f"No HTTP tool named {name!r}.")
+    return {"removed": name}
+
+
+@router.patch("/http-tools/{name}")
+def toggle_http_tool(name: str, enabled: bool):
+    try:
+        get_http_tool_store().update(name, {"enabled": enabled})
+    except HTTPToolStoreError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"name": name, "enabled": enabled}
+
+
+# --- Hierarchy: Employees + Companies (Phase 1) ---------------------
+#
+# Employee is now a first-class object with a persistent UUID (or a
+# legacy `session_id__role_slug` id for migrated records). The same
+# Employee can be hired into multiple Units. Company is the top-level
+# container that owns Units — Phase 1 gives it structure, Phase 2 will
+# add an active CEO Manager LLM role.
+
+
+def _employee_to_response(spec: dict) -> EmployeeResponse:
+    return EmployeeResponse(
+        id=spec["id"],
+        role=spec.get("role", ""),
+        mandate=spec.get("mandate", ""),
+        avatar_seed=spec.get("avatar_seed", ""),
+        tags=list(spec.get("tags", [])),
+        is_supervisor=bool(spec.get("is_supervisor", False)),
+        created_at=spec.get("created_at"),
+    )
+
+
+@router.get("/employees", response_model=EmployeeListResponse)
+def list_employees() -> EmployeeListResponse:
+    """Every Employee across all Units — the shared identity pool."""
+    return EmployeeListResponse(
+        employees=[_employee_to_response(e) for e in get_employee_registry().list()]
+    )
+
+
+@router.get("/employees/{employee_id}", response_model=EmployeeResponse)
+def get_employee(employee_id: str) -> EmployeeResponse:
+    spec = get_employee_registry().get(employee_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail=f"No Employee with id {employee_id!r}.")
+    return _employee_to_response(spec)
+
+
+@router.post("/employees", response_model=EmployeeResponse)
+def create_employee(req: EmployeeCreateRequest) -> EmployeeResponse:
+    """Create an Employee without attaching to any Unit. Useful when a
+    user wants to build a roster before assigning to projects."""
+    try:
+        spec = get_employee_registry().create(
+            role=req.role,
+            mandate=req.mandate,
+            is_supervisor=req.is_supervisor,
+            tags=req.tags,
+        )
+    except EmployeeRegistryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _employee_to_response(spec)
+
+
+@router.patch("/employees/{employee_id}", response_model=EmployeeResponse)
+def update_employee(employee_id: str, req: EmployeeUpdateRequest) -> EmployeeResponse:
+    try:
+        spec = get_employee_registry().update(
+            employee_id, req.model_dump(exclude_none=True)
+        )
+    except EmployeeRegistryError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _employee_to_response(spec)
+
+
+@router.delete("/employees/{employee_id}")
+def delete_employee(employee_id: str):
+    """Remove an Employee from the registry entirely. Does NOT remove
+    them from any Unit's roster — those references will just fail to
+    resolve on next Unit read and get filtered out."""
+    if not get_employee_registry().delete(employee_id):
+        raise HTTPException(status_code=404, detail=f"No Employee with id {employee_id!r}.")
+    return {"removed": employee_id}
+
+
+@router.post("/units/{unit_id}/hire", response_model=TeamListResponse)
+def hire_into_unit(unit_id: str, req: HireEmployeeRequest) -> TeamListResponse:
+    """Add an EXISTING registry Employee to a Unit. This is the
+    Employee-in-many-places win: same identity, same memory, now
+    working in a second Unit too."""
+    store = TeamStore(unit_id)
+    try:
+        store.hire(req.employee_id, is_supervisor=req.is_supervisor)
+    except EmployeeRegistryError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return TeamListResponse(
+        session_id=unit_id,
+        members=[TeamMemberSpec(**m) for m in store.members()],
+    )
+
+
+def _company_to_response(spec: dict) -> CompanyResponse:
+    return CompanyResponse(
+        id=spec["id"],
+        name=spec.get("name", ""),
+        purpose=spec.get("purpose"),
+        unit_ids=list(spec.get("unit_ids", [])),
+        created_at=spec.get("created_at"),
+    )
+
+
+@router.get("/companies", response_model=CompanyListResponse)
+def list_companies() -> CompanyListResponse:
+    return CompanyListResponse(
+        companies=[_company_to_response(c) for c in get_company_store().list()]
+    )
+
+
+@router.get("/companies/{company_id}", response_model=CompanyResponse)
+def get_company(company_id: str) -> CompanyResponse:
+    spec = get_company_store().get(company_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail=f"No Company with id {company_id!r}.")
+    return _company_to_response(spec)
+
+
+@router.post("/companies", response_model=CompanyResponse)
+def create_company(req: CompanyCreateRequest) -> CompanyResponse:
+    try:
+        spec = get_company_store().create(name=req.name, purpose=req.purpose)
+    except CompanyStoreError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _company_to_response(spec)
+
+
+@router.patch("/companies/{company_id}", response_model=CompanyResponse)
+def update_company(company_id: str, req: CompanyUpdateRequest) -> CompanyResponse:
+    try:
+        spec = get_company_store().update(company_id, req.model_dump(exclude_none=True))
+    except CompanyStoreError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _company_to_response(spec)
+
+
+@router.delete("/companies/{company_id}")
+def delete_company(company_id: str):
+    try:
+        removed = get_company_store().delete(company_id)
+    except CompanyStoreError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"No Company with id {company_id!r}.")
+    return {"removed": company_id}
+
+
+@router.post("/companies/{company_id}/units/{unit_id}", response_model=CompanyResponse)
+def attach_unit_to_company(company_id: str, unit_id: str) -> CompanyResponse:
+    """Attach a Unit to a Company. Also writes company_id back to the
+    Unit's TeamStore so the linkage is bidirectional."""
+    try:
+        spec = get_company_store().add_unit(company_id, unit_id)
+    except CompanyStoreError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    TeamStore(unit_id).set_metadata(company_id=company_id)
+    return _company_to_response(spec)
+
+
+@router.delete("/companies/{company_id}/units/{unit_id}")
+def detach_unit_from_company(company_id: str, unit_id: str):
+    if not get_company_store().remove_unit(company_id, unit_id):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unit {unit_id!r} not attached to Company {company_id!r}.",
+        )
+    return {"detached": unit_id, "from": company_id}

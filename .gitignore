@@ -47,3 +47,6 @@ backend/app/employees/team_data/
 .vscode/
 .idea/
 *.swp
+.http_tools.json
+backend/app/employees/company_data/
+backend/app/employees/data/registry/

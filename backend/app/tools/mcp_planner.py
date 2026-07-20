@@ -19,9 +19,15 @@ import logging
 import re
 from typing import Any, Dict, List, Optional
 
+from backend.app.tools.http_tool_runner import CONNECTION_NAMESPACE as HTTP_NAMESPACE
+from backend.app.tools.http_tool_runner import HTTPToolRunner
 from backend.app.tools.mcp_client import get_registry
 
 logger = logging.getLogger(__name__)
+
+# Shared runner for user-defined HTTP tools. Uniform interface with the
+# MCP registry — the planner merges tools from both when picking calls.
+_http_runner = HTTPToolRunner()
 
 MAX_PLAN_TOKENS = 800
 MAX_TOOL_CALLS_PER_TASK = 4  # bound so an over-eager LLM can't burn quota
@@ -64,9 +70,18 @@ class MCPPlanner:
     def plan_and_execute(self, task: str) -> Optional[str]:
         """Decide which tools to call for this task, call them, return
         a formatted block ready to inject into the employee's prompt.
-        Returns None if no tools available or none picked."""
+        Returns None if no tools available or none picked.
+
+        Tools come from two sources unified into one listing:
+          - MCP servers the user connected in the sidebar
+          - User-defined HTTP tools from HTTPToolStore
+        Both use qualified names ("connection.tool") — the executor
+        routes to the right backend by the connection namespace.
+        """
         registry = get_registry()
-        tools = registry.list_all_tools()
+        mcp_tools = registry.list_all_tools()
+        http_tools = _http_runner.list_tools()
+        tools = mcp_tools + http_tools
         if not tools:
             return None
 
@@ -98,9 +113,15 @@ class MCPPlanner:
                 continue
             if not isinstance(args, dict):
                 args = {}
-            logger.info("MCP call: %s(%s)", qname, json.dumps(args)[:120])
+            logger.info("Tool call: %s(%s)", qname, json.dumps(args)[:120])
+            # Route by namespace: HTTP tools go to the HTTP runner, MCP
+            # tools to the MCP registry. Same call signature both sides.
             try:
-                result_text = registry.call(qname, args)
+                namespace = qname.split(".", 1)[0]
+                if namespace == HTTP_NAMESPACE:
+                    result_text = _http_runner.call(qname, args)
+                else:
+                    result_text = registry.call(qname, args)
             except Exception as exc:  # noqa: BLE001
                 result_text = f"(call failed: {exc})"
             outputs.append(self._format_call(qname, args, result_text))

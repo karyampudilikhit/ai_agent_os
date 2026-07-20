@@ -20,8 +20,10 @@ from typing import Optional
 from backend.app.employees.employee import Employee
 from backend.app.employees.memory_store import EmployeeMemoryStore
 from backend.app.orchestrator.pipeline_controller import Pipeline
+from backend.app.tools.http_tool_store import get_store as get_http_tool_store
 from backend.app.tools.mcp_client import get_registry as get_mcp_registry
 from backend.app.tools.mcp_planner import MCPPlanner
+from backend.app.tools.reddit_reader import RedditReader, should_read_reddit
 from backend.app.tools.web_fetch import WebFetchTool, extract_urls
 from backend.app.tools.web_search import TavilySearchTool, should_search
 
@@ -31,6 +33,7 @@ logger = logging.getLogger(__name__)
 # so we don't pay per-instance init cost. Reads TAVILY_API_KEY from env.
 _web_search = TavilySearchTool()
 _web_fetch = WebFetchTool()
+_reddit = RedditReader()
 
 
 class DynamicEmployee(Employee):
@@ -169,20 +172,38 @@ real one).{web_block}{teammates_block}{history_block}"""
                     web_context_parts.append(_web_fetch.format_for_prompt(deep_pages))
                     logger.info("[%s] deep-read %d Tavily result page(s)", self.role, len(deep_pages))
 
-        # (4) MCP pre-flight: any external tool servers the user has
-        #     connected (Notion, Slack, filesystem, etc.) get their tools
-        #     considered — the planner does one cheap LLM classification
-        #     call to pick which are useful for THIS task, then invokes
-        #     them and hands the outputs back as source data.
-        if get_mcp_registry().list_all_tools():
+        # (3.5) Reddit read-only pull — fires on r/subreddit mentions,
+        #       full reddit.com/r/*/comments/* URLs, or reddit-shaped
+        #       task language ("what are people saying", "community
+        #       sentiment"). Needs REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET;
+        #       silently disabled without them. Read-only; quiet on failure.
+        if _reddit.enabled and should_read_reddit(task):
             try:
-                mcp_context = MCPPlanner(self.pipeline.adapter).plan_and_execute(task)
-                if mcp_context:
-                    web_context_parts.append(mcp_context)
+                reddit_block = _reddit.read_for_task(task)
+                if reddit_block:
+                    web_context_parts.append(reddit_block)
                     used_web = True
-                    logger.info("[%s] MCP tool results injected", self.role)
+                    logger.info("[%s] Reddit context injected", self.role)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("MCP planning failed: %s", exc)
+                logger.warning("Reddit read failed: %s", exc)
+
+        # (4) Tool pre-flight: any external tools the user has connected
+        #     — MCP servers (Notion, Slack, filesystem, etc.) AND custom
+        #     HTTP tools (user's own APIs) — get their tools considered
+        #     by one cheap LLM classification call. The planner picks
+        #     which are useful for THIS task, executes them, and returns
+        #     the outputs as source data.
+        has_mcp = bool(get_mcp_registry().list_all_tools())
+        has_http = bool(get_http_tool_store().enabled())
+        if has_mcp or has_http:
+            try:
+                planner_context = MCPPlanner(self.pipeline.adapter).plan_and_execute(task)
+                if planner_context:
+                    web_context_parts.append(planner_context)
+                    used_web = True
+                    logger.info("[%s] external tool results injected", self.role)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Tool planning failed: %s", exc)
 
         web_context = "\n\n".join(web_context_parts) if web_context_parts else None
 

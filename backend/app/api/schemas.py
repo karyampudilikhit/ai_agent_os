@@ -78,6 +78,12 @@ class TeamMemberSpec(BaseModel):
     role: str = Field(..., min_length=1)
     mandate: str = Field(..., min_length=1)
     is_supervisor: bool = False
+    # Optional: the persistent Employee id backing this roster entry.
+    # Absent for legacy responses (before the Employee registry existed)
+    # and for spec dicts that describe a proposed member before it has
+    # been persisted. Present for any TeamStore-sourced member on or
+    # after schema_version 2.
+    employee_id: Optional[str] = None
 
 
 class SessionSummary(BaseModel):
@@ -152,6 +158,109 @@ class MCPToolInfo(BaseModel):
 class MCPListResponse(BaseModel):
     connections: List[MCPConnectionResponse] = Field(default_factory=list)
     tools: List[MCPToolInfo] = Field(default_factory=list)
+
+
+# --- Custom HTTP tools (Option B: connect any API without an MCP server) ---
+
+class HTTPToolAuthSpec(BaseModel):
+    type: str = Field("none", description="'none' | 'bearer' | 'api_key_header' | 'basic'")
+    token: Optional[str] = Field(None, description="bearer / api_key_header token")
+    header_name: Optional[str] = Field(None, description="api_key_header only — e.g. 'X-API-Key'")
+    username: Optional[str] = Field(None, description="basic only")
+    password: Optional[str] = Field(None, description="basic only")
+
+
+class HTTPToolParameterSpec(BaseModel):
+    name: str
+    in_: str = Field("query", alias="in", description="'query' | 'body' | 'path' | 'header'")
+    description: str = ""
+    required: bool = False
+
+    class Config:
+        populate_by_name = True
+
+
+class HTTPToolSpec(BaseModel):
+    name: str = Field(..., min_length=1, description="Unique alphanumeric slug; tool namespace is 'custom.<name>'.")
+    description: str = ""
+    method: str = Field("GET", description="GET | POST | PUT | PATCH | DELETE")
+    url: str = Field(..., description="Full URL; may include {path_param} placeholders.")
+    auth: HTTPToolAuthSpec = Field(default_factory=HTTPToolAuthSpec)
+    parameters: List[HTTPToolParameterSpec] = Field(default_factory=list)
+    headers: Dict[str, str] = Field(default_factory=dict, description="Static headers merged into every call.")
+    enabled: bool = True
+
+
+class HTTPToolResponse(BaseModel):
+    name: str
+    description: str = ""
+    method: str
+    url: str
+    parameters: List[HTTPToolParameterSpec] = Field(default_factory=list)
+    enabled: bool = True
+    # auth + headers are intentionally omitted from the wire — they hold secrets
+    auth_type: str = "none"
+
+
+class HTTPToolListResponse(BaseModel):
+    tools: List[HTTPToolResponse] = Field(default_factory=list)
+
+
+# --- Hierarchy: Employee registry + Company (Phase 1 of AI hierarchy) ---
+
+class EmployeeCreateRequest(BaseModel):
+    role: str = Field(..., min_length=1)
+    mandate: str = Field(..., min_length=1)
+    is_supervisor: bool = False
+    tags: List[str] = Field(default_factory=list)
+
+
+class EmployeeUpdateRequest(BaseModel):
+    role: Optional[str] = None
+    mandate: Optional[str] = None
+    is_supervisor: Optional[bool] = None
+    tags: Optional[List[str]] = None
+
+
+class EmployeeResponse(BaseModel):
+    id: str
+    role: str
+    mandate: str
+    avatar_seed: str = ""
+    tags: List[str] = Field(default_factory=list)
+    is_supervisor: bool = False
+    created_at: Optional[str] = None
+
+
+class EmployeeListResponse(BaseModel):
+    employees: List[EmployeeResponse] = Field(default_factory=list)
+
+
+class HireEmployeeRequest(BaseModel):
+    employee_id: str
+    is_supervisor: bool = False
+
+
+class CompanyCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1)
+    purpose: Optional[str] = None
+
+
+class CompanyUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    purpose: Optional[str] = None
+
+
+class CompanyResponse(BaseModel):
+    id: str
+    name: str
+    purpose: Optional[str] = None
+    unit_ids: List[str] = Field(default_factory=list)
+    created_at: Optional[str] = None
+
+
+class CompanyListResponse(BaseModel):
+    companies: List[CompanyResponse] = Field(default_factory=list)
 
 
 # --- Chat routing ---

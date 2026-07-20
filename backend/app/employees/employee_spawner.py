@@ -123,16 +123,25 @@ class EmployeeSpawner:
         """Build DynamicEmployees from an already-decided team spec.
         Splits the spec-authoring step from the construction step, so a
         team stored in TeamStore (possibly hand-edited by the user)
-        can still be turned into live employees for a task run."""
-        return [
-            DynamicEmployee(
-                employee_id=f"{session_id}__{self._slugify(member['role'])}",
+        can still be turned into live employees for a task run.
+
+        Uses each member's `employee_id` if the spec came from the
+        registry-backed TeamStore, so this same Employee's memory file
+        is what the task run reads/writes to. Falls back to the legacy
+        `session_id__role_slug` for ad-hoc spec dicts that don't carry
+        an id (e.g. a fresh design_team() output not yet persisted)."""
+        employees: List[DynamicEmployee] = []
+        for member in team_spec:
+            eid = member.get("employee_id") or (
+                f"{session_id}__{self._slugify(member['role'])}"
+            )
+            employees.append(DynamicEmployee(
+                employee_id=eid,
                 role=member["role"],
                 mandate=member["mandate"],
                 pipeline=pipeline,
-            )
-            for member in team_spec
-        ]
+            ))
+        return employees
 
     def _fallback_generalist(self, prompt: str) -> Dict[str, str]:
         return {
