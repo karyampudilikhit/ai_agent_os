@@ -70,11 +70,25 @@ class DynamicEmployee(Employee):
         task: str,
         teammates_context: Optional[str] = None,
         web_context: Optional[str] = None,
+        task_brief: Optional[str] = None,
     ) -> str:
         """Prepend the employee's generated role/mandate so the pipeline
         answers *as* this specific employee. Accepts optional
-        `teammates_context` (Plan B collaboration) and `web_context`
-        (real Tavily search results injected as reading material)."""
+        `teammates_context` (Plan B collaboration), `web_context` (real
+        Tavily search results injected as reading material), and
+        `task_brief` (Supervisor-composed task-specific briefing with
+        playbook quality rules — the "how to be premium-quality"
+        instructions for this specific task).
+
+        Layering (Supervisor-composed briefing is the outermost,
+        highest-priority layer — quality rules come first):
+          1. Task brief from Supervisor (quality rules + task-specific
+             format/failure-mode instructions)
+          2. Employee identity (role + persistent mandate)
+          3. The task itself
+          4. Anti-fabrication baseline
+          5. Web context, teammates, history
+        """
         context = self.memory.relevant_context(task)
         history_block = (
             f"\n\nRelevant history from your prior work for this user:\n{context}"
@@ -87,9 +101,6 @@ class DynamicEmployee(Employee):
             if teammates_context
             else ""
         )
-        # Real-web-data block. When present, tell the employee to prefer
-        # THESE facts over training-data guesses — that's the whole point
-        # of having the connector.
         web_block = (
             f"\n\nReal web search results you can rely on for facts (use "
             f"these over your training memory when they conflict; cite by "
@@ -97,7 +108,17 @@ class DynamicEmployee(Employee):
             if web_context
             else ""
         )
-        return f"""You are the {self.role} on this project team.
+        # Supervisor's task-specific briefing goes FIRST — the quality
+        # rules and failure modes should shape everything the specialist
+        # writes below. Emphasized so weaker models don't skim past.
+        brief_block = (
+            f"BRIEF FROM YOUR SUPERVISOR (follow these instructions exactly — "
+            f"they are what makes this output premium-quality vs. generic):\n"
+            f"{task_brief}\n\n"
+            if task_brief
+            else ""
+        )
+        return f"""{brief_block}You are the {self.role} on this project team.
 
 Your mandate — what only you are responsible for:
 {self.mandate}
@@ -119,6 +140,7 @@ real one).{web_block}{teammates_block}{history_block}"""
         task: str,
         max_refinements: Optional[int] = None,
         teammates_context: Optional[str] = None,
+        task_brief: Optional[str] = None,
     ):
         """Same as Employee.run_task, but threads the (optional)
         teammates_context through build_objective. Overriding here (not
@@ -206,9 +228,14 @@ real one).{web_block}{teammates_block}{history_block}"""
                 logger.warning("Tool planning failed: %s", exc)
 
         web_context = "\n\n".join(web_context_parts) if web_context_parts else None
+        if task_brief:
+            logger.info("[%s] task brief from Supervisor injected", self.role)
 
         objective = self.build_objective(
-            task, teammates_context=teammates_context, web_context=web_context
+            task,
+            teammates_context=teammates_context,
+            web_context=web_context,
+            task_brief=task_brief,
         )
         manager = self.pipeline.run_objective(
             objective,

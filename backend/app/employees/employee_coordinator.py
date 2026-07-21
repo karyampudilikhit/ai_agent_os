@@ -225,6 +225,7 @@ class EmployeeCoordinator:
         for assignment in plan:
             role = assignment.get("role")
             sub_task = assignment.get("sub_task") or prompt
+            task_brief = assignment.get("task_brief")
             employee = by_role.get(role)
             if not employee:
                 continue
@@ -233,7 +234,11 @@ class EmployeeCoordinator:
                 try: on_role_working(role)
                 except Exception: pass  # noqa: BLE001
             logger.info("Supervisor delegating '%s' to %s", sub_task[:60], role)
-            result = employee.run_task(sub_task, teammates_context=teammates_context)
+            result = employee.run_task(
+                sub_task,
+                teammates_context=teammates_context,
+                task_brief=task_brief,
+            )
             # Track under the specialist's role name for progress/UI
             result["role"] = role
             contributions.append(result)

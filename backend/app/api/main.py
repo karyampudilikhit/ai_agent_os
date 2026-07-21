@@ -16,6 +16,18 @@ from __future__ import annotations
 from dotenv import load_dotenv
 load_dotenv()
 
+# Route the Python root logger to INFO so our app-side logs
+# (dynamic_employee's "Tavily returned N result(s)", the MCP planner's
+# "external tool results injected", etc.) actually reach the terminal.
+# uvicorn's `--log-level` only controls uvicorn's OWN logs; without
+# this the root logger defaults to WARNING and silently drops every
+# INFO tool-fire message we rely on when diagnosing a run.
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles

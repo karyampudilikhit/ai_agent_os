@@ -25,39 +25,63 @@ import logging
 import re
 from typing import Any, Dict, List, Optional
 
+from backend.app.employees.playbooks import (
+    classify_task_type,
+    format_rules_for_prompt,
+)
+
 logger = logging.getLogger(__name__)
 
-DELEGATE_MAX_TOKENS = 900
+DELEGATE_MAX_TOKENS = 1600  # bumped from 900 — briefs need room to be substantive
 SYNTH_MAX_TOKENS = 5000
 
 
 DELEGATE_PROMPT = """You are the Supervisor of an AI team. The founder just gave you a task
-and you must decide which of your specialists does what — no more,
-no less.
+and you must decide who does what — AND write each specialist a
+concrete briefing so they know how to produce premium-quality output.
 
 FOUNDER'S TASK:
 "{task}"
 
+TASK TYPE: {task_type}
+
+QUALITY RULES that apply to this task type (weave the relevant ones
+into each specialist's brief — this is how a weaker model produces
+premium-quality output, by following explicit rules rather than
+guessing):
+{playbook_rules}
+
 YOUR TEAM (each specialist is available for delegation):
 {team_snapshot}
 
-Design a delegation plan. Rules:
-- Give each specialist ONE concrete sub-task written for THEM
-  specifically. Not the raw founder prompt.
-- Do NOT give the same work to two specialists. Their sub-tasks should
-  be complementary — different angles of the same overall task.
-- Order matters: earlier specialists' work is available as context to
-  later ones. Put research/analysis first, drafting/production in the
-  middle, review/packaging last.
-- If a specialist has nothing genuinely useful to contribute for THIS
-  particular task, exclude them. Do not invent make-work.
-- Sub-tasks should be one to three sentences each — specific enough
-  that a specialist knows exactly what to produce, short enough to
-  read at a glance.
+Design a delegation plan. For each specialist you use, produce:
+
+1. `sub_task` — ONE concrete sub-task written for them, 1-3 sentences.
+   Do not give the same work to two specialists. Order the plan so
+   research/analysis comes before drafting/synthesis.
+
+2. `task_brief` — a task-specific briefing (~3-6 short sentences or
+   bullets) that combines:
+   • what this specialist should produce for THIS task
+   • the specific quality rules from above that apply to their sub-task
+     (pick the relevant ones — don't dump all of them)
+   • format expectations for their output
+   • the specific failure mode they must avoid (e.g. "don't estimate
+     numbers without URLs", "quote pricing verbatim, don't paraphrase")
+
+Rules for you as Supervisor:
+- Exclude specialists who have nothing useful to contribute. No make-work.
+- Every task_brief must incorporate at least 1-2 of the quality rules
+  above VERBATIM (paraphrasing dilutes them). This is not optional.
+- Keep briefs specific to the sub-task — don't just paste the full
+  rules block. The Market Researcher's brief differs from the
+  Copywriter's brief.
 
 Return JSON only:
 {{"plan": [
-  {{"role": "<exact specialist role name>", "sub_task": "<what they should do for this task>"}},
+  {{"role": "<exact specialist role name>",
+    "sub_task": "<what they should do>",
+    "task_brief": "<the briefing including relevant quality rules>"}},
   ...
 ]}}
 
@@ -101,11 +125,18 @@ CONTENT
 - Merge overlapping content aggressively — don't repeat the same
   point twice.
 - Resolve contradictions in favor of what's most useful.
-- If a data point is missing, just OMIT that row/entry silently. Do
-  NOT write "Not available from supplied sources" or similar noise.
 - Do not fabricate specific statistics. If a number isn't real, describe
   qualitatively (or leave it out).
-- If specialists cited URLs, keep them — founders click them.
+- PRESERVE "unknown" answers from specialists. If a specialist wrote
+  "unknown — no primary source found" for a number, keep that exact
+  phrasing. Do NOT fill in an estimate during synthesis to make the
+  output look complete — an honest "unknown" is the point.
+- PRESERVE URL citations from specialists — a claim followed by a URL
+  in the source draft must keep that URL in the merged output.
+- PRESERVE any adversarial paragraph (a "here's why this might fail"
+  block) from the specialists — don't smooth it out of existence.
+- If a data point is missing AND no specialist marked it unknown, omit
+  the row silently rather than writing "Not available" filler.
 
 Deliverable:"""
 
@@ -117,28 +148,50 @@ class SupervisorPlanner:
     def design_delegation(
         self, task: str, specialists: List[Dict[str, str]]
     ) -> List[Dict[str, str]]:
-        """Returns a list of {role, sub_task} entries in delegation
-        order. Falls back to "everyone does the raw task" if the LLM
-        call fails or the response is unparseable — the specialists
-        still work, just less coordinated."""
+        """Returns a list of {role, sub_task, task_brief} entries in
+        delegation order.
+
+        Classifies the task type first (heuristic), pulls the matching
+        playbook rules, then asks the LLM to compose a delegation plan
+        where each specialist gets both a sub-task AND a task-specific
+        briefing that incorporates the relevant quality rules.
+
+        This is the mechanism that lets a weaker base model produce
+        premium-quality output: the specialist is told EXPLICITLY how
+        to be good (mark unknown, cite verbatim, prove absence, etc.)
+        rather than having to intuit it.
+
+        Falls back to "everyone does the raw task with no brief" if
+        the LLM call fails — specialists still work, just less
+        coordinated and without playbook rules.
+        """
         if not specialists:
             return []
+        task_type = classify_task_type(task)
+        playbook_rules = format_rules_for_prompt(task_type)
+        logger.info("Supervisor classified task as %r; playbook has rules", task_type)
+
         team_snapshot = self._render_team_snapshot(specialists)
         try:
             response = self.adapter.chat_completion(
-                DELEGATE_PROMPT.format(task=task, team_snapshot=team_snapshot),
+                DELEGATE_PROMPT.format(
+                    task=task,
+                    task_type=task_type,
+                    playbook_rules=playbook_rules,
+                    team_snapshot=team_snapshot,
+                ),
                 temperature=0.2,
                 max_tokens=DELEGATE_MAX_TOKENS,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Supervisor delegation call failed: %s", exc)
-            return self._fallback_plan(task, specialists)
+            return self._fallback_plan(task, specialists, task_type)
 
         data = self._extract_json(response) or {}
         plan = data.get("plan")
         if not isinstance(plan, list) or not plan:
             logger.warning("Supervisor delegation response unparseable, using fallback")
-            return self._fallback_plan(task, specialists)
+            return self._fallback_plan(task, specialists, task_type)
 
         cleaned: List[Dict[str, str]] = []
         by_role = {s["role"].lower(): s["role"] for s in specialists}
@@ -147,16 +200,21 @@ class SupervisorPlanner:
                 continue
             role_raw = str(entry.get("role", "")).strip()
             sub_task = str(entry.get("sub_task", "")).strip()
+            task_brief = str(entry.get("task_brief", "")).strip()
             if not role_raw or not sub_task:
                 continue
-            # Map back to the exact spelling of the role (LLMs sometimes
-            # capitalize/rephrase). Skip if not on the team.
             role = by_role.get(role_raw.lower())
             if not role:
                 continue
-            cleaned.append({"role": role, "sub_task": sub_task})
+            item = {"role": role, "sub_task": sub_task}
+            # Only attach the brief if the LLM actually produced one.
+            # A missing brief is not fatal — the specialist can still
+            # run on just the sub_task and its persistent mandate.
+            if task_brief:
+                item["task_brief"] = task_brief
+            cleaned.append(item)
         if not cleaned:
-            return self._fallback_plan(task, specialists)
+            return self._fallback_plan(task, specialists, task_type)
         return cleaned
 
     def synthesize(
@@ -187,10 +245,23 @@ class SupervisorPlanner:
         return response
 
     def _fallback_plan(
-        self, task: str, specialists: List[Dict[str, str]]
+        self,
+        task: str,
+        specialists: List[Dict[str, str]],
+        task_type: str = "general",
     ) -> List[Dict[str, str]]:
+        """When the delegation call fails, still inject the playbook
+        rules as a raw brief so specialists at least see the quality
+        rules — output quality doesn't collapse just because planning
+        did."""
+        rules_block = format_rules_for_prompt(task_type)
+        brief = (
+            f"Quality rules for this task type ({task_type}):\n{rules_block}"
+            if rules_block
+            else ""
+        )
         return [
-            {"role": s["role"], "sub_task": task}
+            {"role": s["role"], "sub_task": task, **({"task_brief": brief} if brief else {})}
             for s in specialists
         ]
 

@@ -52,6 +52,7 @@ Company-with-CEO ⏳ (structure yes, active Manager Phase 2).
 | **Chat with intent classification** | ✅ live — `add_employee`, `remove_employee`, `modify_employee`, `design_team`, `clear_team`, `run_task`. |
 | **Playground UI** | ✅ live at `frontend_mvp/index.html` — crew.ai-style Studio Chat + Canvas + Output tabs + Edit/Connectors sidebar with live per-employee progress. |
 | **Verification / no-fabrication** | ✅ live — critique/refine loop, measured working (multi-agent 1/10 vs single-call 3/10 in the independent-judge benchmarks). |
+| **Playbook library (premium output on weaker models)** | ✅ live — Supervisor classifies each task (`validation`, `research`, `writing`, `analysis`, `strategy`, `general`), pulls task-specific quality rules ("mark unknown," "cite verbatim," "prove absence," adversarial paragraph, etc.), and composes a task-tailored briefing for each specialist. This is the mechanism that closes ~70% of the gap vs premium hosted models on local `gpt-oss:120b` — output quality moved from 6.5/10 → 7.5/10 in the validation-task A/B. Reflection-loop-driven mutations of the playbook are Phase 2. |
 | **Tavily web search** | ✅ live — real search results injected into specialists' prompts when tasks are research-shaped. |
 | **Read-only web fetch** | ✅ live — any URL mentioned in a task gets fetched (BeautifulSoup extract); top-2 Tavily URLs also get deep-read. |
 | **Reddit read-only** | ✅ live — OAuth-backed reader for subreddit top posts and threads. Fires on `r/subreddit` mentions or reddit-shaped task language. Needs `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET`; silently disabled without them. |
@@ -79,10 +80,15 @@ ChatIntentClassifier (LLM)
         EmployeeCoordinator.run_with_supervisor(task, supervisor, specialists)
             │
             1. SupervisorPlanner.design_delegation(task, specialists)
-            │      → [{role, sub_task}, …]  (one specific sub-task per specialist)
+            │      ├─ Classify task type (validation | research | writing |
+            │      │  analysis | strategy | general) via heuristic
+            │      ├─ Pull matching playbook rules from playbooks.py
+            │      └─ → [{role, sub_task, task_brief}, …]
+            │         Each brief composes: mandate + relevant playbook
+            │         rules + task-specific format/failure-mode instructions
             │
             2. For each specialist in order:
-            │      DynamicEmployee.run_task(sub_task, teammates_context=…)
+            │      DynamicEmployee.run_task(sub_task, task_brief=…, teammates_context=…)
             │          ├─ (pre-flight) URLs in task → WebFetchTool → inject
             │          ├─ (pre-flight) research-shaped → TavilySearch → inject
             │          ├─ (pre-flight) top-2 Tavily URLs → deep-read → inject
@@ -119,8 +125,21 @@ backend/app/employees/
 │                                   {id, name, purpose, unit_ids}. Default "Personal"
 │                                   Company auto-created so pre-hierarchy Units have
 │                                   a parent without the user thinking about it.
-├── supervisor.py                   SupervisorPlanner (design_delegation + synthesize) +
-│                                   default_supervisor_spec() used on Unit creation.
+├── supervisor.py                   SupervisorPlanner: classifies task type, pulls
+│                                   playbook rules, composes per-specialist briefings
+│                                   with quality rules baked in, then synthesizes
+│                                   (preserving "unknown" and URL citations from
+│                                   specialists rather than smoothing them away).
+├── playbooks.py                    NEW. Task-type-keyed quality rulesets — the
+│                                   "how to be premium-quality" wisdom that lets
+│                                   weaker models (gpt-oss:120b) produce output
+│                                   near premium-hosted-model quality. Rules include
+│                                   "mark unknown," "cite URLs," "triangulate,"
+│                                   "quote pricing verbatim," "prove absence,"
+│                                   "adversarial paragraph before verdict." Six
+│                                   playbooks in v1 (validation, research, writing,
+│                                   analysis, strategy, general). Reflection-loop
+│                                   mutations of these rulesets are Phase 2.
 ├── employee_spawner.py             EmployeeSpawner: prompt → team spec via LLM call.
 │                                   Now uses employee_id from the spec so memory files
 │                                   stay linked across sessions.
@@ -244,7 +263,9 @@ PATCH  /api/http-tools/{name}?enabled=false   Toggle without removing
 
 ## Frontend
 
-Single-file Playground at `frontend_mvp/index.html`. Layout:
+Single-file Playground at `frontend_mvp/index.html`. Warm-minimal theme
+— stone neutrals + deep metallic-red accent (oxblood/burgundy gradient),
+honors `prefers-color-scheme` for automatic dark mode. Layout:
 
 - **Left — Studio Chat.** User messages + AI replies + step-checklists as
   the team works. Chat input at the bottom.

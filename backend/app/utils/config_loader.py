@@ -155,6 +155,12 @@ class Config(BaseSettings):
     class Config:
         env_file = ".env"
         env_nested_delimiter = "__"
+        # Ignore env vars we don't declare — TAVILY_API_KEY,
+        # NOTION_TOKEN, REDDIT_CLIENT_ID, etc. are consumed directly by
+        # their tools via os.environ; they don't belong in this schema.
+        # Without this, BaseSettings' default `extra="forbid"` raises on
+        # every unrelated env var and the whole pipeline degrades.
+        extra = "ignore"
 
 def load_config(config_path: str = None) -> Config:
     """
