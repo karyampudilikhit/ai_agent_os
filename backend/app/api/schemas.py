@@ -263,6 +263,27 @@ class CompanyListResponse(BaseModel):
     companies: List[CompanyResponse] = Field(default_factory=list)
 
 
+# --- Company-level task run (Phase 2 hierarchy — CEO Manager) ---
+
+class CompanyRunRequest(BaseModel):
+    task: str = Field(..., min_length=1, description="The Company-level task to delegate across Units.")
+
+
+class CompanyRunUnitContribution(BaseModel):
+    unit_id: str
+    unit_name: Optional[str] = None
+    output: Optional[str] = None
+    supervisor_role: Optional[str] = None
+
+
+class CompanyRunResponse(BaseModel):
+    company_id: str
+    company_name: Optional[str] = None
+    final_output: str
+    plan: List[Dict[str, Any]] = Field(default_factory=list)
+    unit_contributions: List[CompanyRunUnitContribution] = Field(default_factory=list)
+
+
 # --- Chat routing ---
 
 class ChatRequest(BaseModel):

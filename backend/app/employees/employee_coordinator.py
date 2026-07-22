@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
+from backend.app.employees.ceo_manager import CEOManager
 from backend.app.employees.dynamic_employee import DynamicEmployee
 from backend.app.employees.supervisor import SupervisorPlanner
 from backend.app.orchestrator.pipeline_controller import Pipeline
@@ -263,4 +264,122 @@ class EmployeeCoordinator:
             "contributions": contributions,
             "plan": plan,
             "supervisor_role": supervisor.role,
+        }
+
+    # ------------------------------------------------------------------
+    # Company-level run — Phase 2 of the hierarchy.
+    #
+    # The CEO takes a Company-wide task, decides which Units handle
+    # which pieces, delegates to each Unit's Supervisor (which runs its
+    # own team of specialists), then synthesizes across Units into one
+    # Company-level deliverable in the CEO's voice.
+    #
+    # Pattern mirrors run_with_supervisor exactly — same lifecycle, one
+    # altitude higher.
+    # ------------------------------------------------------------------
+
+    def run_with_ceo(
+        self,
+        prompt: str,
+        company: Dict[str, Any],
+        units: List[Dict[str, Any]],
+        unit_runner,
+        on_planning=None,
+        on_delegated=None,
+        on_unit_working=None,
+        on_unit_done=None,
+        on_synthesizing=None,
+    ) -> Dict[str, Any]:
+        """CEO-led Company-wide execution.
+
+        Params:
+          company     : dict with {id, name, purpose} — for the CEO's
+                        situational awareness in the delegation prompt.
+          units       : list of dicts describing each Unit the CEO can
+                        delegate to. Each item:
+                            {unit_id, name, purpose, members: [...]}
+                        Same shape CEOManager expects.
+          unit_runner : callable (unit_id, sub_task, unit_brief) ->
+                        {output, team, plan, contributions, ...}
+                        The route provides this — it constructs the
+                        Unit's pipeline + supervisor + specialists and
+                        calls run_with_supervisor(). Keeping the runner
+                        injectable means this method has no dependency
+                        on the API/route wiring.
+
+        Falls back gracefully at each stage: if CEO planning fails,
+        every Unit gets the raw prompt; if synthesis fails, raw concat
+        of Unit outputs.
+        """
+        if not units:
+            raise ValueError("run_with_ceo requires at least one Unit")
+
+        ceo = CEOManager(model_adapter=self.pipeline.adapter)
+
+        if on_planning:
+            try: on_planning()
+            except Exception: pass  # noqa: BLE001
+
+        plan = ceo.plan_company_delegation(prompt, company, units)
+        logger.info("CEO plan: %d Unit assignment(s)", len(plan))
+
+        if on_delegated:
+            try: on_delegated(plan)
+            except Exception: pass  # noqa: BLE001
+
+        # Map unit_id -> unit dict for name/roster lookup during dispatch
+        by_unit_id = {u["unit_id"]: u for u in units}
+
+        unit_contributions: List[Dict[str, Any]] = []
+        for assignment in plan:
+            uid = assignment.get("unit_id")
+            sub_task = assignment.get("sub_task") or prompt
+            unit_brief = assignment.get("unit_brief")
+            unit_info = by_unit_id.get(uid)
+            if not unit_info:
+                continue
+
+            if on_unit_working:
+                try: on_unit_working(uid, unit_info)
+                except Exception: pass  # noqa: BLE001
+
+            logger.info(
+                "CEO delegating to Unit %s (%s): %s",
+                uid, unit_info.get("name") or "(unnamed)", sub_task[:60]
+            )
+
+            try:
+                unit_result = unit_runner(uid, sub_task, unit_brief)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Unit %s run failed: %s", uid, exc)
+                unit_result = {"output": f"(Unit {uid} failed: {exc})"}
+
+            entry = {
+                "unit_id": uid,
+                "unit_name": unit_info.get("name"),
+                "output": (unit_result or {}).get("final_output")
+                    or (unit_result or {}).get("output"),
+                "supervisor_role": (unit_result or {}).get("supervisor_role"),
+                "team": (unit_result or {}).get("team") or [],
+            }
+            unit_contributions.append(entry)
+
+            if on_unit_done:
+                try: on_unit_done(uid, entry)
+                except Exception: pass  # noqa: BLE001
+
+        if on_synthesizing:
+            try: on_synthesizing()
+            except Exception: pass  # noqa: BLE001
+
+        merged = ceo.synthesize(prompt, unit_contributions) if unit_contributions else None
+        if not merged:
+            merged = ceo._raw_concat(unit_contributions)  # noqa: SLF001 — internal fallback
+
+        return {
+            "company_id": company.get("id"),
+            "company_name": company.get("name"),
+            "final_output": merged,
+            "plan": plan,
+            "unit_contributions": unit_contributions,
         }

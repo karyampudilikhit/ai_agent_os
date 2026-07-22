@@ -9,7 +9,7 @@ a later concern once there's real traffic to justify it.
 from __future__ import annotations
 
 import uuid
-from typing import List
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 
@@ -20,6 +20,9 @@ from backend.app.api.schemas import (
     CompanyCreateRequest,
     CompanyListResponse,
     CompanyResponse,
+    CompanyRunRequest,
+    CompanyRunResponse,
+    CompanyRunUnitContribution,
     CompanyUpdateRequest,
     DesignTeamRequest,
     EmployeeCreateRequest,
@@ -720,3 +723,136 @@ def detach_unit_from_company(company_id: str, unit_id: str):
             detail=f"Unit {unit_id!r} not attached to Company {company_id!r}.",
         )
     return {"detached": unit_id, "from": company_id}
+
+
+# --- Company-level task run (Phase 2 hierarchy — CEO Manager) -------
+#
+# The CEO takes a Company-wide task, decides which Units handle which
+# piece, delegates to each Unit's Supervisor (which runs its own team
+# of specialists via the Phase 1 flow), then synthesizes across Units
+# into one Company-level deliverable.
+
+
+@router.post("/companies/{company_id}/run", response_model=CompanyRunResponse)
+def run_task_on_company(
+    company_id: str, req: CompanyRunRequest
+) -> CompanyRunResponse:
+    """Run a task through a Company's CEO Manager. The CEO plans
+    delegation across Units, each Unit runs its normal Supervisor
+    flow, then the CEO synthesizes."""
+    company = get_company_store().get(company_id)
+    if not company:
+        raise HTTPException(
+            status_code=404, detail=f"No Company with id {company_id!r}."
+        )
+    unit_ids = list(company.get("unit_ids") or [])
+    if not unit_ids:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This Company has no Units attached. Create Units first, "
+                "attach them via POST /companies/{id}/units/{unit_id}."
+            ),
+        )
+
+    # Build the units snapshot the CEO's planner needs: id + name +
+    # purpose + roster. Silently skip any unit_ids whose team store
+    # is empty (dangling references from a deleted Unit).
+    units_for_ceo: List[Dict] = []
+    for uid in unit_ids:
+        store = TeamStore(uid)
+        members = store.members()
+        if not members:
+            continue
+        units_for_ceo.append({
+            "unit_id": uid,
+            "name": store.name() or uid,
+            "purpose": store.purpose() or "",
+            "members": [
+                {
+                    "role": m.get("role"),
+                    "mandate": m.get("mandate"),
+                    "is_supervisor": bool(m.get("is_supervisor")),
+                }
+                for m in members
+            ],
+        })
+    if not units_for_ceo:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "None of this Company's Units have staffed teams. "
+                "Design a team on at least one Unit first."
+            ),
+        )
+
+    # Build ONE pipeline shared across the CEO plan + all Unit runs,
+    # so we're not paying per-Unit init cost. Each Unit still gets its
+    # own EmployeeSpawner call (Supervisor + specialists instantiated
+    # fresh per run to pick up any roster edits since last run).
+    pipeline = _build_pipeline()
+    coordinator = EmployeeCoordinator(pipeline=pipeline)
+    spawner = EmployeeSpawner(model_adapter=pipeline.adapter)
+
+    def _run_one_unit(uid: str, sub_task: str, unit_brief: Optional[str]):
+        """The CEO hands us (unit_id, sub_task, unit_brief). We
+        materialize that Unit's Supervisor + specialists and run its
+        normal Phase 1 flow. Unit brief is prepended to the sub_task so
+        the Unit's Supervisor sees the Company-level context above the
+        specialist-level detail."""
+        store = TeamStore(uid)
+        supervisor_spec = store.supervisor()
+        if not supervisor_spec:
+            sup = default_supervisor_spec()
+            supervisor_spec = store.add_member(
+                sup["role"], sup["mandate"], is_supervisor=True
+            )
+        specialist_specs = store.specialists()
+
+        supervisor_employee = spawner.instantiate(
+            [supervisor_spec], pipeline=pipeline, session_id=uid
+        )[0]
+        specialists = spawner.instantiate(
+            specialist_specs, pipeline=pipeline, session_id=uid
+        )
+
+        enriched_prompt = sub_task
+        if unit_brief:
+            enriched_prompt = (
+                f"CONTEXT FROM YOUR COMPANY'S CEO:\n{unit_brief}\n\n"
+                f"YOUR UNIT'S ASSIGNMENT:\n{sub_task}"
+            )
+
+        return coordinator.run_with_supervisor(
+            prompt=enriched_prompt,
+            supervisor=supervisor_employee,
+            specialists=specialists,
+        )
+
+    try:
+        result = coordinator.run_with_ceo(
+            prompt=req.task,
+            company=company,
+            units=units_for_ceo,
+            unit_runner=_run_one_unit,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=502, detail=f"Company run failed: {exc}"
+        ) from exc
+
+    return CompanyRunResponse(
+        company_id=result.get("company_id") or company_id,
+        company_name=result.get("company_name"),
+        final_output=result.get("final_output") or "",
+        plan=result.get("plan") or [],
+        unit_contributions=[
+            CompanyRunUnitContribution(
+                unit_id=c["unit_id"],
+                unit_name=c.get("unit_name"),
+                output=c.get("output"),
+                supervisor_role=c.get("supervisor_role"),
+            )
+            for c in result.get("unit_contributions", [])
+        ],
+    )

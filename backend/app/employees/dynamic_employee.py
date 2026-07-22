@@ -102,9 +102,16 @@ class DynamicEmployee(Employee):
             else ""
         )
         web_block = (
-            f"\n\nReal web search results you can rely on for facts (use "
-            f"these over your training memory when they conflict; cite by "
-            f"URL if you quote specific numbers):\n{web_context}"
+            f"\n\nReal web search results, provided as SUPPLEMENTARY source "
+            f"material (cite by URL if you quote specific numbers):\n{web_context}"
+            f"\n\nHow to use these results: prefer them over your training "
+            f"memory for current/changing facts. BUT if the results are "
+            f"incomplete, conflicting, or don't clearly answer the question, "
+            f"do NOT fabricate a precise-looking justification (a table of "
+            f"dates, a specific figure) that the sources don't actually "
+            f"support. In that case, give your best-supported answer and "
+            f"state the uncertainty plainly, or say the specific detail is "
+            f"unclear from the sources."
             if web_context
             else ""
         )
@@ -134,6 +141,47 @@ Do not fabricate specific statistics, survey results, or claims that
 work has already been completed. If you don't know a real number,
 describe things qualitatively (unless the web results below give you a
 real one).{web_block}{teammates_block}{history_block}"""
+
+    # Cheap LLM gate deciding whether a task genuinely needs external /
+    # current data before we fire Tavily. The benchmark exposed the bug
+    # this fixes: the keyword-only should_search() heuristic fired
+    # search on simple, stable factual questions the base model already
+    # knew (e.g. "how many moons does Mars have") — and noisy/conflicting
+    # search results then FLIPPED a correct recall into a confident
+    # fabrication (it invented a wrong Node.js LTS table). Tools should
+    # add live facts the model lacks, never override facts it has.
+    _LOOKUP_GATE_PROMPT = (
+        "Decide whether answering the following accurately REQUIRES looking up "
+        "current, changing, or external information — e.g. current prices, "
+        "latest software versions, recent events, live metrics, specific "
+        "niche/company details, or anything that changes over time or that a "
+        "general-purpose model would not reliably know.\n\n"
+        "If it can be answered reliably from stable, well-established general "
+        "knowledge (history, science, geography, definitions, famous facts), "
+        "it does NOT need a lookup.\n\n"
+        "Question/task:\n\"{task}\"\n\n"
+        "Reply with exactly one word: LOOKUP or DIRECT."
+    )
+
+    def _needs_external_lookup(self, task: str) -> bool:
+        """True when the task genuinely needs live/external data. Gates
+        the Tavily search so we don't inject noise into questions the
+        model can already answer. Fails OPEN (returns True) on any error
+        — better to search unnecessarily than to miss a needed lookup."""
+        try:
+            verdict = (self.pipeline.adapter.chat_completion(
+                self._LOOKUP_GATE_PROMPT.format(task=task[:600]),
+                temperature=0.0,
+                max_tokens=600,  # reasoning model needs room to emit the word
+                format=None,
+            ) or "").strip().upper()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[%s] lookup gate failed, defaulting to search: %s", self.role, exc)
+            return True
+        if "DIRECT" in verdict and "LOOKUP" not in verdict:
+            logger.info("[%s] lookup gate: DIRECT — skipping web search", self.role)
+            return False
+        return True
 
     def run_task(
         self,
@@ -170,9 +218,19 @@ real one).{web_block}{teammates_block}{history_block}"""
                 used_web = True
                 logger.info("[%s] fetched %d URL(s) mentioned in task", self.role, len(pages))
 
-        # (2) Tavily search when the task sounds research-shaped
+        # (2) Tavily search — but ONLY when the task genuinely needs
+        #     external/current data. Two-stage gate:
+        #       a) cheap keyword pre-filter (should_search) — skips the
+        #          LLM gate entirely for obviously-non-research tasks
+        #          ("write a poem"), preserving the fast path.
+        #       b) cheap LLM gate (_needs_external_lookup) — for tasks
+        #          that pass the keyword filter, confirm they actually
+        #          need a lookup vs. being stable general knowledge.
+        #     This stops search noise from overriding facts the model
+        #     already knows (the Node.js-LTS fabrication the benchmark
+        #     caught).
         search_results = []
-        if _web_search.enabled and should_search(task):
+        if _web_search.enabled and should_search(task) and self._needs_external_lookup(task):
             try:
                 search_results = _web_search.search(task, max_results=5)
                 if search_results:
