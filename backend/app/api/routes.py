@@ -19,6 +19,7 @@ from backend.app.api.schemas import (
     ChatResponse,
     CompanyCreateRequest,
     CompanyListResponse,
+    EvidenceClaim,
     CompanyResponse,
     CompanyRunRequest,
     CompanyRunResponse,
@@ -29,6 +30,12 @@ from backend.app.api.schemas import (
     EmployeeListResponse,
     EmployeeResponse,
     EmployeeUpdateRequest,
+    HierarchyAppliedUnit,
+    HierarchyApplyRequest,
+    HierarchyApplyResponse,
+    HierarchyDesignRequest,
+    HierarchyDesignResponse,
+    HierarchyUnitSpec,
     HireEmployeeRequest,
     HistoryEntry,
     HistoryResponse,
@@ -57,6 +64,8 @@ from backend.app.employees.employee_coordinator import EmployeeCoordinator
 from backend.app.employees.employee_spawner import EmployeeSpawner
 from backend.app.employees.idea_validation_employee import IdeaValidationEmployee
 from backend.app.employees.memory_store import EmployeeMemoryStore
+from backend.app.employees.ceo_manager import default_ceo_spec
+from backend.app.employees.hierarchy_designer import HierarchyDesigner
 from backend.app.employees.supervisor import default_supervisor_spec
 from backend.app.employees.team_store import TeamStore
 from backend.app.employees.company_store import CompanyStoreError
@@ -65,6 +74,9 @@ from backend.app.employees.employee_registry import EmployeeRegistryError
 from backend.app.employees.employee_registry import get_registry as get_employee_registry
 from backend.app.tools.http_tool_store import HTTPToolStoreError
 from backend.app.tools.http_tool_store import get_store as get_http_tool_store
+
+from backend.app.actions.action_registry import get_registry as get_action_registry
+from backend.app.actions.approval_queue import ApprovalQueueError, get_queue as get_approval_queue
 from backend.app.tools.mcp_client import get_registry as get_mcp_registry
 from backend.app.tools.mcp_store import get_store as get_mcp_store
 from backend.app.main import _build_adapter, _load_config
@@ -304,6 +316,7 @@ def run_task_on_team(session_id: str, req: RunTaskRequest) -> RunTaskResponse:
         task=req.task,
         team=[TeamMemberSummary(**m) for m in result.get("team", [])],
         final_output=result.get("final_output") or "",
+        evidence=[EvidenceClaim(**c) for c in result.get("evidence", [])],
     )
 
 
@@ -655,8 +668,24 @@ def _company_to_response(spec: dict) -> CompanyResponse:
         name=spec.get("name", ""),
         purpose=spec.get("purpose"),
         unit_ids=list(spec.get("unit_ids", [])),
+        ceo_employee_id=spec.get("ceo_employee_id"),
         created_at=spec.get("created_at"),
     )
+
+
+def _ensure_ceo(company: dict) -> dict:
+    """Backfill a CEO on old Companies that were created before Phase 3a.
+    Returns the (possibly-updated) company spec. Idempotent."""
+    if company.get("ceo_employee_id"):
+        return company
+    registry = get_employee_registry()
+    spec = default_ceo_spec(company_name=company.get("name"))
+    ceo = registry.create(
+        role=spec["role"], mandate=spec["mandate"], is_supervisor=False,
+        tags=["ceo", f"company:{company['id']}"],
+    )
+    updated = get_company_store().set_ceo(company["id"], ceo["id"])
+    return updated
 
 
 @router.get("/companies", response_model=CompanyListResponse)
@@ -676,10 +705,15 @@ def get_company(company_id: str) -> CompanyResponse:
 
 @router.post("/companies", response_model=CompanyResponse)
 def create_company(req: CompanyCreateRequest) -> CompanyResponse:
+    """Create a Company AND auto-hire its CEO (Phase 3a). Mirrors how
+    a new Unit auto-hires a Supervisor. The CEO is a real Employee in
+    the registry — persistent id, memory, appears in the org tree."""
     try:
         spec = get_company_store().create(name=req.name, purpose=req.purpose)
     except CompanyStoreError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Auto-hire the CEO right after Company creation.
+    spec = _ensure_ceo(spec)
     return _company_to_response(spec)
 
 
@@ -723,6 +757,114 @@ def detach_unit_from_company(company_id: str, unit_id: str):
             detail=f"Unit {unit_id!r} not attached to Company {company_id!r}.",
         )
     return {"detached": unit_id, "from": company_id}
+
+
+# --- Prompt-driven hierarchy design (Phase 3a) ----------------------
+#
+# Founder tells the CEO what the company is building. The CEO proposes
+# a whole org chart in one call — Units + each Unit's initial roster.
+# Nothing is persisted at design time; the founder reviews/edits, then
+# POSTs the (possibly-modified) hierarchy to /apply_hierarchy to
+# materialize it. Two-step so the founder is always in control of what
+# actually gets created.
+
+
+@router.post("/companies/{company_id}/design_hierarchy",
+             response_model=HierarchyDesignResponse)
+def design_company_hierarchy(
+    company_id: str, req: HierarchyDesignRequest,
+) -> HierarchyDesignResponse:
+    """CEO proposes an org chart from a plain-English company
+    description. Returns unsaved specs — nothing exists in the store
+    yet. The founder reviews/edits before POSTing to apply."""
+    company = get_company_store().get(company_id)
+    if not company:
+        raise HTTPException(
+            status_code=404, detail=f"No Company with id {company_id!r}.",
+        )
+    company = _ensure_ceo(company)  # backfill CEO on legacy Companies
+
+    pipeline = _build_pipeline()
+    designer = HierarchyDesigner(model_adapter=pipeline.adapter)
+    proposed = designer.design(req.description)
+
+    return HierarchyDesignResponse(
+        company_id=company_id,
+        units=[
+            HierarchyUnitSpec(
+                name=u["name"],
+                purpose=u["purpose"],
+                specialists=[
+                    TeamMemberSpec(role=s["role"], mandate=s["mandate"])
+                    for s in u.get("specialists", [])
+                ],
+            )
+            for u in proposed
+        ],
+    )
+
+
+@router.post("/companies/{company_id}/apply_hierarchy",
+             response_model=HierarchyApplyResponse)
+def apply_company_hierarchy(
+    company_id: str, req: HierarchyApplyRequest,
+) -> HierarchyApplyResponse:
+    """Materialize a proposed hierarchy. For each Unit in the request:
+    creates a real Unit (TeamStore), attaches it to the Company, adds
+    its Supervisor (auto), and hires the given specialists.
+
+    Idempotent-ish: each call creates fresh Unit ids, so calling twice
+    just doubles the Units. The frontend is responsible for the flow
+    (propose → review → apply once)."""
+    company = get_company_store().get(company_id)
+    if not company:
+        raise HTTPException(
+            status_code=404, detail=f"No Company with id {company_id!r}.",
+        )
+    if not req.units:
+        raise HTTPException(
+            status_code=400,
+            detail="apply_hierarchy needs at least one Unit to materialize.",
+        )
+
+    materialized: List[HierarchyAppliedUnit] = []
+    for unit_spec in req.units:
+        # 1. Fresh Unit id
+        unit_id = TeamStore.new_session_id()
+        store = TeamStore(unit_id)
+        # 2. Metadata (name + purpose + parent Company)
+        store.set_metadata(
+            name=unit_spec.name,
+            purpose=unit_spec.purpose,
+            company_id=company_id,
+        )
+        # 3. Auto-hire the Supervisor. Pass the Unit's NAME (not its
+        #    full purpose sentence) so the role reads cleanly, e.g.
+        #    "Product Development Unit Supervisor" rather than the whole
+        #    purpose ".Title()'d" into a giant string.
+        sup_hint = unit_spec.name.strip()
+        if sup_hint.lower().endswith(" unit"):
+            sup_hint = sup_hint[: -len(" unit")].strip()
+        sup = default_supervisor_spec(unit_purpose=sup_hint or None)
+        store.add_member(sup["role"], sup["mandate"], is_supervisor=True)
+        # 4. Add specialists from the (possibly-edited) spec
+        for s in unit_spec.specialists:
+            if s.is_supervisor:
+                continue  # already added the Supervisor
+            store.add_member(s.role, s.mandate)
+        # 5. Attach Unit to the Company
+        get_company_store().add_unit(company_id, unit_id)
+
+        materialized.append(HierarchyAppliedUnit(
+            unit_id=unit_id,
+            name=unit_spec.name,
+            specialist_count=len(unit_spec.specialists),
+        ))
+
+    return HierarchyApplyResponse(
+        company_id=company_id,
+        units=materialized,
+    )
 
 
 # --- Company-level task run (Phase 2 hierarchy — CEO Manager) -------
@@ -855,4 +997,55 @@ def run_task_on_company(
             )
             for c in result.get("unit_contributions", [])
         ],
+        evidence=[EvidenceClaim(**c) for c in result.get("evidence", [])],
     )
+
+
+# ---------------------------------------------------------------------------
+# Action tools (send email, post Slack, write file …)
+# ---------------------------------------------------------------------------
+
+@router.get("/actions")
+def list_action_tools():
+    """Enumerate the built-in action tools available to specialists."""
+    return {"tools": get_action_registry().list_tools()}
+
+
+@router.get("/pending_actions")
+def list_pending_actions(status: Optional[str] = None):
+    """List pending / resolved actions. Filter by status if provided."""
+    items = get_approval_queue().list(status=status)
+    return {"items": items}
+
+
+@router.post("/pending_actions/{action_id}/approve")
+def approve_pending_action(action_id: str):
+    """Mark a pending action approved AND execute it inline. Returns
+    the updated record so the UI can show the result."""
+    queue = get_approval_queue()
+    record = queue.get(action_id)
+    if not record:
+        raise HTTPException(404, f"no pending action {action_id!r}")
+    if record["status"] != "pending":
+        raise HTTPException(409, f"action already {record['status']!r}, not pending")
+    try:
+        queue.set_status(action_id, "approved")
+    except ApprovalQueueError as exc:
+        raise HTTPException(400, str(exc))
+    updated = get_action_registry().execute_now(action_id)
+    return {"action": updated}
+
+
+@router.post("/pending_actions/{action_id}/reject")
+def reject_pending_action(action_id: str, reason: Optional[str] = None):
+    queue = get_approval_queue()
+    record = queue.get(action_id)
+    if not record:
+        raise HTTPException(404, f"no pending action {action_id!r}")
+    if record["status"] != "pending":
+        raise HTTPException(409, f"action already {record['status']!r}, not pending")
+    try:
+        updated = queue.set_status(action_id, "rejected", error=reason or None)
+    except ApprovalQueueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"action": updated}

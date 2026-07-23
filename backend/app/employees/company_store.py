@@ -137,9 +137,25 @@ class CompanyStore:
                 "name": name,
                 "purpose": (purpose or "").strip() or None,
                 "unit_ids": [],
+                # The CEO Employee id. Set by the API layer right after
+                # Company creation (registry lives outside this store).
+                # Phase 3a: mirrors how Units get a Supervisor.
+                "ceo_employee_id": None,
                 "created_at": _now_iso(),
             }
             self._write(spec)
+            return dict(spec)
+
+    def set_ceo(self, company_id: str, employee_id: str) -> Dict[str, Any]:
+        """Attach a CEO Employee to this Company. Idempotent — reattaching
+        the same employee_id is a no-op."""
+        with self._lock:
+            spec = self._read(company_id)
+            if not spec:
+                raise CompanyStoreError(f"no Company with id {company_id!r}")
+            if spec.get("ceo_employee_id") != employee_id:
+                spec["ceo_employee_id"] = employee_id
+                self._write(spec)
             return dict(spec)
 
     def get(self, company_id: str) -> Optional[Dict[str, Any]]:

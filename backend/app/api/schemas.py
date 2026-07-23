@@ -118,11 +118,23 @@ class RunTaskRequest(BaseModel):
     task: str = Field(..., min_length=1)
 
 
+class EvidenceClaim(BaseModel):
+    """One factual claim extracted from a deliverable, with its
+    verification status made explicit instead of left buried in prose.
+    See backend/app/critique/evidence_extractor.py for why this exists —
+    a blind benchmark proved that verification left as an exercise for
+    the reader gets skipped, even by other AI judges."""
+    text: str
+    status: str  # "verified" | "flagged_unknown" | "unsourced_claim"
+    source: str = ""
+
+
 class RunTaskResponse(BaseModel):
     session_id: str
     task: str
     team: List[TeamMemberSummary] = Field(default_factory=list)
     final_output: str
+    evidence: List[EvidenceClaim] = Field(default_factory=list)
 
 
 # --- MCP connectors ---
@@ -256,7 +268,53 @@ class CompanyResponse(BaseModel):
     name: str
     purpose: Optional[str] = None
     unit_ids: List[str] = Field(default_factory=list)
+    # The CEO Employee id (Phase 3a). Absent on Companies created
+    # before CEO auto-hire existed — the API endpoints treat that
+    # case as "backfill on first use" so old data doesn't break.
+    ceo_employee_id: Optional[str] = None
     created_at: Optional[str] = None
+
+
+# --- Hierarchy design (Phase 3a — Company org chart from a description) ---
+
+class HierarchyDesignRequest(BaseModel):
+    """Founder describes their company in plain English; the CEO
+    proposes an initial org chart."""
+    description: str = Field(..., min_length=1, description="Founder's plain-English description of what the company is building.")
+
+
+class HierarchyUnitSpec(BaseModel):
+    """One proposed Unit from the CEO's design pass. Not yet persisted —
+    the founder reviews/edits before it materializes."""
+    name: str
+    purpose: str
+    specialists: List[TeamMemberSpec] = Field(default_factory=list)
+
+
+class HierarchyDesignResponse(BaseModel):
+    """The CEO's proposed org chart. Units are unsaved specs until the
+    founder POSTs to /apply_hierarchy."""
+    company_id: str
+    units: List[HierarchyUnitSpec] = Field(default_factory=list)
+
+
+class HierarchyApplyRequest(BaseModel):
+    """Materialize a proposed (possibly edited) hierarchy: for each
+    Unit in the list, create a real Unit, attach it to the Company,
+    and stock its team with the given specialists. Idempotent-ish:
+    a Unit with a duplicate name is fine, they just get separate IDs."""
+    units: List[HierarchyUnitSpec] = Field(default_factory=list)
+
+
+class HierarchyAppliedUnit(BaseModel):
+    unit_id: str
+    name: str
+    specialist_count: int
+
+
+class HierarchyApplyResponse(BaseModel):
+    company_id: str
+    units: List[HierarchyAppliedUnit] = Field(default_factory=list)
 
 
 class CompanyListResponse(BaseModel):
@@ -282,6 +340,7 @@ class CompanyRunResponse(BaseModel):
     final_output: str
     plan: List[Dict[str, Any]] = Field(default_factory=list)
     unit_contributions: List[CompanyRunUnitContribution] = Field(default_factory=list)
+    evidence: List[EvidenceClaim] = Field(default_factory=list)
 
 
 # --- Chat routing ---

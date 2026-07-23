@@ -6,8 +6,10 @@ persistent team of AI employees who don't fabricate evidence and
 actually do the work using the tools you already use.
 
 **The pitch, in one sentence:** everyone else's AI writes about the work;
-ours does it, and every deliverable is verification-gated so nothing
-hallucinated ships.
+ours does it — sends the emails, posts the Slack, writes the file — and
+every deliverable is verification-gated so nothing hallucinated ships.
+Mutating actions never fire without a founder tap; the approval gate is
+what makes "AI does the work" safe.
 
 Founders first, general audience later. Flat-monthly SaaS pricing
 (~$29-49/mo unlimited, small free tier) — no per-seat, no per-task
@@ -34,9 +36,11 @@ read it and pick up without re-deriving anything from the diff.
   supervisor-of-supervisors) is Phase 2.
 
 The "B, B" hierarchy decision — Employees exist in many containers, and
-containers are active with their own Managers — is now half-shipped:
+containers are active with their own Managers — is fully shipped:
 Employee-first-class ✅, Unit-with-Manager ✅ (Supervisor pattern),
-Company-with-CEO ⏳ (structure yes, active Manager Phase 2).
+Company-with-CEO ✅ (CEO Manager, Phase 2), prompt-driven org design ✅
+(Phase 3a — describe the company, CEO proposes the org chart, founder
+approves, Units + specialists auto-hire).
 
 ---
 
@@ -58,9 +62,15 @@ Company-with-CEO ⏳ (structure yes, active Manager Phase 2).
 | **Reddit read-only** | ✅ live — OAuth-backed reader for subreddit top posts and threads. Fires on `r/subreddit` mentions or reddit-shaped task language. Needs `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET`; silently disabled without them. |
 | **MCP client layer** | ✅ live — persistent asyncio loop + registry with cached sessions + pre-flight tool planner. `POST /api/connectors` to add any MCP server; employees discover tools and call them automatically. |
 | **Custom HTTP tools (Option B)** | ✅ live — user defines an HTTP endpoint spec (method, URL, auth, params) via `POST /api/http-tools`; the tool appears in the same planner as MCP tools, namespaced as `custom.<name>`. Auth: none / bearer / api_key_header / basic. Solves "connect to any API that has no MCP server yet." |
+| **AI hierarchy — Phase 2 (CEO Manager)** | ✅ live — `CEOManager` runs the same plan → delegate → synthesize loop at Company altitude that the Supervisor runs at Unit altitude. `POST /api/companies/{id}/run` — CEO plans across Units, dispatches sub-tasks to each Unit's Supervisor, synthesizes back in the founder's voice. Every Company auto-hires a CEO on create (legacy Companies backfilled on first use). |
+| **AI hierarchy — Phase 3a (prompt-driven org design)** | ✅ live — `HierarchyDesigner` turns a founder's plain-English company description into an org chart proposal (2–6 Units, each with 1–4 specialists). `POST /api/companies/{id}/design_hierarchy` returns the proposal; `POST /api/companies/{id}/apply_hierarchy` materializes it (creates Units, attaches them to the Company, auto-hires Supervisors + specialists). Founder can edit the proposal before applying. |
+| **Action layer (the DOING pipe)** | ✅ live — third tool namespace alongside MCP + custom HTTP. Four built-ins: `action.send_email` (SMTP), `action.post_slack` (Slack webhook), `action.write_file` (sandboxed workspace), `action.read_file` (read-only, no approval). Every **mutating** action enqueues on the `ApprovalQueue`; the founder taps Approve in the UI and the action fires against the real environment. Read-only actions run inline. |
+| **Evidence receipts** | ✅ live — `EvidenceExtractor` produces a structured claims ledger for every deliverable (`verified` / `flagged_unknown` / `unsourced_claim`), rendered as chips above the deliverable in the UI so verification is visible instead of buried in prose. |
 | **Notion via MCP** | ⏳ walkthrough documented, integration + `NOTION_TOKEN` not yet set up locally. |
 | **Obsidian via HTTP tools** | ⏳ walkthrough documented, plugin + tools not yet registered locally. |
-| **AI hierarchy — Phase 2** | ❌ multiple Teams per Unit + active CEO Manager LLM + UI hierarchy tree view. Next major build. |
+| **Vision Desktop Agent (full-system access)** | ❌ scoped, not yet built. Small Python/Electron daemon on the founder's machine, WebSocket to the backend, screenshot + click + type + allow-listed shell + arbitrary-folder file access with per-app approval on first use. Next major layer after the action MVP. |
+| **Company / CEO UI (org tree Canvas, altitude-aware chat)** | ❌ not yet built. Company creation, org-chart Canvas view, and chat that routes to CEO at Company altitude vs Supervisor at Unit altitude — currently API-only. |
+| **AI hierarchy — Phase 2b** | ❌ deferred: multiple Teams per Unit + persistent CEO memory. |
 | **User accounts / auth** | ❌ deferred until we're ready to host. |
 
 ---
@@ -171,10 +181,12 @@ mechanisms, in order:
 4. **Reddit-shaped tasks** (`r/subreddit` mentions or thread URLs) →
    `RedditReader` pulls top posts / thread comments via Reddit OAuth.
 5. **External tools (unified plan)** — MCP servers + user-defined HTTP
-   tools present the same interface to one planner. `MCPPlanner` does
-   one cheap LLM call: *"given this task and these tools, which should
-   you call?"*, then executes each call. HTTP tools are namespaced
-   `custom.<name>`; MCP tools are `<server>.<tool>`.
+   tools + built-in actions all present the same interface to one
+   planner. `MCPPlanner` does one cheap LLM call: *"given this task and
+   these tools, which should you call?"*, then executes each call.
+   Namespaces route to their backends: `<server>.<tool>` → MCP,
+   `custom.<name>` → HTTP, `action.<name>` → action registry (may
+   enqueue on `ApprovalQueue` if mutating).
 
 ```
 backend/app/tools/
@@ -198,11 +210,32 @@ backend/app/tools/
                                     header injection, quiet failures. Exposes
                                     MCP-shaped list_tools/call so the planner
                                     unifies both sources.
+
+backend/app/actions/                NEW. The DOING layer — third tool namespace.
+├── action_registry.py              ActionRegistry: MCP-shape list_tools() /
+│                                   call(qname, args). Mutating actions never
+│                                   fire directly — they enqueue on
+│                                   ApprovalQueue and return a receipt string.
+│                                   Read-only actions run inline.
+├── approval_queue.py               JSON-backed pending-action store at
+│                                   .pending_actions.json (gitignored). States:
+│                                   pending -> approved -> executed | failed
+│                                                     \-> rejected
+└── builtin/
+    ├── send_email.py               SMTP send. Env: SMTP_HOST/PORT/USER/PASS/FROM.
+    ├── post_slack.py               POST to Slack Incoming Webhook. Env: SLACK_WEBHOOK_URL.
+    ├── write_file.py               Sandboxed UTF-8 file write inside
+    │                               VISION_WORKSPACE_DIR (defaults to
+    │                               <repo>/workspace). Path traversal rejected.
+    └── read_file.py                Read-only sibling. Same sandbox, no approval.
 ```
 
 Credentials live in `.env` (gitignored). MCP env-var secrets live in
 `_mcp_connections.json` (also gitignored). HTTP tool specs incl. tokens
-live in `.http_tools.json` (also gitignored).
+live in `.http_tools.json` (also gitignored). Pending-action state
+(may contain draft email bodies, Slack messages) lives in
+`.pending_actions.json` (also gitignored). The sandboxed action
+workspace at `<repo>/workspace/` is gitignored.
 
 ---
 
@@ -232,15 +265,30 @@ POST   /api/units/{unit_id}/hire              Add an existing Employee to a Unit
                                               body: {"employee_id": "...", "is_supervisor": false}
 ```
 
-**Companies (Phase 1 hierarchy):**
+**Companies + CEO + hierarchy design (Phases 1, 2, 3a):**
 ```
 GET    /api/companies                         List Companies (default "Personal" always present)
-GET    /api/companies/{id}                    One Company
-POST   /api/companies                         Create a Company
+GET    /api/companies/{id}                    One Company (includes ceo_employee_id)
+POST   /api/companies                         Create a Company (auto-hires CEO)
 PATCH  /api/companies/{id}                    Update name/purpose
 DELETE /api/companies/{id}                    Delete (default "personal" refuses)
 POST   /api/companies/{cid}/units/{uid}       Attach a Unit to a Company
 DELETE /api/companies/{cid}/units/{uid}       Detach a Unit from a Company
+POST   /api/companies/{id}/design_hierarchy   CEO proposes org chart from a description
+                                              body: {"description": "..."}
+POST   /api/companies/{id}/apply_hierarchy    Materialize (edited) org chart —
+                                              creates Units, hires Supervisors + specialists
+                                              body: {"units": [{name, purpose, specialists}]}
+POST   /api/companies/{id}/run                CEO plans → delegates across Units → synthesizes
+                                              body: {"task": "..."}
+```
+
+**Action layer (the DOING pipe):**
+```
+GET    /api/actions                           List registered built-in actions
+GET    /api/pending_actions?status=pending    List pending / resolved actions
+POST   /api/pending_actions/{id}/approve      Approve AND execute inline; returns updated record
+POST   /api/pending_actions/{id}/reject       Kill a pending action (optional ?reason=…)
 ```
 
 **Connectors — MCP servers:**
@@ -296,6 +344,16 @@ pip install -r backend/requirements.txt
 #   NOTION_TOKEN=ntn_…            (once you set up Notion)
 #   REDDIT_CLIENT_ID=…            (once you create a Reddit script app)
 #   REDDIT_CLIENT_SECRET=…
+#
+# Action layer (DOING pipe) — set these to enable each built-in action:
+#   SMTP_HOST=smtp.gmail.com      (send_email — use a Gmail App Password
+#   SMTP_PORT=587                  from myaccount.google.com/apppasswords)
+#   SMTP_USER=you@gmail.com
+#   SMTP_PASS=…                   (Gmail App Password, NOT your account password)
+#   SMTP_FROM=Your Name <you@gmail.com>
+#   SLACK_WEBHOOK_URL=…           (post_slack — create at api.slack.com/apps)
+#   VISION_WORKSPACE_DIR=…        (write_file / read_file sandbox root;
+#                                  defaults to <repo>/workspace/)
 
 py -3 -m uvicorn backend.app.api.main:app --port 8000
 ```

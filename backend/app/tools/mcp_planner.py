@@ -19,6 +19,8 @@ import logging
 import re
 from typing import Any, Dict, List, Optional
 
+from backend.app.actions.action_registry import CONNECTION_NAMESPACE as ACTION_NAMESPACE
+from backend.app.actions.action_registry import get_registry as get_action_registry
 from backend.app.tools.http_tool_runner import CONNECTION_NAMESPACE as HTTP_NAMESPACE
 from backend.app.tools.http_tool_runner import HTTPToolRunner
 from backend.app.tools.mcp_client import get_registry
@@ -28,6 +30,7 @@ logger = logging.getLogger(__name__)
 # Shared runner for user-defined HTTP tools. Uniform interface with the
 # MCP registry — the planner merges tools from both when picking calls.
 _http_runner = HTTPToolRunner()
+_action_registry = get_action_registry()
 
 MAX_PLAN_TOKENS = 800
 MAX_TOOL_CALLS_PER_TASK = 4  # bound so an over-eager LLM can't burn quota
@@ -81,7 +84,8 @@ class MCPPlanner:
         registry = get_registry()
         mcp_tools = registry.list_all_tools()
         http_tools = _http_runner.list_tools()
-        tools = mcp_tools + http_tools
+        action_tools = _action_registry.list_tools()
+        tools = mcp_tools + http_tools + action_tools
         if not tools:
             return None
 
@@ -120,6 +124,8 @@ class MCPPlanner:
                 namespace = qname.split(".", 1)[0]
                 if namespace == HTTP_NAMESPACE:
                     result_text = _http_runner.call(qname, args)
+                elif namespace == ACTION_NAMESPACE:
+                    result_text = _action_registry.call(qname, args)
                 else:
                     result_text = registry.call(qname, args)
             except Exception as exc:  # noqa: BLE001

@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
+from backend.app.critique.evidence_extractor import EvidenceExtractor
 from backend.app.employees.ceo_manager import CEOManager
 from backend.app.employees.dynamic_employee import DynamicEmployee
 from backend.app.employees.supervisor import SupervisorPlanner
@@ -42,6 +43,20 @@ class EmployeeCoordinator:
         # it already knows how to merge multiple contributions into one
         # coherent deliverable, no reason to write a second one.
         self.synthesis = synthesis_engine or SynthesisEngine(model_adapter=pipeline.adapter)
+        # Evidence receipts: one extra pass after synthesis that turns
+        # prose "unknown" markers and citations into a structured claims
+        # ledger the UI can render as visible trust signals, instead of
+        # leaving verification as an exercise for the reader.
+        self.evidence = EvidenceExtractor(model_adapter=pipeline.adapter)
+
+    def _extract_evidence(self, deliverable: str) -> List[Dict[str, str]]:
+        """Never let evidence extraction break a run — on any failure,
+        return an empty ledger and let the deliverable stand on its own."""
+        try:
+            return self.evidence.extract(deliverable)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Evidence extraction failed: %s", exc)
+            return []
 
     def run(
         self,
@@ -72,10 +87,12 @@ class EmployeeCoordinator:
                     pass
 
         if len(contributions) == 1:
+            solo_output = contributions[0].get("output") or ""
             return {
                 "team": [self._team_entry(c) for c in contributions],
-                "final_output": contributions[0].get("output") or "",
+                "final_output": solo_output,
                 "contributions": contributions,
+                "evidence": self._extract_evidence(solo_output),
             }
 
         # SynthesisEngine expects a list of AgentResult-like objects
@@ -105,10 +122,12 @@ class EmployeeCoordinator:
             logger.warning("Synthesis merge failed, falling back to raw concat: %s", exc)
             merged = self._raw_concat(contributions)
 
+        final_output = merged or self._raw_concat(contributions)
         return {
             "team": [self._team_entry(c) for c in contributions],
-            "final_output": merged or self._raw_concat(contributions),
+            "final_output": final_output,
             "contributions": contributions,
+            "evidence": self._extract_evidence(final_output),
         }
 
     def _format_prior_work(self, contributions: List[Dict[str, Any]]) -> Optional[str]:
@@ -196,12 +215,14 @@ class EmployeeCoordinator:
             if on_role_done:
                 try: on_role_done(supervisor.role, self._team_entry(result))
                 except Exception: pass  # noqa: BLE001
+            solo_output = result.get("output") or ""
             return {
                 "team": [self._team_entry(result)],
-                "final_output": result.get("output") or "",
+                "final_output": solo_output,
                 "contributions": [result],
                 "plan": [],
                 "supervisor_role": supervisor.role,
+                "evidence": self._extract_evidence(solo_output),
             }
 
         specialists_spec = [{"role": s.role, "mandate": s.mandate} for s in specialists]
@@ -264,6 +285,7 @@ class EmployeeCoordinator:
             "contributions": contributions,
             "plan": plan,
             "supervisor_role": supervisor.role,
+            "evidence": self._extract_evidence(merged),
         }
 
     # ------------------------------------------------------------------
@@ -382,4 +404,5 @@ class EmployeeCoordinator:
             "final_output": merged,
             "plan": plan,
             "unit_contributions": unit_contributions,
+            "evidence": self._extract_evidence(merged),
         }

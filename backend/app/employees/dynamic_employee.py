@@ -275,7 +275,13 @@ real one).{web_block}{teammates_block}{history_block}"""
         #     the outputs as source data.
         has_mcp = bool(get_mcp_registry().list_all_tools())
         has_http = bool(get_http_tool_store().enabled())
-        if has_mcp or has_http:
+        # Built-in action tools (send_email, post_slack, write_file,
+        # read_file) are always present — including them means the
+        # planner runs even for founders who haven't connected any MCP
+        # or custom HTTP tool yet.
+        from backend.app.actions.action_registry import get_registry as _get_actions
+        has_actions = bool(_get_actions().known_names())
+        if has_mcp or has_http or has_actions:
             try:
                 planner_context = MCPPlanner(self.pipeline.adapter).plan_and_execute(task)
                 if planner_context:

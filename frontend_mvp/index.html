@@ -607,6 +607,182 @@
     font-size: 14px;
   }
 
+  /* Evidence ledger — makes verification status visible instead of
+     leaving it buried in prose. A blind benchmark proved readers (even
+     AI judges) skip checking sources unless the status is right there
+     to look at, so this sits directly above the deliverable, not in a
+     collapsed footnote. */
+  .evidence-panel {
+    margin: 0 auto 14px auto;
+    max-width: 900px;
+  }
+  .evidence-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 12.5px;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+  }
+  .evidence-toggle:hover { border-color: var(--border-strong); }
+  .evidence-toggle .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .evidence-toggle .chip.verified { background: rgba(77, 124, 15, 0.14); color: var(--ok); }
+  .evidence-toggle .chip.unknown { background: rgba(161, 98, 7, 0.14); color: var(--warn); }
+  .evidence-toggle .chip.unsourced { background: rgba(194, 65, 12, 0.14); color: var(--danger); }
+  .evidence-toggle .caret { margin-left: auto; transition: transform 0.15s ease; }
+  .evidence-toggle.open .caret { transform: rotate(180deg); }
+  .evidence-list {
+    display: none;
+    margin-top: 6px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .evidence-list.open { display: block; }
+  .evidence-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 9px 14px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  .evidence-row:last-child { border-bottom: none; }
+  .evidence-row .badge {
+    flex-shrink: 0;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .evidence-row .text { color: var(--text); flex: 1; }
+  .evidence-row .source {
+    display: block;
+    margin-top: 2px;
+    font-size: 11px;
+    color: var(--info);
+    word-break: break-all;
+  }
+  .evidence-row.unsourced .text { color: var(--danger); }
+
+  /* Pending actions — when the AI wants to actually DO something
+     (send email, post Slack, write a file), the request lands here and
+     waits for the founder's tap. Sits above the deliverable so it's
+     the first thing you see. */
+  .pending-actions-panel {
+    margin: 0 auto 14px auto;
+    max-width: 900px;
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    background: var(--panel-2);
+    overflow: hidden;
+  }
+  .pending-actions-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--accent);
+    background: rgba(139, 30, 47, 0.06);
+    border-bottom: 1px solid var(--border);
+  }
+  .pa-title { flex: 0 0 auto; }
+  .pa-count {
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .pa-refresh {
+    margin-left: auto;
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 2px 8px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .pa-refresh:hover { color: var(--accent); border-color: var(--accent); }
+  .pending-actions-list { display: flex; flex-direction: column; }
+  .pa-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12.5px;
+  }
+  .pa-row:last-child { border-bottom: none; }
+  .pa-row .pa-meta {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .pa-row .pa-action-name {
+    font-weight: 600;
+    color: var(--text);
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.03em;
+  }
+  .pa-row .pa-preview {
+    color: var(--text-muted);
+    line-height: 1.5;
+    word-break: break-word;
+  }
+  .pa-row .pa-buttons {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .pa-btn {
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+  }
+  .pa-btn.approve {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  .pa-btn.approve:hover { background: var(--accent-2); }
+  .pa-btn.reject:hover { border-color: var(--danger); color: var(--danger); }
+  .pa-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+  .pa-row.executed .pa-action-name { color: var(--ok); }
+  .pa-row.rejected .pa-action-name { color: var(--danger); }
+  .pa-row .pa-status {
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: var(--panel);
+  }
+
   /* ---------- RIGHT: Edit ---------- */
   .right {
     grid-area: right;
@@ -740,6 +916,18 @@
     </div>
 
     <div class="canvas-body hidden" id="tab-output">
+      <div class="pending-actions-panel" id="pending-actions-panel" style="display:none;">
+        <div class="pending-actions-head">
+          <span class="pa-title">Pending actions</span>
+          <span class="pa-count" id="pa-count">0</span>
+          <button class="pa-refresh" id="pa-refresh" type="button" title="Refresh">↻</button>
+        </div>
+        <div class="pending-actions-list" id="pending-actions-list"></div>
+      </div>
+      <div class="evidence-panel" id="evidence-panel" style="display:none;">
+        <div class="evidence-toggle" id="evidence-toggle"></div>
+        <div class="evidence-list" id="evidence-list"></div>
+      </div>
       <div class="result-panel">
         <div class="result-body" id="result-body">
           <div class="result-empty">No output yet — send a task to your team and it will show up here.</div>
@@ -1171,6 +1359,7 @@ async function sendMessage() {
       // grinds on. This gets replaced with the final deliverable when
       // the run finishes.
       resultBody.textContent = buildTeamHiredReport(designed.members, chatRes.task_to_run || text);
+      renderEvidence([]);  // no evidence yet — this is just the interim hiring report
       switchTab('output');
       showedTeamReport = true;
     }
@@ -1197,6 +1386,8 @@ async function sendMessage() {
 
     renderTeam((await api('GET', `/api/sessions/${currentSessionId}/team`)).members);
     resultBody.textContent = runRes.final_output;
+    renderEvidence(runRes.evidence);
+    fetchPendingActions();
     switchTab('output');
     appendMessage('assistant', 'Done. The full deliverable is on the Output tab.');
   } catch (e) {
@@ -1250,6 +1441,154 @@ function switchTab(name) {
   $('tab-canvas').classList.toggle('hidden', name !== 'canvas');
   $('tab-output').classList.toggle('hidden', name !== 'output');
 }
+
+const evidencePanel = $('evidence-panel');
+const evidenceToggle = $('evidence-toggle');
+const evidenceList = $('evidence-list');
+let evidenceOpen = false;
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+const EVIDENCE_BADGE = {
+  verified: '✅',
+  flagged_unknown: '⚠️',
+  unsourced_claim: '❗',
+};
+
+// Evidence ledger — renders the structured claims list a deliverable's
+// evidence extraction produced, as visible chips + an expandable list,
+// instead of leaving verification status buried in prose. Hidden
+// entirely when there's nothing to show (e.g. the interim team-hired
+// report, or a deliverable with zero extractable claims).
+function renderEvidence(claims) {
+  claims = Array.isArray(claims) ? claims : [];
+  if (!claims.length) {
+    evidencePanel.style.display = 'none';
+    evidenceList.classList.remove('open');
+    evidenceToggle.classList.remove('open');
+    evidenceOpen = false;
+    return;
+  }
+
+  const counts = { verified: 0, flagged_unknown: 0, unsourced_claim: 0 };
+  claims.forEach(c => { if (c.status in counts) counts[c.status]++; });
+
+  evidenceToggle.innerHTML = `
+    <span>Evidence</span>
+    <span class="chip verified">✅ ${counts.verified} verified</span>
+    <span class="chip unknown">⚠️ ${counts.flagged_unknown} unknown</span>
+    ${counts.unsourced_claim ? `<span class="chip unsourced">❗ ${counts.unsourced_claim} unsourced</span>` : ''}
+    <span class="caret">▾</span>
+  `;
+
+  evidenceList.innerHTML = claims.map(c => {
+    const badge = EVIDENCE_BADGE[c.status] || '•';
+    const rowClass = c.status === 'unsourced_claim' ? ' unsourced' : '';
+    const source = c.source
+      ? `<a class="source" href="${escapeHtml(c.source)}" target="_blank" rel="noopener">${escapeHtml(c.source)}</a>`
+      : '';
+    return `<div class="evidence-row${rowClass}">
+      <span class="badge">${badge}</span>
+      <span class="text">${escapeHtml(c.text)}${source}</span>
+    </div>`;
+  }).join('');
+
+  evidencePanel.style.display = '';
+  // Default open only when there's something worth flagging immediately —
+  // an unsourced claim is the one case a user should see without an extra click.
+  evidenceOpen = counts.unsourced_claim > 0;
+  evidenceList.classList.toggle('open', evidenceOpen);
+  evidenceToggle.classList.toggle('open', evidenceOpen);
+}
+
+evidenceToggle.addEventListener('click', () => {
+  evidenceOpen = !evidenceOpen;
+  evidenceList.classList.toggle('open', evidenceOpen);
+  evidenceToggle.classList.toggle('open', evidenceOpen);
+});
+
+// Pending actions — the DOING layer's front door. When a specialist
+// calls a mutating action (send_email, post_slack, write_file), the
+// backend queues it here and returns a receipt. The founder taps
+// Approve to actually fire it. Poll every 8s; also fetch right after
+// any run.
+const pendingPanel = $('pending-actions-panel');
+const pendingList = $('pending-actions-list');
+const pendingCount = $('pa-count');
+
+function renderPendingActions(items) {
+  items = Array.isArray(items) ? items : [];
+  // Show only the last ~20 to avoid a wall of history; pending first.
+  const sorted = [...items].sort((a, b) => {
+    if (a.status === 'pending' && b.status !== 'pending') return -1;
+    if (b.status === 'pending' && a.status !== 'pending') return 1;
+    return (b.created_at || 0) - (a.created_at || 0);
+  }).slice(0, 20);
+  const pendingN = items.filter(i => i.status === 'pending').length;
+  pendingCount.textContent = pendingN;
+  if (!sorted.length) {
+    pendingPanel.style.display = 'none';
+    return;
+  }
+  pendingPanel.style.display = '';
+  pendingList.innerHTML = sorted.map(a => {
+    const status = a.status || 'pending';
+    const buttons = status === 'pending'
+      ? `<div class="pa-buttons">
+           <button class="pa-btn approve" data-id="${escapeHtml(a.id)}" data-op="approve">Approve</button>
+           <button class="pa-btn reject" data-id="${escapeHtml(a.id)}" data-op="reject">Reject</button>
+         </div>`
+      : `<span class="pa-status">${escapeHtml(status)}</span>`;
+    const detail = status === 'executed' && a.result
+      ? `<div class="pa-preview" style="color:var(--ok)">✓ ${escapeHtml(String(a.result).slice(0, 200))}</div>`
+      : status === 'failed' && a.error
+      ? `<div class="pa-preview" style="color:var(--danger)">✗ ${escapeHtml(String(a.error).slice(0, 200))}</div>`
+      : '';
+    return `<div class="pa-row ${escapeHtml(status)}">
+      <div class="pa-meta">
+        <span class="pa-action-name">${escapeHtml(a.action_name)}</span>
+        <div class="pa-preview">${escapeHtml(a.preview || '')}</div>
+        ${detail}
+      </div>
+      ${buttons}
+    </div>`;
+  }).join('');
+}
+
+async function fetchPendingActions() {
+  try {
+    const res = await fetch('/api/pending_actions');
+    if (!res.ok) return;
+    const data = await res.json();
+    renderPendingActions(data.items || []);
+  } catch (err) { /* server may be restarting — silent */ }
+}
+
+pendingList.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.pa-btn');
+  if (!btn) return;
+  const id = btn.dataset.id;
+  const op = btn.dataset.op;
+  if (!id || !op) return;
+  // Disable both buttons on the row to prevent double-taps.
+  btn.parentElement.querySelectorAll('.pa-btn').forEach(b => { b.disabled = true; });
+  try {
+    const res = await fetch(`/api/pending_actions/${encodeURIComponent(id)}/${op}`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    // Refetch so the row re-renders with executed/failed/rejected state.
+    fetchPendingActions();
+  } catch (err) {
+    btn.parentElement.querySelectorAll('.pa-btn').forEach(b => { b.disabled = false; });
+  }
+});
+
+$('pa-refresh').addEventListener('click', fetchPendingActions);
+setInterval(fetchPendingActions, 8000);
+fetchPendingActions();
 
 function buildTeamHiredReport(members, task) {
   // Fast, LLM-free "here's who I hired and what they'll do" summary —

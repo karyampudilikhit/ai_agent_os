@@ -50,3 +50,12 @@ backend/app/employees/team_data/
 .http_tools.json
 backend/app/employees/company_data/
 backend/app/employees/data/registry/
+
+# Action layer — pending mutating actions live here as JSON. Can carry
+# task-specific args (draft email bodies, Slack messages) — treat like
+# .http_tools.json, never commit.
+.pending_actions.json
+
+# Sandboxed workspace where the AI writes files via action.write_file.
+# Contents are user work product, not source.
+workspace/

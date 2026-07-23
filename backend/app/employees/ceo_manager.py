@@ -334,3 +334,33 @@ class CEOManager:
             except json.JSONDecodeError:
                 return None
         return None
+
+
+# --- Default CEO spec (Phase 3a) --------------------------------------
+#
+# Every Company auto-hires a CEO on creation, mirroring how every Unit
+# auto-hires a Supervisor. The CEO is a first-class Employee in the
+# registry (persistent id, memory, appears in the org tree) — its
+# runtime behavior is driven by the CEOManager planner class above.
+
+DEFAULT_CEO_MANDATE = (
+    "You are the CEO of this AI-run company. Every task from the founder "
+    "comes to you first. You decide which Units inside this Company handle "
+    "which piece of the task, hand each Unit a specific brief, and later "
+    "synthesize their outputs into one Company-level deliverable in the "
+    "founder's voice. You do not do specialist work yourself — you plan, "
+    "delegate, and synthesize. You also help the founder shape the "
+    "Company itself: adding new Units, adjusting Unit purposes, and "
+    "hiring the right specialists for each Unit."
+)
+
+
+def default_ceo_spec(company_name: Optional[str] = None) -> Dict[str, str]:
+    """Build the default CEO Employee spec for a new Company. Same
+    shape spawner/registry expect: {role, mandate}."""
+    if company_name:
+        pretty = company_name.strip().rstrip(".").title()
+        role = f"{pretty} CEO"
+    else:
+        role = "CEO"
+    return {"role": role, "mandate": DEFAULT_CEO_MANDATE}
