@@ -189,8 +189,12 @@ def get_registry() -> ActionRegistry:
 def _load_builtins(registry: ActionRegistry) -> None:
     """Register the first-party built-ins. Kept lazy so an import-time
     error in one built-in doesn't kill the whole module."""
-    from backend.app.actions.builtin import send_email, post_slack, write_file, read_file
+    from backend.app.actions.builtin import (
+        send_email, post_slack, write_file, read_file, read_inbox, reply_email,
+    )
     registry.register(send_email.SPEC)
+    registry.register(reply_email.SPEC)
+    registry.register(read_inbox.SPEC)
     registry.register(post_slack.SPEC)
     registry.register(write_file.SPEC)
     registry.register(read_file.SPEC)

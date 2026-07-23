@@ -64,7 +64,7 @@ approves, Units + specialists auto-hire).
 | **Custom HTTP tools (Option B)** | ✅ live — user defines an HTTP endpoint spec (method, URL, auth, params) via `POST /api/http-tools`; the tool appears in the same planner as MCP tools, namespaced as `custom.<name>`. Auth: none / bearer / api_key_header / basic. Solves "connect to any API that has no MCP server yet." |
 | **AI hierarchy — Phase 2 (CEO Manager)** | ✅ live — `CEOManager` runs the same plan → delegate → synthesize loop at Company altitude that the Supervisor runs at Unit altitude. `POST /api/companies/{id}/run` — CEO plans across Units, dispatches sub-tasks to each Unit's Supervisor, synthesizes back in the founder's voice. Every Company auto-hires a CEO on create (legacy Companies backfilled on first use). |
 | **AI hierarchy — Phase 3a (prompt-driven org design)** | ✅ live — `HierarchyDesigner` turns a founder's plain-English company description into an org chart proposal (2–6 Units, each with 1–4 specialists). `POST /api/companies/{id}/design_hierarchy` returns the proposal; `POST /api/companies/{id}/apply_hierarchy` materializes it (creates Units, attaches them to the Company, auto-hires Supervisors + specialists). Founder can edit the proposal before applying. |
-| **Action layer (the DOING pipe)** | ✅ live — third tool namespace alongside MCP + custom HTTP. Four built-ins: `action.send_email` (SMTP), `action.post_slack` (Slack webhook), `action.write_file` (sandboxed workspace), `action.read_file` (read-only, no approval). Every **mutating** action enqueues on the `ApprovalQueue`; the founder taps Approve in the UI and the action fires against the real environment. Read-only actions run inline. |
+| **Action layer (the DOING pipe)** | ✅ live — third tool namespace alongside MCP + custom HTTP. Six built-ins covering the **send → read → reply** loop for email: `action.send_email` (SMTP, returns a stable Message-ID the caller can chain replies against), `action.read_inbox` (IMAP fetch — filters by unread / sender / subject, read-only, runs inline), `action.reply_email` (SMTP threaded reply — sets `In-Reply-To` + `References` so Gmail groups it under the original), `action.post_slack` (webhook), `action.write_file` + `action.read_file` (sandboxed workspace). Every **mutating** action enqueues on the `ApprovalQueue`; the founder taps Approve in the UI and the action fires against the real environment. Read-only actions run inline. |
 | **Evidence receipts** | ✅ live — `EvidenceExtractor` produces a structured claims ledger for every deliverable (`verified` / `flagged_unknown` / `unsourced_claim`), rendered as chips above the deliverable in the UI so verification is visible instead of buried in prose. |
 | **Notion via MCP** | ⏳ walkthrough documented, integration + `NOTION_TOKEN` not yet set up locally. |
 | **Obsidian via HTTP tools** | ⏳ walkthrough documented, plugin + tools not yet registered locally. |
@@ -223,6 +223,15 @@ backend/app/actions/                NEW. The DOING layer — third tool namespac
 │                                                     \-> rejected
 └── builtin/
     ├── send_email.py               SMTP send. Env: SMTP_HOST/PORT/USER/PASS/FROM.
+    │                               Stamps and returns a Message-ID so the caller
+    │                               can chain a reply_email against it later.
+    ├── read_inbox.py                IMAP fetch. Env: IMAP_HOST/PORT/USER/PASS
+    │                               (falls back to SMTP_USER/PASS). Filters:
+    │                               unread_only, from, subject_contains, folder,
+    │                               limit. Read-only — no approval.
+    ├── reply_email.py               SMTP threaded reply. Sets In-Reply-To +
+    │                               References so Gmail groups it under the
+    │                               original. Same SMTP_* env as send_email.
     ├── post_slack.py               POST to Slack Incoming Webhook. Env: SLACK_WEBHOOK_URL.
     ├── write_file.py               Sandboxed UTF-8 file write inside
     │                               VISION_WORKSPACE_DIR (defaults to
@@ -346,11 +355,15 @@ pip install -r backend/requirements.txt
 #   REDDIT_CLIENT_SECRET=…
 #
 # Action layer (DOING pipe) — set these to enable each built-in action:
-#   SMTP_HOST=smtp.gmail.com      (send_email — use a Gmail App Password
-#   SMTP_PORT=587                  from myaccount.google.com/apppasswords)
+#   SMTP_HOST=smtp.gmail.com      (send_email / reply_email — use a Gmail App
+#   SMTP_PORT=587                  Password from myaccount.google.com/apppasswords)
 #   SMTP_USER=you@gmail.com
 #   SMTP_PASS=…                   (Gmail App Password, NOT your account password)
 #   SMTP_FROM=Your Name <you@gmail.com>
+#   IMAP_HOST=imap.gmail.com      (read_inbox — same App Password works for IMAP;
+#   IMAP_PORT=993                  enable IMAP in Gmail: Settings → Forwarding
+#   IMAP_USER=… (defaults to SMTP_USER)   and POP/IMAP → Enable IMAP)
+#   IMAP_PASS=… (defaults to SMTP_PASS)
 #   SLACK_WEBHOOK_URL=…           (post_slack — create at api.slack.com/apps)
 #   VISION_WORKSPACE_DIR=…        (write_file / read_file sandbox root;
 #                                  defaults to <repo>/workspace/)

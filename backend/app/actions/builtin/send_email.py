@@ -15,7 +15,11 @@ from __future__ import annotations
 
 import os
 import smtplib
+import socket
+import time
+import uuid
 from email.message import EmailMessage
+from email.utils import make_msgid
 from typing import Any, Dict
 
 from backend.app.actions.action_registry import ActionSpec
@@ -40,6 +44,11 @@ def _handler(args: Dict[str, Any]) -> str:
     msg["From"] = from_addr
     msg["To"] = to_addr
     msg["Subject"] = subject or "(no subject)"
+    # Stamp our own Message-ID so we can return it to the caller (the
+    # CEO / specialist) — future reply_email calls thread against this.
+    domain = from_addr.split("@")[-1] if "@" in from_addr else "vision-ai.local"
+    msg_id = make_msgid(domain=domain)
+    msg["Message-ID"] = msg_id
     msg.set_content(body or "(empty body)")
 
     with smtplib.SMTP(host, port, timeout=30) as server:
@@ -48,7 +57,12 @@ def _handler(args: Dict[str, Any]) -> str:
             server.login(user, password)
         server.send_message(msg)
 
-    return f"Sent email to {to_addr} — subject: {subject or '(no subject)'}"
+    return (
+        f"Sent email to {to_addr} — subject: {subject or '(no subject)'}\n"
+        f"Message-ID: {msg_id}\n"
+        f"(Hand this Message-ID to reply_email later to thread a reply "
+        f"or match against read_inbox output.)"
+    )
 
 
 def _preview(args: Dict[str, Any]) -> str:
