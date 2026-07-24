@@ -1535,6 +1535,53 @@ function stopBusyEscalation() {
   }
 }
 
+// Poll a background run kicked off by /api/chat until it finishes.
+// Non-blocking — chat stays usable. Escalating busy label + subtle
+// header status so the founder sees this is a live long-running job,
+// not a stuck request. Runs concurrently: multiple polls at once are
+// fine because each poll only touches its own run_id.
+const _activePolls = new Map(); // run_id -> intervalId
+function startRunPolling(runId, opts = {}) {
+  if (_activePolls.has(runId)) return; // already polling
+  const started = Date.now();
+  const intervalMs = 4000;
+  appendMessage('assistant', `Background run started (${runId}). Deliverable will pop onto the Output tab when ready.`);
+  const tick = async () => {
+    let rec;
+    try {
+      rec = await api('GET', `/api/runs/${encodeURIComponent(runId)}`);
+    } catch (err) {
+      // Transient — keep polling. Real errors surface as failed status.
+      return;
+    }
+    if (rec.status === 'done') {
+      clearInterval(_activePolls.get(runId));
+      _activePolls.delete(runId);
+      resultBody.textContent = rec.output || '(empty output)';
+      renderEvidence(rec.evidence || []);
+      fetchPendingActions();
+      switchTab('output');
+      const secs = Math.round((Date.now() - started) / 1000);
+      appendMessage('assistant', `Done in ${secs}s. Full deliverable is on the Output tab.`);
+      return;
+    }
+    if (rec.status === 'failed') {
+      clearInterval(_activePolls.get(runId));
+      _activePolls.delete(runId);
+      appendMessage('assistant', `Run failed: ${rec.error || 'unknown error'}`);
+      return;
+    }
+    // still queued or running — update a lightweight status hint in the header
+    const elapsed = Math.round((Date.now() - started) / 1000);
+    if (!_busyEscalationTimer) {
+      headerStatus.textContent = `Run in progress · ${elapsed}s`;
+    }
+  };
+  const iv = setInterval(tick, intervalMs);
+  _activePolls.set(runId, iv);
+  tick(); // fire once immediately so the first status shows fast
+}
+
 // ------------------------------------------------------------
 // The main "send a message" flow — this is what the chat does
 async function sendMessage() {
@@ -1627,6 +1674,13 @@ async function sendMessage() {
       renderEvidence(fx.evidence || []);
       fetchPendingActions();
       switchTab('output');
+    }
+
+    if (fx.run_id) {
+      // Background run kicked off — client polls until done, then
+      // renders the deliverable on the Output tab. Chat is free to
+      // continue in the meantime.
+      startRunPolling(fx.run_id);
     }
 
     if (fx.org_refreshed && !refreshedOrg) {

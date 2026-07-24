@@ -383,6 +383,26 @@ class UniversalChatSideEffects(BaseModel):
     org_refreshed: bool = False
     run_output: Optional[str] = None
     evidence: List[EvidenceClaim] = Field(default_factory=list)
+    # Present when the intent kicked off a long-running task in the
+    # background. The client polls GET /api/runs/{run_id} until status
+    # is done/failed, then renders the output + evidence.
+    run_id: Optional[str] = None
+
+
+class RunStatusResponse(BaseModel):
+    """One row of the async run store — the shape /api/runs/{id} returns."""
+    id: str
+    intent: str
+    status: str  # queued | running | done | failed
+    session_id: Optional[str] = None
+    company_id: Optional[str] = None
+    task: str = ""
+    created_at: Optional[float] = None
+    started_at: Optional[float] = None
+    finished_at: Optional[float] = None
+    output: Optional[str] = None
+    evidence: List[EvidenceClaim] = Field(default_factory=list)
+    error: Optional[str] = None
 
 
 class UniversalChatResponse(BaseModel):

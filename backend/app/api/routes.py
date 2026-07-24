@@ -53,6 +53,7 @@ from backend.app.api.schemas import (
     SessionCreateResponse,
     SessionSummary,
     TeamListResponse,
+    RunStatusResponse,
     TeamMemberSpec,
     TeamMemberSummary,
     UniversalChatRequest,
@@ -87,6 +88,7 @@ from backend.app.chat.universal_router import (
     build_state_snapshot,
     format_proposal_for_chat,
 )
+from backend.app.chat.async_runs import get_store as get_run_store, submit as submit_run
 from backend.app.tools.mcp_client import get_registry as get_mcp_registry
 from backend.app.tools.mcp_store import get_store as get_mcp_store
 from backend.app.main import _build_adapter, _load_config
@@ -1316,26 +1318,31 @@ def universal_chat(req: UniversalChatRequest) -> UniversalChatResponse:
         intent = "run_task_unit"
     if intent == "run_task_company":
         task = str(verdict.get("task") or req.message).strip()
-        result = run_task_on_company(current_company["id"], CompanyRunRequest(task=task))
-        side_effects.run_output = result.final_output
-        side_effects.evidence = list(result.evidence)
-        side_effects.company_id = current_company["id"]
+        company_id = current_company["id"]
+        run_id = get_run_store().create(intent=intent, company_id=company_id, task=task)
+
+        def _company_work():
+            result = run_task_on_company(company_id, CompanyRunRequest(task=task))
+            return (result.final_output or "",
+                    [e.model_dump() for e in (result.evidence or [])])
+
+        submit_run(run_id, _company_work)
+        side_effects.run_id = run_id
+        side_effects.company_id = company_id
         return UniversalChatResponse(
             intent=intent,
             reply=(
-                f"CEO delivered. Plan had {len(result.plan)} sub-task"
-                f"{'s' if len(result.plan) != 1 else ''} across "
-                f"{len(result.unit_contributions)} Unit"
-                f"{'s' if len(result.unit_contributions) != 1 else ''}. "
-                f"Full deliverable on the Output tab."
+                "CEO is on it — planning, delegating across Units, and "
+                "synthesizing. Company-level runs take a few minutes on "
+                "gpt-oss; the deliverable will pop onto the Output tab as "
+                "soon as it's ready. Keep chatting or watch the badge."
             ),
             side_effects=side_effects,
         )
 
-    # --- run_task_unit: kick the current Unit's Supervisor (or auto-
-    #     create a Unit if none exists — this is the "regular" mode
-    #     from before Companies existed; a founder who just types
-    #     'run market research' shouldn't have to know what a Unit is). ---
+    # --- run_task_unit: kick a Unit's Supervisor in the background.
+    #     Auto-creates a Unit if none exists — a founder who just types
+    #     'run market research' shouldn't have to know what a Unit is. ---
     if intent == "run_task_unit":
         session_id = req.current_session_id
         if not session_id:
@@ -1344,19 +1351,61 @@ def universal_chat(req: UniversalChatRequest) -> UniversalChatResponse:
             sup = default_supervisor_spec()
             store.add_member(sup["role"], sup["mandate"], is_supervisor=True)
         task = str(verdict.get("task") or req.message).strip()
-        result = run_task_on_team(session_id, RunTaskRequest(task=task))
-        side_effects.run_output = result.final_output
-        side_effects.evidence = list(result.evidence)
+        run_id = get_run_store().create(intent=intent, session_id=session_id, task=task)
+        _sid = session_id  # closure capture
+        _task = task
+
+        def _unit_work():
+            result = run_task_on_team(_sid, RunTaskRequest(task=_task))
+            return (result.final_output or "",
+                    [e.model_dump() for e in (result.evidence or [])])
+
+        submit_run(run_id, _unit_work)
+        side_effects.run_id = run_id
         side_effects.session_id = session_id
         return UniversalChatResponse(
             intent=intent,
-            reply="Unit delivered. Full deliverable on the Output tab.",
+            reply=(
+                "On it — the Unit is running now. The deliverable will "
+                "appear on the Output tab as soon as it's ready. Keep "
+                "chatting while it works."
+            ),
             side_effects=side_effects,
         )
 
     # Should never reach here — VALID_INTENTS enforces the set
+    return _fallthrough_response(side_effects)
+
+
+def _fallthrough_response(side_effects: UniversalChatSideEffects) -> UniversalChatResponse:
     return UniversalChatResponse(
         intent="casual_chat",
         reply="I wasn't sure what to do with that. Try rephrasing.",
         side_effects=side_effects,
     )
+
+
+@router.get("/runs/{run_id}", response_model=RunStatusResponse)
+def get_run_status(run_id: str) -> RunStatusResponse:
+    """Poll a background run kicked off by /api/chat. Client polls
+    every few seconds until status is done or failed, then renders
+    output + evidence."""
+    record = get_run_store().get(run_id)
+    if not record:
+        raise HTTPException(404, f"no run with id {run_id!r}")
+    return RunStatusResponse(
+        id=record["id"],
+        intent=record["intent"],
+        status=record["status"],
+        session_id=record.get("session_id"),
+        company_id=record.get("company_id"),
+        task=record.get("task") or "",
+        created_at=record.get("created_at"),
+        started_at=record.get("started_at"),
+        finished_at=record.get("finished_at"),
+        output=record.get("output"),
+        evidence=[EvidenceClaim(**e) for e in (record.get("evidence") or [])],
+        error=record.get("error"),
+    )
+
+
