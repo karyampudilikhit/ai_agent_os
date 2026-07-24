@@ -1143,22 +1143,8 @@
   <aside class="right">
     <div class="section company-section">
       <div class="head">Company</div>
-      <div class="company-mode-toggle" id="chat-mode-toggle">
-        <button id="mode-unit-btn" class="on">Talk to Unit</button>
-        <button id="mode-company-btn">Talk to CEO</button>
-      </div>
-      <div style="height:8px;"></div>
       <div class="row">
-        <select id="company-selector"><option value="">(no Company selected)</option></select>
-        <button class="ghost small" id="new-company-btn" style="flex:0 0 auto;">+ New</button>
-      </div>
-      <div id="new-company-form" style="display:none;">
-        <input id="new-company-name" type="text" placeholder="Company name (e.g. AI Agency)">
-        <textarea id="new-company-purpose" placeholder="One-line purpose (what you're building)"></textarea>
-        <div class="row">
-          <button class="secondary" id="create-company-btn">Create Company</button>
-          <button class="ghost small" id="cancel-company-btn">Cancel</button>
-        </div>
+        <select id="company-selector"><option value="">(no Company yet)</option></select>
       </div>
       <div id="company-detail" style="display:none;">
         <div style="display:flex;align-items:center;gap:6px;margin-top:4px;">
@@ -1166,19 +1152,9 @@
           <span id="company-unit-count" style="font-size:11px;color:var(--text-dim);"></span>
         </div>
         <div class="company-purpose" id="company-purpose-display"></div>
-        <div class="head" style="margin-top:8px;">Design hierarchy</div>
-        <textarea id="hierarchy-description" placeholder="Describe your company in a paragraph. The CEO will propose Units + specialists. Example: 'An AI-run agency selling AI-agent solutions to founders. Services: discovery, custom agent build, deployment, support. Solo operator, wants sales, delivery, ops end-to-end.'"></textarea>
-        <div class="row">
-          <button class="secondary" id="design-hierarchy-btn">CEO, design my org chart</button>
-        </div>
-        <div id="hierarchy-proposal-panel" style="display:none;">
-          <div style="margin-top:8px;font-size:12px;color:var(--text-muted);">CEO's proposal (review, then apply):</div>
-          <div class="hierarchy-proposal" id="hierarchy-proposal"></div>
-          <div class="row" style="margin-top:6px;">
-            <button class="secondary" id="apply-hierarchy-btn">Apply — hire everyone</button>
-            <button class="ghost small" id="discard-proposal-btn">Discard</button>
-          </div>
-        </div>
+      </div>
+      <div class="hint" id="company-empty-hint" style="font-size:11.5px;color:var(--text-muted);line-height:1.5;">
+        Type what you want to build in the chat — e.g. <em>"build me an AI agency with market, growth, and outreach units — CEO picks the specialists."</em> The CEO will propose the whole hierarchy, and one <strong>yes</strong> hires everyone.
       </div>
     </div>
 
@@ -1545,20 +1521,6 @@ async function sendMessage() {
   chatInputEl.value = '';
   chatInputEl.style.height = 'auto';
 
-  // Route: Company mode → CEO run; Unit mode → the existing supervisor flow
-  if (chatMode === 'company') {
-    if (!currentCompanyId) {
-      appendMessage('assistant', 'Pick or create a Company first (right sidebar) — the CEO lives inside one.');
-      return;
-    }
-    const emptyState = chatMessagesEl.querySelector('.chat-empty');
-    if (emptyState) emptyState.remove();
-    appendMessage('user', text);
-    return runCompanyTask(text);
-  }
-
-  if (!currentSessionId) await newSession();
-
   const emptyState = chatMessagesEl.querySelector('.chat-empty');
   if (emptyState) emptyState.remove();
 
@@ -1567,87 +1529,63 @@ async function sendMessage() {
   try {
     setBusy(true, 'Understanding…');
 
-    // Route the message through the intent classifier first — every
-    // request goes to /chat, which decides whether it's a team edit or
-    // a task to run.
-    const chatRes = await api('POST', `/api/sessions/${currentSessionId}/chat`,
-                              { message: text });
-
-    // Team-changing intents came back with the updated team — render it
-    if (['add_employee', 'remove_employee', 'modify_employee', 'design_team', 'clear_team'].includes(chatRes.intent)) {
-      renderTeam(chatRes.team || []);
-      await refreshSessions();
-      sessionSelector.value = currentSessionId;
-      appendMessage('assistant', chatRes.reply);
-      setBusy(false);
-      return;
-    }
-
-    if (chatRes.intent === 'unclear') {
-      appendMessage('assistant', chatRes.reply);
-      setBusy(false);
-      return;
-    }
-
-    // run_task: reply, then trigger the actual run
-    appendMessage('assistant', chatRes.reply);
-
-    // If the Unit has NO specialists (only the Supervisor exists),
-    // auto-design specialists from the task first — otherwise the run
-    // executes with just a Supervisor and nothing to synthesize.
-    const teamNow = await api('GET', `/api/sessions/${currentSessionId}/team`);
-    const specialists = (teamNow.members || []).filter(m => !m.is_supervisor);
-    let showedTeamReport = false;
-    if (specialists.length === 0) {
-      appendMessage('assistant', 'You only have a Supervisor so far — hiring the specialists needed for this task…');
-      const designed = await api('POST', `/api/sessions/${currentSessionId}/team/design`,
-                                { prompt: chatRes.task_to_run || text, replace: true });
-      renderTeam(designed.members);
-      await refreshSessions();
-      sessionSelector.value = currentSessionId;
-      const specialistRoles = (designed.members || []).filter(m => !m.is_supervisor).map(m => m.role);
-      appendStatusWithSteps(
-        `Team hired — ${specialistRoles.length} specialist${specialistRoles.length===1?'':'s'}:`,
-        specialistRoles
-      );
-      // Show the team-hired report on the Output tab RIGHT NOW so the
-      // user has something concrete to look at while the actual work
-      // grinds on. This gets replaced with the final deliverable when
-      // the run finishes.
-      resultBody.textContent = buildTeamHiredReport(designed.members, chatRes.task_to_run || text);
-      renderEvidence([]);  // no evidence yet — this is just the interim hiring report
-      switchTab('output');
-      showedTeamReport = true;
-    }
-
-    // Run the extracted task against the current team
-    const teamData = await api('GET', `/api/sessions/${currentSessionId}/team`);
-    if (teamData.members.length) {
-      appendStatusWithSteps('Running:', teamData.members.map(m => m.role));
-    }
-
-    setBusy(true, showedTeamReport
-      ? 'Team is working — the report is on Output; click Canvas to watch them work.'
-      : 'Team is working — watch the Canvas tab.');
-    if (!showedTeamReport) switchTab('canvas');
-    lastRunByRole = {};
-    startProgressPolling();
-
-    const runRes = await api('POST', `/api/sessions/${currentSessionId}/run`,
-                             { task: chatRes.task_to_run || text });
-    (runRes.team || []).forEach(m => {
-      lastRunByRole[m.role] = m;
-      updateStep(m.role, 'done');
+    // ONE endpoint above Unit + Company altitudes. Router picks the
+    // intent from the message + current selection and does the right
+    // thing. Everything below is just plumbing the side_effects back
+    // into the UI — no mode toggles, no wrong-path errors.
+    const chatRes = await api('POST', `/api/chat`, {
+      message: text,
+      current_company_id: currentCompanyId || null,
+      current_session_id: currentSessionId || null,
     });
 
-    renderTeam((await api('GET', `/api/sessions/${currentSessionId}/team`)).members);
-    resultBody.textContent = runRes.final_output;
-    renderEvidence(runRes.evidence);
-    fetchPendingActions();
-    switchTab('output');
-    appendMessage('assistant', 'Done. The full deliverable is on the Output tab.');
+    appendMessage('assistant', chatRes.reply);
+
+    const fx = chatRes.side_effects || {};
+    let refreshedCompanies = false;
+    let refreshedOrg = false;
+
+    if (fx.company_id) {
+      // A Company was created or focused — pull the list, select it,
+      // update sidebar detail + org tree.
+      await refreshCompanies();
+      companySelector.value = fx.company_id;
+      await selectCompany(fx.company_id);
+      refreshedCompanies = true;
+    }
+
+    if (fx.pending_proposal) {
+      // The CEO's proposal is already in the chat reply text —
+      // nothing extra to render on the sidebar in v1.
+      currentProposal = fx.pending_proposal.units || null;
+    }
+
+    if (fx.applied_units && fx.applied_units.length) {
+      // Fresh Units were materialized — refresh sessions and org tree,
+      // jump to Org tab so the founder sees the tree.
+      await refreshSessions();
+      if (fx.company_id) await selectCompany(fx.company_id);
+      switchTab('org');
+      refreshedOrg = true;
+    }
+
+    if (fx.run_output != null) {
+      resultBody.textContent = fx.run_output || '(empty output)';
+      renderEvidence(fx.evidence || []);
+      fetchPendingActions();
+      switchTab('output');
+    }
+
+    if (fx.org_refreshed && !refreshedOrg) {
+      await refreshOrgTree();
+    }
+
+    setBusy(false);
+    return;
   } catch (e) {
     appendMessage('assistant', 'Something went wrong: ' + e.message);
+    setBusy(false);
+    return;
   } finally {
     stopProgressPolling();
     setBusy(false);
@@ -1854,37 +1792,24 @@ fetchPendingActions();
 // ================================================================
 
 let currentCompanyId = null;
-let chatMode = 'unit';            // 'unit' | 'company'
-let currentProposal = null;       // last CEO hierarchy proposal (unsaved)
+let currentProposal = null;       // mirrors server-side pending proposal, for reference
 let currentCompanyMeta = null;    // full Company object from /api/companies/{id}
 
 const companySelector = $('company-selector');
 const companyDetailEl = $('company-detail');
-const newCompanyBtn = $('new-company-btn');
-const newCompanyForm = $('new-company-form');
-const createCompanyBtn = $('create-company-btn');
-const cancelCompanyBtn = $('cancel-company-btn');
-const designBtn = $('design-hierarchy-btn');
-const applyBtn = $('apply-hierarchy-btn');
-const discardBtn = $('discard-proposal-btn');
-const proposalPanel = $('hierarchy-proposal-panel');
-const proposalContainer = $('hierarchy-proposal');
-const modeUnitBtn = $('mode-unit-btn');
-const modeCompanyBtn = $('mode-company-btn');
+const companyEmptyHint = $('company-empty-hint');
 const chatTargetBadge = $('chat-target-badge');
 const orgTreeEl = $('org-tree');
 
-function setChatMode(mode) {
-  chatMode = mode;
-  modeUnitBtn.classList.toggle('on', mode === 'unit');
-  modeCompanyBtn.classList.toggle('on', mode === 'company');
-  chatTargetBadge.classList.toggle('company-mode', mode === 'company');
-  chatTargetBadge.textContent = mode === 'company'
-    ? (currentCompanyMeta ? `CEO of ${currentCompanyMeta.name}` : 'CEO')
-    : 'Unit';
-  chatInputEl.placeholder = mode === 'company'
-    ? "Tell the CEO what to get done. They'll delegate across Units."
-    : 'Ask, build…  (Shift + Enter for new line)';
+function refreshChatTargetBadge() {
+  const inCompany = !!currentCompanyMeta;
+  chatTargetBadge.classList.toggle('company-mode', inCompany);
+  chatTargetBadge.textContent = inCompany
+    ? `CEO of ${currentCompanyMeta.name}`
+    : (currentSessionId ? 'Unit' : 'No target');
+  chatInputEl.placeholder = inCompany
+    ? "Tell the CEO what to build or run. One yes hires the team."
+    : 'Type anything — build me a company, run market research, add a specialist…';
 }
 
 async function refreshCompanies() {
@@ -1892,12 +1817,10 @@ async function refreshCompanies() {
     const data = await api('GET', '/api/companies');
     const companies = data.companies || [];
     const prev = currentCompanyId;
-    companySelector.innerHTML = '<option value="">(no Company selected)</option>' +
+    companySelector.innerHTML = '<option value="">(no Company yet)</option>' +
       companies.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
     if (prev && companies.some(c => c.id === prev)) {
       companySelector.value = prev;
-    } else if (companies.length) {
-      // no prior selection — leave blank so nothing auto-loads
     }
   } catch (e) {
     console.error('refreshCompanies failed', e);
@@ -1907,11 +1830,11 @@ async function refreshCompanies() {
 async function selectCompany(id) {
   currentCompanyId = id || null;
   currentProposal = null;
-  proposalPanel.style.display = 'none';
   if (!id) {
     companyDetailEl.style.display = 'none';
+    if (companyEmptyHint) companyEmptyHint.style.display = '';
     currentCompanyMeta = null;
-    if (chatMode === 'company') setChatMode('unit');
+    refreshChatTargetBadge();
     refreshOrgTree();
     return;
   }
@@ -1921,86 +1844,11 @@ async function selectCompany(id) {
     $('company-purpose-display').textContent = meta.purpose || '(no purpose set)';
     $('company-unit-count').textContent = `· ${(meta.unit_ids || []).length} Unit${(meta.unit_ids || []).length === 1 ? '' : 's'}`;
     companyDetailEl.style.display = '';
-    if (chatMode === 'company') setChatMode('company'); // refresh badge label
+    if (companyEmptyHint) companyEmptyHint.style.display = 'none';
+    refreshChatTargetBadge();
     refreshOrgTree();
   } catch (e) {
     appendMessage('assistant', 'Could not load Company: ' + e.message);
-  }
-}
-
-async function createCompany() {
-  const name = $('new-company-name').value.trim();
-  const purpose = $('new-company-purpose').value.trim();
-  if (!name) return alert('Company name is required.');
-  createCompanyBtn.disabled = true;
-  try {
-    const co = await api('POST', '/api/companies', { name, purpose: purpose || null });
-    $('new-company-name').value = '';
-    $('new-company-purpose').value = '';
-    newCompanyForm.style.display = 'none';
-    await refreshCompanies();
-    companySelector.value = co.id;
-    await selectCompany(co.id);
-    setChatMode('company');
-    appendMessage('assistant', `Company "${co.name}" created and CEO auto-hired. Now describe your company in the "Design hierarchy" box and the CEO will propose the org chart.`);
-  } catch (e) {
-    alert('Failed to create Company: ' + e.message);
-  } finally {
-    createCompanyBtn.disabled = false;
-  }
-}
-
-async function designHierarchy() {
-  if (!currentCompanyId) return alert('Select a Company first.');
-  const description = $('hierarchy-description').value.trim();
-  if (description.length < 20) return alert('Give the CEO at least a couple of sentences to work with.');
-  designBtn.disabled = true;
-  designBtn.textContent = 'CEO thinking…';
-  try {
-    const res = await api('POST', `/api/companies/${encodeURIComponent(currentCompanyId)}/design_hierarchy`, { description });
-    currentProposal = res.units || [];
-    renderProposal(currentProposal);
-    proposalPanel.style.display = '';
-    appendMessage('assistant', `CEO proposed ${currentProposal.length} Unit${currentProposal.length === 1 ? '' : 's'}. Review in the right sidebar and click "Apply — hire everyone" to materialize it.`);
-  } catch (e) {
-    alert('Design failed: ' + e.message);
-  } finally {
-    designBtn.disabled = false;
-    designBtn.textContent = 'CEO, design my org chart';
-  }
-}
-
-function renderProposal(units) {
-  proposalContainer.innerHTML = (units || []).map(u => `
-    <div class="proposed-unit">
-      <div class="u-name">${escapeHtml(u.name)}</div>
-      <div class="u-purpose">${escapeHtml(u.purpose || '')}</div>
-      <div class="u-specialists">
-        ${(u.specialists || []).map(s => `<span class="u-specialist">${escapeHtml(s.role)}</span>`).join('')}
-      </div>
-    </div>
-  `).join('');
-}
-
-async function applyHierarchy() {
-  if (!currentCompanyId || !currentProposal) return;
-  applyBtn.disabled = true;
-  applyBtn.textContent = 'Hiring…';
-  try {
-    const res = await api('POST', `/api/companies/${encodeURIComponent(currentCompanyId)}/apply_hierarchy`, { units: currentProposal });
-    proposalPanel.style.display = 'none';
-    currentProposal = null;
-    $('hierarchy-description').value = '';
-    await selectCompany(currentCompanyId); // refresh unit count
-    switchTab('org');
-    appendMessage('assistant', `Done. Materialized ${res.units.length} Unit${res.units.length === 1 ? '' : 's'}, hired ${res.units.reduce((n, u) => n + u.specialist_count, 0)} specialists (plus a Supervisor each). See the Org tab for the tree.`);
-    // Also refresh the Unit-side dropdown since the new Units live in the same session store
-    await refreshSessions();
-  } catch (e) {
-    alert('Apply failed: ' + e.message);
-  } finally {
-    applyBtn.disabled = false;
-    applyBtn.textContent = 'Apply — hire everyone';
   }
 }
 
@@ -2067,45 +1915,12 @@ function renderOrgUnit(u) {
   </div>`;
 }
 
-async function runCompanyTask(text) {
-  try {
-    setBusy(true, 'CEO delegating across Units…');
-    switchTab('output');
-    resultBody.textContent = 'Running… CEO is planning, delegating to each Unit, and synthesizing back. Company-level runs typically take 15–30 min on gpt-oss. Progress will appear here when the pipeline returns.';
-    const res = await api('POST', `/api/companies/${encodeURIComponent(currentCompanyId)}/run`, { task: text });
-    resultBody.textContent = res.final_output || '(empty output)';
-    renderEvidence(res.evidence || []);
-    fetchPendingActions();
-    appendMessage('assistant', `CEO delivered. Plan had ${(res.plan || []).length} sub-tasks across ${(res.unit_contributions || []).length} Unit${(res.unit_contributions || []).length === 1 ? '' : 's'}. See Output tab.`);
-  } catch (e) {
-    appendMessage('assistant', 'Company run failed: ' + e.message);
-  } finally {
-    setBusy(false);
-  }
-}
-
 // ---- Event wiring ------------------------------------------------
+// Everything creation-shaped goes through the chat now — the only
+// interactive control left in this section is the Company selector
+// (for switching between companies you've already created).
 
-newCompanyBtn.addEventListener('click', () => {
-  newCompanyForm.style.display = newCompanyForm.style.display === 'none' ? '' : 'none';
-});
-cancelCompanyBtn.addEventListener('click', () => { newCompanyForm.style.display = 'none'; });
-createCompanyBtn.addEventListener('click', createCompany);
 companySelector.addEventListener('change', (e) => selectCompany(e.target.value));
-designBtn.addEventListener('click', designHierarchy);
-applyBtn.addEventListener('click', applyHierarchy);
-discardBtn.addEventListener('click', () => {
-  currentProposal = null;
-  proposalPanel.style.display = 'none';
-});
-modeUnitBtn.addEventListener('click', () => setChatMode('unit'));
-modeCompanyBtn.addEventListener('click', () => {
-  if (!currentCompanyId) {
-    alert('Select or create a Company first.');
-    return;
-  }
-  setChatMode('company');
-});
 
 refreshCompanies();
 

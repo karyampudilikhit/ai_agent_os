@@ -69,7 +69,7 @@ approves, Units + specialists auto-hire).
 | **Notion via MCP** | ⏳ walkthrough documented, integration + `NOTION_TOKEN` not yet set up locally. |
 | **Obsidian via HTTP tools** | ⏳ walkthrough documented, plugin + tools not yet registered locally. |
 | **Vision Desktop Agent (full-system access)** | ❌ scoped, not yet built. Small Python/Electron daemon on the founder's machine, WebSocket to the backend, screenshot + click + type + allow-listed shell + arbitrary-folder file access with per-app approval on first use. Next major layer after the action MVP. |
-| **Company / CEO UI (org tree Canvas, altitude-aware chat)** | ✅ live — right sidebar has a **Company** section (create by name+purpose, CEO auto-hired), a **Design hierarchy** textarea (paragraph → CEO proposes → founder reviews proposed Units + specialists → Apply materializes everyone), and a **Talk to Unit / Talk to CEO** mode toggle. The middle panel gained an **Org** tab that renders the full tree (CEO node on top, Unit cards below with Supervisor + specialists inside). In CEO mode, the Studio Chat routes each message to `POST /api/companies/{id}/run` and shows the CEO's synthesized deliverable + evidence receipts + pending actions. |
+| **Company / CEO UI (org tree Canvas, universal chat router)** | ✅ live — Phase 3b rewrote the flow to be prompt-first. No mode toggle, no "create company" form, no "design hierarchy" textarea. Everything runs through **one** chat input. A universal router (`POST /api/chat`, backed by `UniversalChatRouter` in `backend/app/chat/`) sees the current selection state and classifies each message into one of: `create_company` (extracts name + purpose + auto-designs the hierarchy in the same turn), `design_hierarchy`, `apply_proposal` (say "yes" / "apply"), `discard_proposal`, `run_task_company` (CEO delegates + synthesizes), `run_task_unit` (Supervisor pattern), `casual_chat`. The proposal renders inline in the chat reply — the founder just types "yes" to hire everyone. Right sidebar keeps the Company selector + purpose + Unit count as **read-only status**. Middle panel has an **Org** tab that renders the full tree (CEO node on top, Unit cards below with Supervisor + specialists inside). |
 | **AI hierarchy — Phase 2b** | ❌ deferred: multiple Teams per Unit + persistent CEO memory. |
 | **User accounts / auth** | ❌ deferred until we're ready to host. |
 
@@ -298,6 +298,18 @@ GET    /api/actions                           List registered built-in actions
 GET    /api/pending_actions?status=pending    List pending / resolved actions
 POST   /api/pending_actions/{id}/approve      Approve AND execute inline; returns updated record
 POST   /api/pending_actions/{id}/reject       Kill a pending action (optional ?reason=…)
+```
+
+**Universal chat (the front door — Phase 3b):**
+```
+POST   /api/chat                              body: {message, current_company_id?, current_session_id?}
+                                              LLM classifies the message across Unit + Company altitudes
+                                              and dispatches. Response:
+                                                {intent, reply, side_effects: {company_id?, session_id?,
+                                                 pending_proposal?, applied_units, org_refreshed,
+                                                 run_output?, evidence}}
+                                              Kills the "click here, then toggle that mode" UX —
+                                              every founder action goes through this one endpoint.
 ```
 
 **Connectors — MCP servers:**

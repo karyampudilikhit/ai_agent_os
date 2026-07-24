@@ -55,6 +55,9 @@ from backend.app.api.schemas import (
     TeamListResponse,
     TeamMemberSpec,
     TeamMemberSummary,
+    UniversalChatRequest,
+    UniversalChatResponse,
+    UniversalChatSideEffects,
     ValidateIdeaRequest,
     ValidateIdeaResponse,
 )
@@ -77,6 +80,13 @@ from backend.app.tools.http_tool_store import get_store as get_http_tool_store
 
 from backend.app.actions.action_registry import get_registry as get_action_registry
 from backend.app.actions.approval_queue import ApprovalQueueError, get_queue as get_approval_queue
+
+from backend.app.chat.pending_proposal_store import get_store as get_pending_proposal_store
+from backend.app.chat.universal_router import (
+    UniversalChatRouter,
+    build_state_snapshot,
+    format_proposal_for_chat,
+)
 from backend.app.tools.mcp_client import get_registry as get_mcp_registry
 from backend.app.tools.mcp_store import get_store as get_mcp_store
 from backend.app.main import _build_adapter, _load_config
@@ -1049,3 +1059,213 @@ def reject_pending_action(action_id: str, reason: Optional[str] = None):
     except ApprovalQueueError as exc:
         raise HTTPException(400, str(exc))
     return {"action": updated}
+
+
+# ---------------------------------------------------------------------------
+# Universal chat router (Phase 3b — prompt-first UI)
+#
+# One endpoint above Unit and Company altitudes. The client passes what
+# it currently has selected; the router classifies the intent and does
+# the right thing. No mode toggle, no wrong-path errors — the founder
+# just types.
+# ---------------------------------------------------------------------------
+
+@router.post("/chat", response_model=UniversalChatResponse)
+def universal_chat(req: UniversalChatRequest) -> UniversalChatResponse:
+    pipeline = _build_pipeline()
+    router_llm = UniversalChatRouter(model_adapter=pipeline.adapter)
+    proposal_store = get_pending_proposal_store()
+    company_store = get_company_store()
+
+    # --- build the state snapshot the router needs to classify ---
+    current_company = None
+    if req.current_company_id:
+        current_company = company_store.get(req.current_company_id)
+    current_members: List[Dict[str, Any]] = []
+    if req.current_session_id:
+        try:
+            store = TeamStore(req.current_session_id)
+            current_members = list(store.members())
+        except Exception:
+            current_members = []
+    known_companies = company_store.list()
+    pending = None
+    if current_company:
+        pending = proposal_store.get(current_company["id"])
+
+    snapshot = build_state_snapshot(
+        current_company=current_company,
+        current_unit_members=current_members,
+        current_session_id=req.current_session_id,
+        pending_proposal=pending,
+        known_companies=known_companies,
+    )
+
+    verdict = router_llm.classify(req.message, snapshot)
+    intent = verdict.get("intent") or "casual_chat"
+    side_effects = UniversalChatSideEffects()
+
+    if intent == "casual_chat":
+        return UniversalChatResponse(
+            intent=intent,
+            reply=str(verdict.get("reply") or "").strip() or "How can I help?",
+            side_effects=side_effects,
+        )
+
+    # --- create_company (optionally chained with a hierarchy design) ---
+    if intent == "create_company":
+        name = str(verdict.get("name") or "").strip() or "New Company"
+        purpose = str(verdict.get("purpose") or "").strip() or None
+        description = str(verdict.get("description") or req.message).strip()
+        auto_design = bool(verdict.get("auto_design", True))
+        try:
+            company = company_store.create(name=name, purpose=purpose)
+            company = _ensure_ceo(company)
+        except CompanyStoreError as exc:
+            raise HTTPException(400, str(exc))
+        side_effects.company_id = company["id"]
+        side_effects.org_refreshed = True
+        current_company = company
+
+        if not auto_design:
+            return UniversalChatResponse(
+                intent=intent,
+                reply=(
+                    f"Company '{company['name']}' created and CEO hired. "
+                    f"Tell me what you'd like the org chart to look like "
+                    f"and the CEO will propose it."
+                ),
+                side_effects=side_effects,
+            )
+        # Fall through to design_hierarchy against the just-created Company
+        intent = "design_hierarchy"
+        verdict.setdefault("description", description)
+
+    # --- design_hierarchy: CEO proposes ---
+    if intent == "design_hierarchy":
+        if not current_company:
+            return UniversalChatResponse(
+                intent=intent,
+                reply=(
+                    "There's no Company yet. Say something like "
+                    "'build me an AI agency' first and I'll create one, "
+                    "then design the org chart in the same turn."
+                ),
+                side_effects=side_effects,
+            )
+        description = str(verdict.get("description") or req.message).strip()
+        designer = HierarchyDesigner(model_adapter=pipeline.adapter)
+        proposed = designer.design(description)
+        proposal_store.set(current_company["id"], proposed)
+        side_effects.pending_proposal = {
+            "company_id": current_company["id"],
+            "units": proposed,
+        }
+        side_effects.company_id = current_company["id"]
+        reply = format_proposal_for_chat(proposed)
+        return UniversalChatResponse(intent=intent, reply=reply, side_effects=side_effects)
+
+    # --- apply_proposal: materialize the pending proposal ---
+    if intent == "apply_proposal":
+        if not current_company:
+            return UniversalChatResponse(
+                intent=intent, reply="No Company selected.", side_effects=side_effects,
+            )
+        pending = proposal_store.get(current_company["id"])
+        if not pending or not pending.get("units"):
+            return UniversalChatResponse(
+                intent=intent,
+                reply=(
+                    "Nothing to apply — I don't have a pending proposal "
+                    "for this Company. Describe your company and I'll draft one."
+                ),
+                side_effects=side_effects,
+            )
+        applied_req = HierarchyApplyRequest(
+            units=[
+                HierarchyUnitSpec(
+                    name=u["name"],
+                    purpose=u.get("purpose", ""),
+                    specialists=[
+                        TeamMemberSpec(role=s.get("role", ""), mandate=s.get("mandate", ""))
+                        for s in u.get("specialists", [])
+                    ],
+                )
+                for u in pending["units"]
+                if u.get("name")
+            ]
+        )
+        result = apply_company_hierarchy(current_company["id"], applied_req)
+        proposal_store.clear(current_company["id"])
+        side_effects.applied_units = list(result.units)
+        side_effects.company_id = current_company["id"]
+        side_effects.org_refreshed = True
+        n_specialists = sum(u.specialist_count for u in result.units)
+        reply = (
+            f"Done. Hired the CEO, {len(result.units)} Supervisor"
+            f"{'s' if len(result.units) != 1 else ''}, and "
+            f"{n_specialists} specialist{'s' if n_specialists != 1 else ''}. "
+            f"Everyone shows up on the Org tab. Now tell me what to get done."
+        )
+        return UniversalChatResponse(intent=intent, reply=reply, side_effects=side_effects)
+
+    # --- discard_proposal ---
+    if intent == "discard_proposal":
+        if current_company:
+            proposal_store.clear(current_company["id"])
+        return UniversalChatResponse(
+            intent=intent,
+            reply="Scrapped. Tell me what you'd like instead and the CEO will draft again.",
+            side_effects=side_effects,
+        )
+
+    # --- run_task_company: kick the CEO ---
+    if intent == "run_task_company":
+        if not current_company:
+            return UniversalChatResponse(
+                intent=intent,
+                reply="I'd need a Company to run this against. Create one first.",
+                side_effects=side_effects,
+            )
+        task = str(verdict.get("task") or req.message).strip()
+        result = run_task_on_company(current_company["id"], CompanyRunRequest(task=task))
+        side_effects.run_output = result.final_output
+        side_effects.evidence = list(result.evidence)
+        side_effects.company_id = current_company["id"]
+        return UniversalChatResponse(
+            intent=intent,
+            reply=(
+                f"CEO delivered. Plan had {len(result.plan)} sub-task"
+                f"{'s' if len(result.plan) != 1 else ''} across "
+                f"{len(result.unit_contributions)} Unit"
+                f"{'s' if len(result.unit_contributions) != 1 else ''}. "
+                f"Full deliverable on the Output tab."
+            ),
+            side_effects=side_effects,
+        )
+
+    # --- run_task_unit: kick the current Unit's Supervisor ---
+    if intent == "run_task_unit":
+        if not req.current_session_id:
+            return UniversalChatResponse(
+                intent=intent,
+                reply="No Unit selected — tell me which team should run this, or create a Company and let the CEO delegate.",
+                side_effects=side_effects,
+            )
+        task = str(verdict.get("task") or req.message).strip()
+        result = run_task_on_team(req.current_session_id, RunTaskRequest(task=task))
+        side_effects.run_output = result.final_output
+        side_effects.evidence = list(result.evidence)
+        side_effects.session_id = req.current_session_id
+        return UniversalChatResponse(
+            intent=intent,
+            reply="Unit delivered. Full deliverable on the Output tab.",
+            side_effects=side_effects,
+        )
+
+    # Should never reach here — VALID_INTENTS enforces the set
+    return UniversalChatResponse(
+        intent="casual_chat",
+        reply="I wasn't sure what to do with that. Try rephrasing.",
+        side_effects=side_effects,
+    )

@@ -359,3 +359,33 @@ class ChatResponse(BaseModel):
     # separate so the chat endpoint stays fast and the long run streams
     # through the existing progress polling on /run).
     task_to_run: Optional[str] = None
+
+
+# --- Universal chat router (Phase 3b — prompt-first UI, kills the
+# "click here, then toggle that mode" flow at the front door). ---
+
+class UniversalChatRequest(BaseModel):
+    """One entry point above Unit and Company altitudes. The client
+    passes what it currently has selected; the router figures out
+    the intent and executes it."""
+    message: str = Field(..., min_length=1)
+    current_company_id: Optional[str] = None
+    current_session_id: Optional[str] = None
+
+
+class UniversalChatSideEffects(BaseModel):
+    """State updates the client should reflect after this turn. All
+    fields optional — the client re-fetches whatever changed."""
+    company_id: Optional[str] = None
+    session_id: Optional[str] = None
+    pending_proposal: Optional[Dict[str, Any]] = None
+    applied_units: List[HierarchyAppliedUnit] = Field(default_factory=list)
+    org_refreshed: bool = False
+    run_output: Optional[str] = None
+    evidence: List[EvidenceClaim] = Field(default_factory=list)
+
+
+class UniversalChatResponse(BaseModel):
+    intent: str
+    reply: str
+    side_effects: UniversalChatSideEffects = Field(default_factory=UniversalChatSideEffects)
