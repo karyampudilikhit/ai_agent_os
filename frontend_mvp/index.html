@@ -595,10 +595,92 @@
     margin: 0 auto;
   }
   .result-body {
-    white-space: pre-wrap;
-    font-size: 13.5px;
-    line-height: 1.7;
+    font-size: 14px;
+    line-height: 1.65;
     color: var(--text);
+  }
+  /* Markdown-rendered content — used in Output and in assistant chat
+     messages. Keeps prose readable and makes tables actually usable
+     instead of a wall of pipes. */
+  .md h1, .md h2, .md h3, .md h4 {
+    color: var(--text);
+    font-weight: 700;
+    line-height: 1.3;
+    margin: 20px 0 8px;
+  }
+  .md h1 { font-size: 22px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  .md h2 { font-size: 18px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+  .md h3 { font-size: 15.5px; }
+  .md h4 { font-size: 14px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .md p { margin: 8px 0; }
+  .md ul, .md ol { margin: 8px 0 8px 22px; padding: 0; }
+  .md li { margin: 3px 0; }
+  .md li > p { margin: 0; }
+  .md hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 18px 0;
+  }
+  .md a { color: var(--info); text-decoration: underline; }
+  .md a:hover { color: var(--accent); }
+  .md strong { color: var(--text); font-weight: 700; }
+  .md em { color: var(--text); font-style: italic; }
+  .md code {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12.5px;
+    color: var(--accent);
+  }
+  .md pre {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    overflow-x: auto;
+    margin: 10px 0;
+  }
+  .md pre code {
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: var(--text);
+    font-size: 12.5px;
+    line-height: 1.55;
+  }
+  .md blockquote {
+    border-left: 3px solid var(--accent);
+    background: var(--panel-2);
+    color: var(--text-muted);
+    padding: 8px 14px;
+    margin: 10px 0;
+    border-radius: 0 6px 6px 0;
+  }
+  .md table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 12px 0;
+    font-size: 13px;
+    overflow-x: auto;
+    display: block;
+  }
+  .md thead { background: var(--panel-2); }
+  .md th, .md td {
+    border: 1px solid var(--border);
+    padding: 7px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+  .md th {
+    font-weight: 700;
+    color: var(--text);
+    background: var(--panel-2);
+  }
+  .md tbody tr:nth-child(even) { background: rgba(0, 0, 0, 0.02); }
+  @media (prefers-color-scheme: dark) {
+    .md tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.02); }
   }
   .result-empty {
     color: var(--text-dim);
@@ -1081,6 +1163,7 @@
     <div class="chat-header">
       <div class="title">Studio Chat<span id="chat-target-badge" class="chat-target-badge">Unit</span></div>
       <div class="actions">
+        <button class="ghost small" id="clear-chat-btn" title="Clear chat history (does not delete Units or Companies)">Clear</button>
         <button class="ghost small" id="new-session-btn">+ New</button>
       </div>
     </div>
@@ -1241,13 +1324,231 @@ async function api(method, path, body) {
 
 // ------------------------------------------------------------
 // Chat message rendering
+// Self-contained markdown -> HTML renderer. Handles the shapes real
+// deliverables use: headings, tables (GFM), bold/italic, ordered +
+// unordered lists, inline + fenced code, links, hr, blockquote.
+// Purposely NOT a full CommonMark parser — no image/reference/nested
+// list support. The output is HTML injected inside a .md container so
+// its CSS wraps every element.
+function renderMarkdown(md) {
+  if (!md) return '';
+  const lines = String(md).replace(/\r\n/g, '\n').split('\n');
+  const out = [];
+  let listStack = []; // stack of 'ul' | 'ol'
+  const closeAllLists = () => { while (listStack.length) out.push(`</${listStack.pop()}>`); };
+
+  const escapeHtml = (s) => String(s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+
+  const renderInline = (s) => {
+    let x = escapeHtml(s);
+    // Inline code first — protects contents from further processing
+    const codeSlots = [];
+    x = x.replace(/`([^`]+)`/g, (m, code) => {
+      const idx = codeSlots.length;
+      codeSlots.push(`<code>${code}</code>`);
+      return `C${idx}`;
+    });
+    // Bold  **text**
+    x = x.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+    // Italic  *text* — negative-look tricks kept simple; runs after bold
+    x = x.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
+    // Links  [text](url)
+    x = x.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, txt, url) => {
+      const safe = /^(https?:|mailto:|#|\/)/i.test(url) ? url : '#';
+      return `<a href="${safe}" target="_blank" rel="noopener">${txt}</a>`;
+    });
+    // Restore inline code
+    x = x.replace(/C(\d+)/g, (m, i) => codeSlots[parseInt(i, 10)]);
+    return x;
+  };
+
+  let i = 0;
+  while (i < lines.length) {
+    let line = lines[i];
+
+    // Fenced code block
+    if (line.trim().startsWith('```')) {
+      closeAllLists();
+      const lang = line.trim().slice(3).trim();
+      i++;
+      const buf = [];
+      while (i < lines.length && !lines[i].trim().startsWith('```')) { buf.push(lines[i]); i++; }
+      const cls = lang ? ` class="lang-${escapeHtml(lang)}"` : '';
+      out.push(`<pre><code${cls}>${escapeHtml(buf.join('\n'))}</code></pre>`);
+      i++; // skip closing ```
+      continue;
+    }
+
+    // GFM table: header line, separator line, then data rows
+    if (line.trim().startsWith('|') && i + 1 < lines.length &&
+        /^\s*\|[\s:\-|]+\|\s*$/.test(lines[i + 1])) {
+      closeAllLists();
+      const splitCells = (row) => row.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+      const headers = splitCells(line);
+      i += 2;
+      const rows = [];
+      while (i < lines.length && lines[i].trim().startsWith('|')) { rows.push(splitCells(lines[i])); i++; }
+      let t = '<table><thead><tr>';
+      headers.forEach(h => { t += `<th>${renderInline(h)}</th>`; });
+      t += '</tr></thead><tbody>';
+      rows.forEach(cells => {
+        t += '<tr>';
+        cells.forEach(c => { t += `<td>${renderInline(c)}</td>`; });
+        t += '</tr>';
+      });
+      t += '</tbody></table>';
+      out.push(t);
+      continue;
+    }
+
+    // Headings
+    let m = line.match(/^\s*(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (m) {
+      closeAllLists();
+      const level = m[1].length;
+      out.push(`<h${level}>${renderInline(m[2])}</h${level}>`);
+      i++; continue;
+    }
+
+    // Horizontal rule
+    if (/^\s*(?:-{3,}|_{3,}|\*{3,})\s*$/.test(line)) {
+      closeAllLists();
+      out.push('<hr>');
+      i++; continue;
+    }
+
+    // Blockquote
+    if (/^\s*>\s?/.test(line)) {
+      closeAllLists();
+      const buf = [];
+      while (i < lines.length && /^\s*>\s?/.test(lines[i])) {
+        buf.push(lines[i].replace(/^\s*>\s?/, ''));
+        i++;
+      }
+      out.push(`<blockquote>${renderInline(buf.join(' '))}</blockquote>`);
+      continue;
+    }
+
+    // Ordered list item
+    m = line.match(/^\s*\d+\.\s+(.+)$/);
+    if (m) {
+      if (listStack[listStack.length - 1] !== 'ol') { closeAllLists(); out.push('<ol>'); listStack.push('ol'); }
+      out.push(`<li>${renderInline(m[1])}</li>`);
+      i++; continue;
+    }
+
+    // Unordered list item
+    m = line.match(/^\s*[-*+]\s+(.+)$/);
+    if (m) {
+      if (listStack[listStack.length - 1] !== 'ul') { closeAllLists(); out.push('<ul>'); listStack.push('ul'); }
+      out.push(`<li>${renderInline(m[1])}</li>`);
+      i++; continue;
+    }
+
+    // Blank line — close open lists, otherwise skip
+    if (!line.trim()) {
+      closeAllLists();
+      i++; continue;
+    }
+
+    // Paragraph — merge subsequent non-blank, non-block lines
+    closeAllLists();
+    const buf = [line];
+    i++;
+    while (i < lines.length) {
+      const l = lines[i];
+      if (!l.trim()) break;
+      if (/^\s*#{1,6}\s+/.test(l)) break;
+      if (l.trim().startsWith('|')) break;
+      if (l.trim().startsWith('```')) break;
+      if (/^\s*(?:-{3,}|_{3,}|\*{3,})\s*$/.test(l)) break;
+      if (/^\s*\d+\.\s+/.test(l)) break;
+      if (/^\s*[-*+]\s+/.test(l)) break;
+      if (/^\s*>\s?/.test(l)) break;
+      buf.push(l);
+      i++;
+    }
+    out.push(`<p>${renderInline(buf.join(' '))}</p>`);
+  }
+  closeAllLists();
+  return out.join('\n');
+}
+
 function appendMessage(role, text, className) {
   const msg = document.createElement('div');
   msg.className = 'msg ' + role + (className ? ' ' + className : '');
-  msg.textContent = text;
+  // Assistant replies are frequently markdown (proposals, headings,
+  // tables). Render them. User messages stay plain — the founder isn't
+  // trying to inject HTML at themselves.
+  if (role === 'assistant') {
+    msg.classList.add('md');
+    msg.innerHTML = renderMarkdown(text);
+  } else {
+    msg.textContent = text;
+  }
   chatMessagesEl.appendChild(msg);
   chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+  saveChatHistory(role, text);
   return msg;
+}
+
+// ---- Chat + selection persistence (localStorage) ----------------
+// Founder reloads the page, prior chat is still there — like Claude
+// or ChatGPT. Also persist currentCompanyId + currentSessionId so
+// reload restores focus.
+const CHAT_KEY = 'vision_ai_chat_history_v1';
+const SELECTION_KEY = 'vision_ai_selection_v1';
+const CHAT_MAX_MESSAGES = 200;
+
+function saveChatHistory(role, text) {
+  try {
+    const arr = JSON.parse(localStorage.getItem(CHAT_KEY) || '[]');
+    arr.push({ role, text, ts: Date.now() });
+    if (arr.length > CHAT_MAX_MESSAGES) arr.splice(0, arr.length - CHAT_MAX_MESSAGES);
+    localStorage.setItem(CHAT_KEY, JSON.stringify(arr));
+  } catch (e) { /* quota exceeded — silently drop */ }
+}
+
+function clearChatHistory() {
+  localStorage.removeItem(CHAT_KEY);
+}
+
+function restoreChatHistory() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(CHAT_KEY) || '[]');
+    if (!arr.length) return;
+    const emptyState = chatMessagesEl.querySelector('.chat-empty');
+    if (emptyState) emptyState.remove();
+    // Replay without re-saving each one — bypass appendMessage's save
+    arr.forEach(entry => {
+      const msg = document.createElement('div');
+      msg.className = 'msg ' + entry.role;
+      if (entry.role === 'assistant') {
+        msg.classList.add('md');
+        msg.innerHTML = renderMarkdown(entry.text);
+      } else {
+        msg.textContent = entry.text;
+      }
+      chatMessagesEl.appendChild(msg);
+    });
+    chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+  } catch (e) { /* corrupt storage — ignore */ }
+}
+
+function saveSelection() {
+  try {
+    localStorage.setItem(SELECTION_KEY, JSON.stringify({
+      company_id: currentCompanyId || null,
+      session_id: currentSessionId || null,
+    }));
+  } catch (e) {}
+}
+
+function readSelection() {
+  try { return JSON.parse(localStorage.getItem(SELECTION_KEY) || '{}'); }
+  catch (e) { return {}; }
 }
 
 function appendStatusWithSteps(text, steps) {
@@ -1431,12 +1732,14 @@ async function refreshSessions() {
 async function selectSession(id) {
   currentSessionId = id;
   lastRunByRole = {};
-  resultBody.innerHTML = '<div class="result-empty">No output yet — send a task to your team and it will show up here.</div>';
-  clearChat();
+  // Note: no longer clearChat() here. Chat is app-level and persists
+  // across selections; switching between Units doesn't wipe the log.
+  // The founder taps "Clear" if they want a fresh window.
   switchTab('canvas');
   await refreshSessions();
   sessionSelector.value = id;
   await loadTeam(id);
+  saveSelection();
 }
 
 async function loadTeam(sessionId) {
@@ -1557,7 +1860,8 @@ function startRunPolling(runId, opts = {}) {
     if (rec.status === 'done') {
       clearInterval(_activePolls.get(runId));
       _activePolls.delete(runId);
-      resultBody.textContent = rec.output || '(empty output)';
+      resultBody.classList.add('md');
+      resultBody.innerHTML = renderMarkdown(rec.output || '_(empty output)_');
       renderEvidence(rec.evidence || []);
       fetchPendingActions();
       switchTab('output');
@@ -1670,7 +1974,8 @@ async function sendMessage() {
     }
 
     if (fx.run_output != null) {
-      resultBody.textContent = fx.run_output || '(empty output)';
+      resultBody.classList.add('md');
+      resultBody.innerHTML = renderMarkdown(fx.run_output || '_(empty output)_');
       renderEvidence(fx.evidence || []);
       fetchPendingActions();
       switchTab('output');
@@ -1953,6 +2258,7 @@ async function selectCompany(id) {
     currentCompanyMeta = null;
     refreshChatTargetBadge();
     refreshOrgTree();
+    saveSelection();
     return;
   }
   try {
@@ -1964,6 +2270,7 @@ async function selectCompany(id) {
     if (companyEmptyHint) companyEmptyHint.style.display = 'none';
     refreshChatTargetBadge();
     refreshOrgTree();
+    saveSelection();
   } catch (e) {
     appendMessage('assistant', 'Could not load Company: ' + e.message);
   }
@@ -2039,7 +2346,35 @@ function renderOrgUnit(u) {
 
 companySelector.addEventListener('change', (e) => selectCompany(e.target.value));
 
-refreshCompanies();
+// Clear-chat button — nukes local chat log ONLY (does not touch Units,
+// Companies, Employees, or pending actions on the server).
+const clearChatBtn = $('clear-chat-btn');
+if (clearChatBtn) {
+  clearChatBtn.addEventListener('click', () => {
+    if (!confirm('Clear the entire chat history? This does NOT delete any Units, Companies, or Employees.')) return;
+    clearChatHistory();
+    clearChat();
+  });
+}
+
+// Boot: restore prior chat first, then restore selection so any
+// Company / Unit that was focused before the reload comes back.
+(async () => {
+  restoreChatHistory();
+  await refreshCompanies();
+  const sel = readSelection();
+  if (sel.company_id) {
+    // Only auto-select if the Company still exists on the server
+    const opts = Array.from(companySelector.options).map(o => o.value);
+    if (opts.includes(sel.company_id)) {
+      companySelector.value = sel.company_id;
+      await selectCompany(sel.company_id);
+    }
+  }
+  if (sel.session_id) {
+    try { await selectSession(sel.session_id); } catch (e) { /* stale session — ignore */ }
+  }
+})();
 
 function buildTeamHiredReport(members, task) {
   // Fast, LLM-free "here's who I hired and what they'll do" summary —
