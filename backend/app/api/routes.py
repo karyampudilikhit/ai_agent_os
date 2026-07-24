@@ -1385,6 +1385,54 @@ def _fallthrough_response(side_effects: UniversalChatSideEffects) -> UniversalCh
     )
 
 
+@router.post("/employees/move")
+def move_employee(payload: Dict[str, str]):
+    """Drag-and-drop backing endpoint.
+
+    Atomically detach an Employee from one Unit and hire them into
+    another. Body: {employee_id, from_unit_id, to_unit_id}.
+
+    Refuses to move the Supervisor (Units always keep their own
+    Supervisor — moving that would leave the source Unit headless).
+    On failure, the source Unit is not modified — no half-detached
+    state.
+    """
+    employee_id = str(payload.get("employee_id") or "").strip()
+    from_unit_id = str(payload.get("from_unit_id") or "").strip()
+    to_unit_id = str(payload.get("to_unit_id") or "").strip()
+    if not employee_id or not from_unit_id or not to_unit_id:
+        raise HTTPException(400, "employee_id, from_unit_id, to_unit_id all required")
+    if from_unit_id == to_unit_id:
+        return {"ok": True, "message": "Same Unit — nothing to do."}
+
+    src = TeamStore(from_unit_id)
+    src_members = src.members()
+    match = next((m for m in src_members if m.get("employee_id") == employee_id), None)
+    if not match:
+        raise HTTPException(404, f"Employee {employee_id!r} is not in Unit {from_unit_id!r}.")
+    if match.get("is_supervisor"):
+        raise HTTPException(
+            400, "Supervisors are anchored to their Unit and can't be moved.",
+        )
+
+    dst = TeamStore(to_unit_id)
+    # Reject duplicate placement — the dst Unit already has this Employee.
+    if any(m.get("employee_id") == employee_id for m in dst.members()):
+        raise HTTPException(409, "That Employee is already in the target Unit.")
+
+    # Try to hire first; only detach from source if hire succeeded.
+    try:
+        dst.hire(employee_id=employee_id, is_supervisor=False)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"Hire failed: {exc}")
+    src.remove_member(employee_id)
+
+    return {
+        "ok": True,
+        "message": f"Moved {employee_id!r} from {from_unit_id!r} to {to_unit_id!r}",
+    }
+
+
 @router.get("/runs/{run_id}", response_model=RunStatusResponse)
 def get_run_status(run_id: str) -> RunStatusResponse:
     """Poll a background run kicked off by /api/chat. Client polls

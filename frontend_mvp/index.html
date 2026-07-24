@@ -1031,10 +1031,40 @@
     background: rgba(139,30,47,0.10);
     color: var(--accent);
     font-weight: 600;
+    cursor: not-allowed;  /* Supervisors are anchored to their Unit */
+  }
+  .org-member.draggable {
+    cursor: grab;
+  }
+  .org-member.draggable:hover {
+    background: rgba(139,30,47,0.06);
+    border: 1px solid var(--accent);
+    padding: 3px 7px;  /* compensate for the +2px border to prevent layout shift */
+  }
+  .org-member.dragging {
+    opacity: 0.35;
+    cursor: grabbing;
   }
   .org-member .role-name {
     flex: 1;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .org-unit-card.drop-target {
+    border-color: var(--accent);
+    background: rgba(139,30,47,0.06);
+    box-shadow: 0 0 0 2px rgba(139,30,47,0.15);
+  }
+  .org-unit-card.drop-invalid {
+    border-color: var(--danger);
+    background: rgba(194,65,12,0.06);
+    cursor: not-allowed;
+  }
+  .drag-hint {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 11px;
+    padding: 0 20px 8px;
+    max-width: 600px;
   }
   .chat-target-badge {
     padding: 3px 8px;
@@ -2006,6 +2036,7 @@ async function refreshOrgTree() {
     <div style="font-size:16px;font-weight:600;color:var(--text);">${escapeHtml(co.name)}</div>
     ${co.purpose ? `<div style="max-width:600px;text-align:center;font-size:12.5px;color:var(--text-muted);line-height:1.5;">${escapeHtml(co.purpose)}</div>` : ''}
     ${ceoHtml}
+    ${unitEntries.length ? '<div class="drag-hint">Drag a specialist onto another Unit to reassign them. Supervisors are anchored.</div>' : ''}
     ${unitsHtml}
   `;
 }
@@ -2013,20 +2044,20 @@ async function refreshOrgTree() {
 function renderOrgUnit(u) {
   const supervisor = u.members.find(m => m.is_supervisor);
   const specialists = u.members.filter(m => !m.is_supervisor);
-  // Derive a Unit label — we don't have a dedicated name field on the
-  // Unit row in the team endpoint, so use the supervisor role stripped
-  // of the trailing " Supervisor" suffix if present.
   let unitName = 'Unit';
   if (supervisor) {
     unitName = supervisor.role.replace(/\s+Supervisor$/i, '').trim() || supervisor.role;
   }
+  // Every Unit card carries data-unit-id so it can be a drop target,
+  // and every non-supervisor specialist gets data-employee-id +
+  // data-source-unit so the drop handler can call the atomic move.
   return `<div class="org-unit-column">
-    <div class="org-unit-card">
+    <div class="org-unit-card" data-unit-id="${escapeHtml(u.unit_id || '')}">
       <div class="unit-title">${escapeHtml(unitName)}</div>
       <div class="unit-purpose">${escapeHtml(supervisor?.mandate || '')}</div>
       <div class="unit-members">
-        ${supervisor ? `<div class="org-member supervisor"><span class="role-name">★ ${escapeHtml(supervisor.role)}</span></div>` : ''}
-        ${specialists.map(s => `<div class="org-member"><span class="role-name">${escapeHtml(s.role)}</span></div>`).join('')}
+        ${supervisor ? `<div class="org-member supervisor" title="Supervisors are anchored to their Unit — can't be moved."><span class="role-name">★ ${escapeHtml(supervisor.role)}</span></div>` : ''}
+        ${specialists.map(s => `<div class="org-member draggable" draggable="true" data-employee-id="${escapeHtml(s.employee_id || '')}" data-source-unit="${escapeHtml(u.unit_id || '')}" title="Drag to another Unit to reassign."><span class="role-name">${escapeHtml(s.role)}</span></div>`).join('')}
       </div>
     </div>
   </div>`;
@@ -2038,6 +2069,88 @@ function renderOrgUnit(u) {
 // (for switching between companies you've already created).
 
 companySelector.addEventListener('change', (e) => selectCompany(e.target.value));
+
+// ---- Drag-and-drop reassignment ---------------------------------
+// Delegated on the org tree so re-renders don't lose bindings. HTML5
+// drag events fire on the element carrying draggable="true" — the
+// specialist chips. Drop targets are Unit cards.
+
+let _dragging = null; // {employee_id, source_unit_id, element}
+
+orgTreeEl.addEventListener('dragstart', (e) => {
+  const chip = e.target.closest('.org-member.draggable');
+  if (!chip) return;
+  const employeeId = chip.dataset.employeeId;
+  const sourceUnit = chip.dataset.sourceUnit;
+  if (!employeeId || !sourceUnit) {
+    e.preventDefault();
+    return;
+  }
+  _dragging = { employee_id: employeeId, source_unit_id: sourceUnit, element: chip };
+  chip.classList.add('dragging');
+  // Some Firefox versions require setData on dragstart or the drag aborts.
+  try {
+    e.dataTransfer.setData('text/plain', employeeId);
+    e.dataTransfer.effectAllowed = 'move';
+  } catch (_) {}
+});
+
+orgTreeEl.addEventListener('dragend', (e) => {
+  if (_dragging?.element) _dragging.element.classList.remove('dragging');
+  orgTreeEl.querySelectorAll('.org-unit-card.drop-target, .org-unit-card.drop-invalid')
+    .forEach(el => el.classList.remove('drop-target', 'drop-invalid'));
+  _dragging = null;
+});
+
+orgTreeEl.addEventListener('dragover', (e) => {
+  if (!_dragging) return;
+  const card = e.target.closest('.org-unit-card');
+  if (!card) return;
+  e.preventDefault();
+  const targetUnit = card.dataset.unitId;
+  const invalid = !targetUnit || targetUnit === _dragging.source_unit_id;
+  card.classList.toggle('drop-invalid', invalid);
+  card.classList.toggle('drop-target', !invalid);
+  e.dataTransfer.dropEffect = invalid ? 'none' : 'move';
+});
+
+orgTreeEl.addEventListener('dragleave', (e) => {
+  const card = e.target.closest('.org-unit-card');
+  if (!card) return;
+  // Only clear when leaving the card entirely, not moving between its children
+  if (!card.contains(e.relatedTarget)) {
+    card.classList.remove('drop-target', 'drop-invalid');
+  }
+});
+
+orgTreeEl.addEventListener('drop', async (e) => {
+  const card = e.target.closest('.org-unit-card');
+  if (!card || !_dragging) return;
+  e.preventDefault();
+  const targetUnit = card.dataset.unitId;
+  const source = _dragging.source_unit_id;
+  const employeeId = _dragging.employee_id;
+  card.classList.remove('drop-target', 'drop-invalid');
+  if (!targetUnit || targetUnit === source) return;
+
+  try {
+    await api('POST', '/api/employees/move', {
+      employee_id: employeeId,
+      from_unit_id: source,
+      to_unit_id: targetUnit,
+    });
+    appendMessage('assistant', `Moved specialist to a different Unit.`);
+    // Rebuild both the org tree (structure change) and the Canvas
+    // (if the founder was viewing one of the affected Units).
+    await refreshOrgTree();
+    if (currentSessionId === source || currentSessionId === targetUnit) {
+      const teamNow = await api('GET', `/api/sessions/${currentSessionId}/team`);
+      renderTeam(teamNow.members || []);
+    }
+  } catch (err) {
+    appendMessage('assistant', `Move failed: ${err.message}`);
+  }
+});
 
 refreshCompanies();
 
