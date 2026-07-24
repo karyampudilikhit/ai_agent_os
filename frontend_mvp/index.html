@@ -1512,6 +1512,29 @@ function setBusy(busy, msg) {
   headerStatus.textContent = busy ? (msg || 'Working…') : '';
 }
 
+// Escalating busy label — swaps text as time passes so a long-running
+// run doesn't look frozen at "Understanding…". Any subsequent
+// setBusy(true, ...) call cancels the escalation and shows its own
+// label; setBusy(false) clears everything.
+let _busyEscalationTimer = null;
+function startBusyEscalation(steps) {
+  stopBusyEscalation();
+  let i = 0;
+  const tick = () => {
+    if (i >= steps.length) return;
+    const step = steps[i++];
+    setBusy(true, step.label);
+    _busyEscalationTimer = setTimeout(tick, step.after_ms || 6000);
+  };
+  tick();
+}
+function stopBusyEscalation() {
+  if (_busyEscalationTimer) {
+    clearTimeout(_busyEscalationTimer);
+    _busyEscalationTimer = null;
+  }
+}
+
 // ------------------------------------------------------------
 // The main "send a message" flow — this is what the chat does
 async function sendMessage() {
@@ -1527,7 +1550,19 @@ async function sendMessage() {
   appendMessage('user', text);
 
   try {
-    setBusy(true, 'Understanding…');
+    // Router calls can be fast (casual_chat, add_unit) or take many
+    // minutes (run_task_company cascades a whole pipeline). We don't
+    // know which until the response comes back, so escalate the busy
+    // label over time — "Understanding…" that never changes reads as
+    // "frozen" even when the backend is actively working.
+    startBusyEscalation([
+      { label: 'Understanding…', after_ms: 5000 },
+      { label: 'Model is thinking — this may take a while.', after_ms: 15000 },
+      { label: 'Still working — long reports run 30s to a few minutes.', after_ms: 30000 },
+      { label: 'Deep work in progress — do not close the tab.', after_ms: 60000 },
+      { label: 'Company-level runs can take 15–30 minutes on gpt-oss.', after_ms: 120000 },
+      { label: 'Still going. Watch the browser tab title for updates.' },
+    ]);
 
     // ONE endpoint above Unit + Company altitudes. Router picks the
     // intent from the message + current selection and does the right
@@ -1605,14 +1640,17 @@ async function sendMessage() {
     }
     refreshChatTargetBadge();
 
+    stopBusyEscalation();
     setBusy(false);
     return;
   } catch (e) {
+    stopBusyEscalation();
     appendMessage('assistant', 'Something went wrong: ' + e.message);
     setBusy(false);
     return;
   } finally {
     stopProgressPolling();
+    stopBusyEscalation();
     setBusy(false);
   }
 }
