@@ -1073,6 +1073,23 @@ def reject_pending_action(action_id: str, reason: Optional[str] = None):
 @router.post("/chat", response_model=UniversalChatResponse)
 def universal_chat(req: UniversalChatRequest) -> UniversalChatResponse:
     pipeline = _build_pipeline()
+
+    # Loud short-circuit: the router relies on a real LLM to classify
+    # intents; MockAdapter can't. If we're on the mock, tell the user
+    # in plain English instead of returning the generic "not sure what
+    # you meant" fallback (which they interpret as "the AI is dumb").
+    from backend.app.main import MockAdapter
+    if isinstance(pipeline.adapter, MockAdapter):
+        return UniversalChatResponse(
+            intent="casual_chat",
+            reply=(
+                "Ollama isn't running — Vision AI is on the mock model, so "
+                "nothing you type will do real work. Open a terminal and run "
+                "`ollama serve`, then send your message again."
+            ),
+            side_effects=UniversalChatSideEffects(),
+        )
+
     router_llm = UniversalChatRouter(model_adapter=pipeline.adapter)
     proposal_store = get_pending_proposal_store()
     company_store = get_company_store()
