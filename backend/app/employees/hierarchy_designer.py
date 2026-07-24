@@ -147,6 +147,92 @@ class HierarchyDesigner:
             return [self._fallback_unit(description)]
         return cleaned
 
+    def design_one_unit(
+        self,
+        description: str,
+        existing_units: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """Design a SINGLE new Unit to add to an existing Company.
+
+        Differs from `design()` in three ways:
+          1. Returns exactly one Unit spec, not a list.
+          2. Sees the current org so it doesn't duplicate an existing
+             Unit's scope.
+          3. Anchored on the founder's specific ask ("add a QA unit",
+             "add a unit that evaluates other units' output") — the
+             description is treated as the Unit's mandate, not the
+             whole company.
+        """
+        description = (description or "").strip()
+        if not description:
+            return self._fallback_unit(description)
+
+        existing_block = ""
+        if existing_units:
+            lines = []
+            for u in existing_units[:12]:  # cap so the prompt stays small
+                name = str(u.get("name") or "").strip()
+                purpose = str(u.get("purpose") or "").strip()
+                if name:
+                    lines.append(f"- {name}: {purpose or '(no purpose)'}")
+            if lines:
+                existing_block = (
+                    "EXISTING UNITS IN THIS COMPANY — do NOT duplicate their scope:\n"
+                    + "\n".join(lines)
+                    + "\n\n"
+                )
+
+        prompt = f"""You are the CEO of a running company and the founder just asked
+you to add ONE new Unit. Design it — nothing more.
+
+{existing_block}FOUNDER'S ASK FOR THE NEW UNIT:
+"{description[:1500]}"
+
+Rules:
+- Design exactly ONE Unit whose scope is what the founder just asked
+  for. Do not sneak in extra Units.
+- The Unit's scope must NOT overlap with any existing Unit.
+- Name is 2-4 words and ends with "Unit".
+- Purpose is one sentence describing what this Unit OWNS.
+- Roster: {MIN_SPECIALISTS_PER_UNIT}-{MAX_SPECIALISTS_PER_UNIT} specialists
+  as {{role, mandate}} pairs. Roles 1-3 words. Mandates one sentence each.
+
+Return JSON only, this shape:
+{{"name": "...", "purpose": "...", "specialists": [{{"role": "...", "mandate": "..."}}]}}
+
+JSON only."""
+
+        try:
+            response = self.adapter.chat_completion(
+                prompt, temperature=0.3, max_tokens=self.max_tokens,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("design_one_unit call failed: %s", exc)
+            return self._fallback_unit(description)
+
+        data = self._extract_json(response) or {}
+        name = str(data.get("name") or "").strip()
+        purpose = str(data.get("purpose") or "").strip()
+        if not name or not purpose:
+            return self._fallback_unit(description)
+
+        specs_raw = data.get("specialists") or []
+        specialists: List[Dict[str, str]] = []
+        if isinstance(specs_raw, list):
+            for s in specs_raw[:MAX_SPECIALISTS_PER_UNIT]:
+                if not isinstance(s, dict):
+                    continue
+                role = str(s.get("role", "")).strip()
+                mandate = str(s.get("mandate", "")).strip()
+                if role and mandate:
+                    specialists.append({"role": role, "mandate": mandate})
+        if not specialists:
+            specialists = [{
+                "role": "Generalist",
+                "mandate": f"Handle work assigned to the {name} until a specialist joins.",
+            }]
+        return {"name": name, "purpose": purpose, "specialists": specialists}
+
     def _fallback_unit(self, description: str) -> Dict[str, Any]:
         return {
             "name": "General Unit",

@@ -1561,12 +1561,30 @@ async function sendMessage() {
     }
 
     if (fx.applied_units && fx.applied_units.length) {
-      // Fresh Units were materialized — refresh sessions and org tree,
-      // jump to Org tab so the founder sees the tree.
+      // Fresh Units were materialized — refresh sessions, refresh the
+      // org tree, and auto-select the first new Unit so Canvas has
+      // real content (Supervisor + specialists as horizontal cards)
+      // instead of a stale placeholder.
       await refreshSessions();
       if (fx.company_id) await selectCompany(fx.company_id);
+      const firstUnitId = fx.applied_units[0].unit_id;
+      if (firstUnitId) {
+        await selectSession(firstUnitId);
+      }
       switchTab('org');
       refreshedOrg = true;
+    }
+
+    if (fx.session_id && !(fx.applied_units && fx.applied_units.length)) {
+      // The router auto-created (or focused) a Unit — load its team into
+      // Canvas so the founder sees who's on the case.
+      if (fx.session_id !== currentSessionId) {
+        await selectSession(fx.session_id);
+      } else {
+        // Same session, but team may have changed — refresh Canvas cards
+        const teamNow = await api('GET', `/api/sessions/${currentSessionId}/team`);
+        renderTeam(teamNow.members || []);
+      }
     }
 
     if (fx.run_output != null) {
@@ -1579,6 +1597,13 @@ async function sendMessage() {
     if (fx.org_refreshed && !refreshedOrg) {
       await refreshOrgTree();
     }
+
+    // If nothing more interesting happened but a Company is now
+    // selected, keep the sidebar in sync with any Unit-count change.
+    if (fx.company_id && !fx.applied_units?.length && !fx.run_output) {
+      // (selectCompany already ran above when company_id was set)
+    }
+    refreshChatTargetBadge();
 
     setBusy(false);
     return;

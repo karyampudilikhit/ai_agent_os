@@ -1236,14 +1236,85 @@ def universal_chat(req: UniversalChatRequest) -> UniversalChatResponse:
             side_effects=side_effects,
         )
 
-    # --- run_task_company: kick the CEO ---
-    if intent == "run_task_company":
+    # --- add_unit: design ONE new Unit and attach it to the Company. ---
+    if intent == "add_unit":
         if not current_company:
             return UniversalChatResponse(
                 intent=intent,
-                reply="I'd need a Company to run this against. Create one first.",
+                reply=(
+                    "No Company yet — create one first (e.g. 'build me "
+                    "an AI agency') and then ask me to add Units."
+                ),
                 side_effects=side_effects,
             )
+        description = str(verdict.get("description") or req.message).strip()
+
+        # Gather existing Units so the CEO doesn't duplicate scope.
+        existing_specs: List[Dict[str, Any]] = []
+        for uid in current_company.get("unit_ids") or []:
+            try:
+                s = TeamStore(uid)
+                existing_specs.append({
+                    "name": s.name() or uid,
+                    "purpose": s.purpose() or "",
+                })
+            except Exception:
+                existing_specs.append({"name": uid, "purpose": ""})
+
+        designer = HierarchyDesigner(model_adapter=pipeline.adapter)
+        unit_spec = designer.design_one_unit(description, existing_units=existing_specs)
+
+        # Materialize immediately — the founder just said "add",
+        # they're the confirmation.
+        unit_id = TeamStore.new_session_id()
+        store = TeamStore(unit_id)
+        store.set_metadata(
+            name=unit_spec["name"],
+            purpose=unit_spec["purpose"],
+            company_id=current_company["id"],
+        )
+        sup_hint = unit_spec["name"].strip()
+        if sup_hint.lower().endswith(" unit"):
+            sup_hint = sup_hint[: -len(" unit")].strip()
+        sup = default_supervisor_spec(unit_purpose=sup_hint or None)
+        store.add_member(sup["role"], sup["mandate"], is_supervisor=True)
+        for s in unit_spec.get("specialists", []):
+            store.add_member(s["role"], s["mandate"], is_supervisor=False)
+
+        # Attach to Company
+        try:
+            company_store.add_unit(current_company["id"], unit_id)
+        except Exception as exc:  # noqa: BLE001
+            # Not fatal — the Unit is created either way; the founder can
+            # re-attach manually if needed.
+            print(f"[warn] add_unit failed for {unit_id}: {exc}")
+
+        specialist_count = len(unit_spec.get("specialists", []))
+        applied = HierarchyAppliedUnit(
+            unit_id=unit_id, name=unit_spec["name"], specialist_count=specialist_count,
+        )
+        side_effects.applied_units = [applied]
+        side_effects.session_id = unit_id
+        side_effects.company_id = current_company["id"]
+        side_effects.org_refreshed = True
+
+        roster = ", ".join(s["role"] for s in unit_spec.get("specialists", []))
+        reply = (
+            f"Added **{unit_spec['name']}** — {unit_spec['purpose']}\n\n"
+            f"Roster: Supervisor + {specialist_count} specialist"
+            f"{'s' if specialist_count != 1 else ''} ({roster}). "
+            f"They're loaded into Canvas now. Send them a task or ask me "
+            f"to keep evolving the org."
+        )
+        return UniversalChatResponse(intent=intent, reply=reply, side_effects=side_effects)
+
+    # --- run_task_company: kick the CEO. If the classifier picked this
+    #     but there's no Company, silently downgrade to Unit mode with
+    #     auto-create — the user didn't ask for a Company, they just
+    #     want the work done. Don't punish them with an error. ---
+    if intent == "run_task_company" and not current_company:
+        intent = "run_task_unit"
+    if intent == "run_task_company":
         task = str(verdict.get("task") or req.message).strip()
         result = run_task_on_company(current_company["id"], CompanyRunRequest(task=task))
         side_effects.run_output = result.final_output
@@ -1261,19 +1332,22 @@ def universal_chat(req: UniversalChatRequest) -> UniversalChatResponse:
             side_effects=side_effects,
         )
 
-    # --- run_task_unit: kick the current Unit's Supervisor ---
+    # --- run_task_unit: kick the current Unit's Supervisor (or auto-
+    #     create a Unit if none exists — this is the "regular" mode
+    #     from before Companies existed; a founder who just types
+    #     'run market research' shouldn't have to know what a Unit is). ---
     if intent == "run_task_unit":
-        if not req.current_session_id:
-            return UniversalChatResponse(
-                intent=intent,
-                reply="No Unit selected — tell me which team should run this, or create a Company and let the CEO delegate.",
-                side_effects=side_effects,
-            )
+        session_id = req.current_session_id
+        if not session_id:
+            session_id = TeamStore.new_session_id()
+            store = TeamStore(session_id)
+            sup = default_supervisor_spec()
+            store.add_member(sup["role"], sup["mandate"], is_supervisor=True)
         task = str(verdict.get("task") or req.message).strip()
-        result = run_task_on_team(req.current_session_id, RunTaskRequest(task=task))
+        result = run_task_on_team(session_id, RunTaskRequest(task=task))
         side_effects.run_output = result.final_output
         side_effects.evidence = list(result.evidence)
-        side_effects.session_id = req.current_session_id
+        side_effects.session_id = session_id
         return UniversalChatResponse(
             intent=intent,
             reply="Unit delivered. Full deliverable on the Output tab.",

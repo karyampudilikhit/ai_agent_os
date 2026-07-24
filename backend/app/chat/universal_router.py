@@ -53,6 +53,7 @@ VALID_INTENTS = {
     "design_hierarchy",
     "apply_proposal",
     "discard_proposal",
+    "add_unit",
     "run_task_company",
     "run_task_unit",
     "casual_chat",
@@ -98,15 +99,30 @@ INTENTS — pick exactly one and fill only its fields:
 - "discard_proposal": founder rejected the pending proposal. Triggers:
   "no", "cancel", "scrap it", "start over", "redo". No fields.
 
+- "add_unit": founder wants to add ONE new Unit to the ALREADY-existing
+  Company (the state snapshot shows a current Company with Units).
+  Triggers: "add a X unit", "add another unit that...", "I need a QA
+  unit", "spin up a unit to evaluate...", "we need a legal team".
+  This is NOT create_company — the Company already exists.
+  This is NOT design_hierarchy — we're extending, not replacing.
+  Fields:
+    - description  (string; the founder's raw ask for the new Unit,
+                    used to design its scope + specialists)
+
 - "run_task_company": founder gave the CEO a task to actually execute
-  (across the whole company). Triggers: "launch our...", "find
-  clients for...", "write me a...", "get me...", "research...". Only
-  pick this if a Company is currently selected. Fields:
+  ACROSS the whole company. Pick this ONLY if a Company is currently
+  selected. Signals: "launch our...", "find clients for our...", "have
+  the whole company work on...", explicit mention of the CEO or
+  multiple Units. Fields:
     - task  (string; the raw task text)
 
-- "run_task_unit": same as above but for a specific Unit — only when
-  a Unit is selected AND no Company is selected (i.e. classic
-  single-Unit playground use). Fields:
+- "run_task_unit": DEFAULT for any task-shaped message when there is no
+  Company selected, or when the founder didn't ask for a Company/CEO —
+  just a single small team job. Triggers: "run market research on X",
+  "write me a...", "draft an email to...", "summarize...", any task
+  that doesn't need cross-Unit coordination. Auto-creates a Unit if
+  none is selected — the founder doesn't need to know what a Unit is.
+  Fields:
     - task  (string)
 
 - "casual_chat": greeting, question about the app, thanks, or anything
