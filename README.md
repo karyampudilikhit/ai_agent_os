@@ -69,7 +69,7 @@ approves, Units + specialists auto-hire).
 | **Notion via MCP** | ⏳ walkthrough documented, integration + `NOTION_TOKEN` not yet set up locally. |
 | **Obsidian via HTTP tools** | ⏳ walkthrough documented, plugin + tools not yet registered locally. |
 | **Vision Desktop Agent (full-system access)** | ❌ scoped, not yet built. Small Python/Electron daemon on the founder's machine, WebSocket to the backend, screenshot + click + type + allow-listed shell + arbitrary-folder file access with per-app approval on first use. Next major layer after the action MVP. |
-| **Company / CEO UI (org tree Canvas, altitude-aware chat)** | ❌ not yet built. Company creation, org-chart Canvas view, and chat that routes to CEO at Company altitude vs Supervisor at Unit altitude — currently API-only. |
+| **Company / CEO UI (org tree Canvas, altitude-aware chat)** | ✅ live — right sidebar has a **Company** section (create by name+purpose, CEO auto-hired), a **Design hierarchy** textarea (paragraph → CEO proposes → founder reviews proposed Units + specialists → Apply materializes everyone), and a **Talk to Unit / Talk to CEO** mode toggle. The middle panel gained an **Org** tab that renders the full tree (CEO node on top, Unit cards below with Supervisor + specialists inside). In CEO mode, the Studio Chat routes each message to `POST /api/companies/{id}/run` and shows the CEO's synthesized deliverable + evidence receipts + pending actions. |
 | **AI hierarchy — Phase 2b** | ❌ deferred: multiple Teams per Unit + persistent CEO memory. |
 | **User accounts / auth** | ❌ deferred until we're ready to host. |
 

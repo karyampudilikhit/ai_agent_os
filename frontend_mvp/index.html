@@ -859,6 +859,199 @@
   }
   .session-select select { flex: 1; }
 
+  /* Company section (Phase 3a — top of right sidebar, above Unit) */
+  .company-section input, .company-section textarea, .company-section select {
+    width: 100%; margin-bottom: 6px;
+    padding: 7px 9px;
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: inherit; font-size: 12.5px;
+  }
+  .company-section textarea { min-height: 60px; resize: vertical; }
+  .company-section .row { display: flex; gap: 6px; }
+  .company-section .row > * { flex: 1; }
+  .company-mode-toggle {
+    display: flex;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 2px;
+    gap: 2px;
+  }
+  .company-mode-toggle button {
+    flex: 1;
+    padding: 5px 8px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 500;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .company-mode-toggle button.on {
+    background: var(--accent);
+    color: #fff;
+  }
+  .ceo-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #fff;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+  .company-purpose {
+    font-size: 11.5px;
+    color: var(--text-muted);
+    line-height: 1.5;
+    padding: 6px 0;
+  }
+  .hierarchy-proposal {
+    margin-top: 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel);
+    max-height: 340px;
+    overflow-y: auto;
+  }
+  .hierarchy-proposal .proposed-unit {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .hierarchy-proposal .proposed-unit:last-child { border-bottom: none; }
+  .hierarchy-proposal .u-name {
+    font-size: 12px; font-weight: 600;
+    color: var(--text);
+    margin-bottom: 3px;
+  }
+  .hierarchy-proposal .u-purpose {
+    font-size: 11px; color: var(--text-muted); line-height: 1.4;
+    margin-bottom: 4px;
+  }
+  .hierarchy-proposal .u-specialists {
+    display: flex; flex-wrap: wrap; gap: 4px;
+  }
+  .hierarchy-proposal .u-specialist {
+    padding: 2px 8px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 10.5px;
+    color: var(--text-muted);
+  }
+
+  /* Org tree Canvas — the whole Company hierarchy rendered as a tree */
+  .org-tree {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 30px 20px;
+    gap: 24px;
+  }
+  .org-empty {
+    color: var(--text-muted);
+    font-size: 13px;
+    text-align: center;
+    padding: 60px 20px;
+    max-width: 500px;
+  }
+  .org-empty h3 {
+    color: var(--text); font-size: 15px; margin-bottom: 8px;
+  }
+  .org-node {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 16px;
+    min-width: 220px;
+    max-width: 320px;
+  }
+  .org-node.ceo {
+    border-color: var(--accent);
+    background: linear-gradient(135deg, rgba(139,30,47,0.10), rgba(184,48,67,0.06));
+  }
+  .org-node .role {
+    font-size: 13.5px; font-weight: 700; color: var(--text);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .org-node .mandate {
+    font-size: 11.5px; color: var(--text-muted); line-height: 1.5;
+    margin-top: 4px;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .org-tree-connector {
+    width: 2px; height: 18px; background: var(--border-strong);
+  }
+  .org-units-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    justify-content: center;
+    align-items: flex-start;
+    width: 100%;
+  }
+  .org-unit-column {
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+    min-width: 240px;
+  }
+  .org-unit-card {
+    background: var(--panel);
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    padding: 12px 14px;
+    width: 100%;
+  }
+  .org-unit-card .unit-title {
+    font-size: 13px; font-weight: 700; color: var(--text);
+    margin-bottom: 3px;
+  }
+  .org-unit-card .unit-purpose {
+    font-size: 11px; color: var(--text-muted); line-height: 1.4;
+    margin-bottom: 8px;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .org-unit-card .unit-members {
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .org-member {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 8px;
+    background: var(--panel-2);
+    border-radius: 6px;
+    font-size: 11.5px;
+    color: var(--text);
+  }
+  .org-member.supervisor {
+    background: rgba(139,30,47,0.10);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .org-member .role-name {
+    flex: 1;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .chat-target-badge {
+    padding: 3px 8px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-left: 8px;
+  }
+  .chat-target-badge.company-mode {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+    font-weight: 600;
+  }
+
   /* Scrollbars */
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -886,7 +1079,7 @@
   <!-- LEFT: Studio Chat -->
   <aside class="left">
     <div class="chat-header">
-      <div class="title">Studio Chat</div>
+      <div class="title">Studio Chat<span id="chat-target-badge" class="chat-target-badge">Unit</span></div>
       <div class="actions">
         <button class="ghost small" id="new-session-btn">+ New</button>
       </div>
@@ -906,6 +1099,7 @@
   <main class="center">
     <div class="tabs">
       <button class="tab active" data-tab="canvas">Canvas</button>
+      <button class="tab" data-tab="org">Org</button>
       <button class="tab" data-tab="output">Output<span class="dot"></span></button>
       <div class="spacer"></div>
       <span class="canvas-count" id="canvas-count"></span>
@@ -913,6 +1107,15 @@
 
     <div class="canvas-body" id="tab-canvas">
       <div id="flow-container" class="flow-container"></div>
+    </div>
+
+    <div class="canvas-body hidden" id="tab-org">
+      <div class="org-tree" id="org-tree">
+        <div class="org-empty">
+          <h3>No Company selected</h3>
+          Create a Company in the right sidebar, describe what you're building, and the CEO will propose an org chart. Once applied, every CEO / Supervisor / specialist shows up here.
+        </div>
+      </div>
     </div>
 
     <div class="canvas-body hidden" id="tab-output">
@@ -938,6 +1141,47 @@
 
   <!-- RIGHT: Edit / manage employees -->
   <aside class="right">
+    <div class="section company-section">
+      <div class="head">Company</div>
+      <div class="company-mode-toggle" id="chat-mode-toggle">
+        <button id="mode-unit-btn" class="on">Talk to Unit</button>
+        <button id="mode-company-btn">Talk to CEO</button>
+      </div>
+      <div style="height:8px;"></div>
+      <div class="row">
+        <select id="company-selector"><option value="">(no Company selected)</option></select>
+        <button class="ghost small" id="new-company-btn" style="flex:0 0 auto;">+ New</button>
+      </div>
+      <div id="new-company-form" style="display:none;">
+        <input id="new-company-name" type="text" placeholder="Company name (e.g. AI Agency)">
+        <textarea id="new-company-purpose" placeholder="One-line purpose (what you're building)"></textarea>
+        <div class="row">
+          <button class="secondary" id="create-company-btn">Create Company</button>
+          <button class="ghost small" id="cancel-company-btn">Cancel</button>
+        </div>
+      </div>
+      <div id="company-detail" style="display:none;">
+        <div style="display:flex;align-items:center;gap:6px;margin-top:4px;">
+          <span class="ceo-badge">★ CEO hired</span>
+          <span id="company-unit-count" style="font-size:11px;color:var(--text-dim);"></span>
+        </div>
+        <div class="company-purpose" id="company-purpose-display"></div>
+        <div class="head" style="margin-top:8px;">Design hierarchy</div>
+        <textarea id="hierarchy-description" placeholder="Describe your company in a paragraph. The CEO will propose Units + specialists. Example: 'An AI-run agency selling AI-agent solutions to founders. Services: discovery, custom agent build, deployment, support. Solo operator, wants sales, delivery, ops end-to-end.'"></textarea>
+        <div class="row">
+          <button class="secondary" id="design-hierarchy-btn">CEO, design my org chart</button>
+        </div>
+        <div id="hierarchy-proposal-panel" style="display:none;">
+          <div style="margin-top:8px;font-size:12px;color:var(--text-muted);">CEO's proposal (review, then apply):</div>
+          <div class="hierarchy-proposal" id="hierarchy-proposal"></div>
+          <div class="row" style="margin-top:6px;">
+            <button class="secondary" id="apply-hierarchy-btn">Apply — hire everyone</button>
+            <button class="ghost small" id="discard-proposal-btn">Discard</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="section">
       <div class="head">Unit</div>
       <div class="session-select">
@@ -1301,6 +1545,18 @@ async function sendMessage() {
   chatInputEl.value = '';
   chatInputEl.style.height = 'auto';
 
+  // Route: Company mode → CEO run; Unit mode → the existing supervisor flow
+  if (chatMode === 'company') {
+    if (!currentCompanyId) {
+      appendMessage('assistant', 'Pick or create a Company first (right sidebar) — the CEO lives inside one.');
+      return;
+    }
+    const emptyState = chatMessagesEl.querySelector('.chat-empty');
+    if (emptyState) emptyState.remove();
+    appendMessage('user', text);
+    return runCompanyTask(text);
+  }
+
   if (!currentSessionId) await newSession();
 
   const emptyState = chatMessagesEl.querySelector('.chat-empty');
@@ -1439,7 +1695,9 @@ function switchTab(name) {
     if (t.dataset.tab === name) t.classList.remove('has-new');
   });
   $('tab-canvas').classList.toggle('hidden', name !== 'canvas');
+  $('tab-org').classList.toggle('hidden', name !== 'org');
   $('tab-output').classList.toggle('hidden', name !== 'output');
+  if (name === 'org') refreshOrgTree();
 }
 
 const evidencePanel = $('evidence-panel');
@@ -1589,6 +1847,267 @@ pendingList.addEventListener('click', async (e) => {
 $('pa-refresh').addEventListener('click', fetchPendingActions);
 setInterval(fetchPendingActions, 8000);
 fetchPendingActions();
+
+// ================================================================
+// Company / CEO / hierarchy (Phase 3a UI — the "build my org chart
+// by prompt" flow that used to be curl-only).
+// ================================================================
+
+let currentCompanyId = null;
+let chatMode = 'unit';            // 'unit' | 'company'
+let currentProposal = null;       // last CEO hierarchy proposal (unsaved)
+let currentCompanyMeta = null;    // full Company object from /api/companies/{id}
+
+const companySelector = $('company-selector');
+const companyDetailEl = $('company-detail');
+const newCompanyBtn = $('new-company-btn');
+const newCompanyForm = $('new-company-form');
+const createCompanyBtn = $('create-company-btn');
+const cancelCompanyBtn = $('cancel-company-btn');
+const designBtn = $('design-hierarchy-btn');
+const applyBtn = $('apply-hierarchy-btn');
+const discardBtn = $('discard-proposal-btn');
+const proposalPanel = $('hierarchy-proposal-panel');
+const proposalContainer = $('hierarchy-proposal');
+const modeUnitBtn = $('mode-unit-btn');
+const modeCompanyBtn = $('mode-company-btn');
+const chatTargetBadge = $('chat-target-badge');
+const orgTreeEl = $('org-tree');
+
+function setChatMode(mode) {
+  chatMode = mode;
+  modeUnitBtn.classList.toggle('on', mode === 'unit');
+  modeCompanyBtn.classList.toggle('on', mode === 'company');
+  chatTargetBadge.classList.toggle('company-mode', mode === 'company');
+  chatTargetBadge.textContent = mode === 'company'
+    ? (currentCompanyMeta ? `CEO of ${currentCompanyMeta.name}` : 'CEO')
+    : 'Unit';
+  chatInputEl.placeholder = mode === 'company'
+    ? "Tell the CEO what to get done. They'll delegate across Units."
+    : 'Ask, build…  (Shift + Enter for new line)';
+}
+
+async function refreshCompanies() {
+  try {
+    const data = await api('GET', '/api/companies');
+    const companies = data.companies || [];
+    const prev = currentCompanyId;
+    companySelector.innerHTML = '<option value="">(no Company selected)</option>' +
+      companies.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
+    if (prev && companies.some(c => c.id === prev)) {
+      companySelector.value = prev;
+    } else if (companies.length) {
+      // no prior selection — leave blank so nothing auto-loads
+    }
+  } catch (e) {
+    console.error('refreshCompanies failed', e);
+  }
+}
+
+async function selectCompany(id) {
+  currentCompanyId = id || null;
+  currentProposal = null;
+  proposalPanel.style.display = 'none';
+  if (!id) {
+    companyDetailEl.style.display = 'none';
+    currentCompanyMeta = null;
+    if (chatMode === 'company') setChatMode('unit');
+    refreshOrgTree();
+    return;
+  }
+  try {
+    const meta = await api('GET', `/api/companies/${encodeURIComponent(id)}`);
+    currentCompanyMeta = meta;
+    $('company-purpose-display').textContent = meta.purpose || '(no purpose set)';
+    $('company-unit-count').textContent = `· ${(meta.unit_ids || []).length} Unit${(meta.unit_ids || []).length === 1 ? '' : 's'}`;
+    companyDetailEl.style.display = '';
+    if (chatMode === 'company') setChatMode('company'); // refresh badge label
+    refreshOrgTree();
+  } catch (e) {
+    appendMessage('assistant', 'Could not load Company: ' + e.message);
+  }
+}
+
+async function createCompany() {
+  const name = $('new-company-name').value.trim();
+  const purpose = $('new-company-purpose').value.trim();
+  if (!name) return alert('Company name is required.');
+  createCompanyBtn.disabled = true;
+  try {
+    const co = await api('POST', '/api/companies', { name, purpose: purpose || null });
+    $('new-company-name').value = '';
+    $('new-company-purpose').value = '';
+    newCompanyForm.style.display = 'none';
+    await refreshCompanies();
+    companySelector.value = co.id;
+    await selectCompany(co.id);
+    setChatMode('company');
+    appendMessage('assistant', `Company "${co.name}" created and CEO auto-hired. Now describe your company in the "Design hierarchy" box and the CEO will propose the org chart.`);
+  } catch (e) {
+    alert('Failed to create Company: ' + e.message);
+  } finally {
+    createCompanyBtn.disabled = false;
+  }
+}
+
+async function designHierarchy() {
+  if (!currentCompanyId) return alert('Select a Company first.');
+  const description = $('hierarchy-description').value.trim();
+  if (description.length < 20) return alert('Give the CEO at least a couple of sentences to work with.');
+  designBtn.disabled = true;
+  designBtn.textContent = 'CEO thinking…';
+  try {
+    const res = await api('POST', `/api/companies/${encodeURIComponent(currentCompanyId)}/design_hierarchy`, { description });
+    currentProposal = res.units || [];
+    renderProposal(currentProposal);
+    proposalPanel.style.display = '';
+    appendMessage('assistant', `CEO proposed ${currentProposal.length} Unit${currentProposal.length === 1 ? '' : 's'}. Review in the right sidebar and click "Apply — hire everyone" to materialize it.`);
+  } catch (e) {
+    alert('Design failed: ' + e.message);
+  } finally {
+    designBtn.disabled = false;
+    designBtn.textContent = 'CEO, design my org chart';
+  }
+}
+
+function renderProposal(units) {
+  proposalContainer.innerHTML = (units || []).map(u => `
+    <div class="proposed-unit">
+      <div class="u-name">${escapeHtml(u.name)}</div>
+      <div class="u-purpose">${escapeHtml(u.purpose || '')}</div>
+      <div class="u-specialists">
+        ${(u.specialists || []).map(s => `<span class="u-specialist">${escapeHtml(s.role)}</span>`).join('')}
+      </div>
+    </div>
+  `).join('');
+}
+
+async function applyHierarchy() {
+  if (!currentCompanyId || !currentProposal) return;
+  applyBtn.disabled = true;
+  applyBtn.textContent = 'Hiring…';
+  try {
+    const res = await api('POST', `/api/companies/${encodeURIComponent(currentCompanyId)}/apply_hierarchy`, { units: currentProposal });
+    proposalPanel.style.display = 'none';
+    currentProposal = null;
+    $('hierarchy-description').value = '';
+    await selectCompany(currentCompanyId); // refresh unit count
+    switchTab('org');
+    appendMessage('assistant', `Done. Materialized ${res.units.length} Unit${res.units.length === 1 ? '' : 's'}, hired ${res.units.reduce((n, u) => n + u.specialist_count, 0)} specialists (plus a Supervisor each). See the Org tab for the tree.`);
+    // Also refresh the Unit-side dropdown since the new Units live in the same session store
+    await refreshSessions();
+  } catch (e) {
+    alert('Apply failed: ' + e.message);
+  } finally {
+    applyBtn.disabled = false;
+    applyBtn.textContent = 'Apply — hire everyone';
+  }
+}
+
+async function refreshOrgTree() {
+  if (!currentCompanyId || !currentCompanyMeta) {
+    orgTreeEl.innerHTML = `<div class="org-empty"><h3>No Company selected</h3>Create a Company in the right sidebar, describe what you're building, and the CEO will propose an org chart. Once applied, every CEO / Supervisor / specialist shows up here.</div>`;
+    return;
+  }
+  const co = currentCompanyMeta;
+  let ceo = null;
+  if (co.ceo_employee_id) {
+    try { ceo = await api('GET', `/api/employees/${encodeURIComponent(co.ceo_employee_id)}`); } catch (e) {}
+  }
+  const unitEntries = await Promise.all((co.unit_ids || []).map(async (uid) => {
+    try {
+      const t = await api('GET', `/api/sessions/${encodeURIComponent(uid)}/team`);
+      return { unit_id: uid, members: t.members || [] };
+    } catch (e) {
+      return { unit_id: uid, members: [] };
+    }
+  }));
+
+  const ceoHtml = ceo
+    ? `<div class="org-node ceo">
+         <div class="role"><span class="ceo-badge">★ CEO</span> ${escapeHtml(ceo.role || 'CEO')}</div>
+         <div class="mandate">${escapeHtml(ceo.mandate || '')}</div>
+       </div>
+       <div class="org-tree-connector"></div>`
+    : '';
+
+  const unitsHtml = unitEntries.length
+    ? `<div class="org-units-row">
+         ${unitEntries.map(u => renderOrgUnit(u)).join('')}
+       </div>`
+    : `<div class="org-empty" style="padding:20px;">No Units yet. Use the "Design hierarchy" box in the right sidebar to have the CEO propose one.</div>`;
+
+  orgTreeEl.innerHTML = `
+    <div style="font-size:16px;font-weight:600;color:var(--text);">${escapeHtml(co.name)}</div>
+    ${co.purpose ? `<div style="max-width:600px;text-align:center;font-size:12.5px;color:var(--text-muted);line-height:1.5;">${escapeHtml(co.purpose)}</div>` : ''}
+    ${ceoHtml}
+    ${unitsHtml}
+  `;
+}
+
+function renderOrgUnit(u) {
+  const supervisor = u.members.find(m => m.is_supervisor);
+  const specialists = u.members.filter(m => !m.is_supervisor);
+  // Derive a Unit label — we don't have a dedicated name field on the
+  // Unit row in the team endpoint, so use the supervisor role stripped
+  // of the trailing " Supervisor" suffix if present.
+  let unitName = 'Unit';
+  if (supervisor) {
+    unitName = supervisor.role.replace(/\s+Supervisor$/i, '').trim() || supervisor.role;
+  }
+  return `<div class="org-unit-column">
+    <div class="org-unit-card">
+      <div class="unit-title">${escapeHtml(unitName)}</div>
+      <div class="unit-purpose">${escapeHtml(supervisor?.mandate || '')}</div>
+      <div class="unit-members">
+        ${supervisor ? `<div class="org-member supervisor"><span class="role-name">★ ${escapeHtml(supervisor.role)}</span></div>` : ''}
+        ${specialists.map(s => `<div class="org-member"><span class="role-name">${escapeHtml(s.role)}</span></div>`).join('')}
+      </div>
+    </div>
+  </div>`;
+}
+
+async function runCompanyTask(text) {
+  try {
+    setBusy(true, 'CEO delegating across Units…');
+    switchTab('output');
+    resultBody.textContent = 'Running… CEO is planning, delegating to each Unit, and synthesizing back. Company-level runs typically take 15–30 min on gpt-oss. Progress will appear here when the pipeline returns.';
+    const res = await api('POST', `/api/companies/${encodeURIComponent(currentCompanyId)}/run`, { task: text });
+    resultBody.textContent = res.final_output || '(empty output)';
+    renderEvidence(res.evidence || []);
+    fetchPendingActions();
+    appendMessage('assistant', `CEO delivered. Plan had ${(res.plan || []).length} sub-tasks across ${(res.unit_contributions || []).length} Unit${(res.unit_contributions || []).length === 1 ? '' : 's'}. See Output tab.`);
+  } catch (e) {
+    appendMessage('assistant', 'Company run failed: ' + e.message);
+  } finally {
+    setBusy(false);
+  }
+}
+
+// ---- Event wiring ------------------------------------------------
+
+newCompanyBtn.addEventListener('click', () => {
+  newCompanyForm.style.display = newCompanyForm.style.display === 'none' ? '' : 'none';
+});
+cancelCompanyBtn.addEventListener('click', () => { newCompanyForm.style.display = 'none'; });
+createCompanyBtn.addEventListener('click', createCompany);
+companySelector.addEventListener('change', (e) => selectCompany(e.target.value));
+designBtn.addEventListener('click', designHierarchy);
+applyBtn.addEventListener('click', applyHierarchy);
+discardBtn.addEventListener('click', () => {
+  currentProposal = null;
+  proposalPanel.style.display = 'none';
+});
+modeUnitBtn.addEventListener('click', () => setChatMode('unit'));
+modeCompanyBtn.addEventListener('click', () => {
+  if (!currentCompanyId) {
+    alert('Select or create a Company first.');
+    return;
+  }
+  setChatMode('company');
+});
+
+refreshCompanies();
 
 function buildTeamHiredReport(members, task) {
   // Fast, LLM-free "here's who I hired and what they'll do" summary —
