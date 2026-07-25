@@ -54,6 +54,8 @@ VALID_INTENTS = {
     "apply_proposal",
     "discard_proposal",
     "add_unit",
+    "add_employees_to_unit",
+    "delete_unit",
     "run_task_company",
     "run_task_unit",
     "casual_chat",
@@ -99,15 +101,41 @@ INTENTS — pick exactly one and fill only its fields:
 - "discard_proposal": founder rejected the pending proposal. Triggers:
   "no", "cancel", "scrap it", "start over", "redo". No fields.
 
-- "add_unit": founder wants to add ONE new Unit to the ALREADY-existing
-  Company (the state snapshot shows a current Company with Units).
-  Triggers: "add a X unit", "add another unit that...", "I need a QA
-  unit", "spin up a unit to evaluate...", "we need a legal team".
-  This is NOT create_company — the Company already exists.
-  This is NOT design_hierarchy — we're extending, not replacing.
+- "add_unit": founder wants to add ONE NEW Unit (a whole new team /
+  functional area) to the already-existing Company. The distinguishing
+  signal is that they're describing a SCOPE OF WORK, not roles.
+  Triggers: "add a legal unit", "add a QA unit", "spin up a unit to
+  evaluate our outputs", "we need a research unit that ...".
+  DO NOT pick this when they're clearly asking to add job roles into
+  an existing Unit (see add_employees_to_unit).
   Fields:
-    - description  (string; the founder's raw ask for the new Unit,
-                    used to design its scope + specialists)
+    - description  (string; the founder's raw ask for the new Unit)
+
+- "add_employees_to_unit": founder wants to add one or more SPECIALISTS
+  (job roles / people) into an EXISTING Unit. Distinguishing signals:
+  they name specific job titles ("frontend engineer", "sales rep",
+  "designer", "analyst") and reference an existing Unit by name.
+  Triggers: "add a frontend engineer to the tech unit", "in the
+  marketing unit add a content writer", "hire two more analysts in
+  the research unit", "put a designer in the product unit".
+  If the founder said "add these ROLES" or listed job titles and
+  referenced an existing Unit, this — NOT add_unit.
+  Fields:
+    - target_unit_hint  (string; a name substring the founder used to
+                         refer to the target Unit — e.g. "tech",
+                         "marketing", "research". Case-insensitive.)
+    - specialists       (array of {{"role": <string>, "mandate": <string>}}
+                         objects. If the founder didn't give an explicit
+                         mandate, infer a sensible one-sentence mandate
+                         from the role.)
+
+- "delete_unit": founder wants to remove a Unit from the Company.
+  Triggers: "delete the X unit", "remove the X unit", "get rid of the
+  X unit". Also fires when they say "that Unit shouldn't exist" /
+  "scrap that Unit". Do NOT pick this for "clear team" or "delete
+  employee" — this is Unit-level only.
+  Fields:
+    - target_unit_hint  (string; substring of the Unit's name to match)
 
 - "run_task_company": founder gave the CEO a task to actually execute
   ACROSS the whole company. Pick this ONLY if a Company is currently
@@ -187,9 +215,14 @@ def build_state_snapshot(
     current_session_id: Optional[str] = None,
     pending_proposal: Optional[Dict[str, Any]] = None,
     known_companies: Optional[List[Dict[str, Any]]] = None,
+    current_company_units: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """Compact readable snapshot for the LLM. Only fields that change
-    routing go in — verbose state confuses the classifier."""
+    routing go in — verbose state confuses the classifier.
+
+    `current_company_units` is a list of {name, unit_id} pairs for the
+    active Company; it lets the router disambiguate 'add to tech unit'
+    against the real Unit names."""
     lines: List[str] = []
 
     if current_company:
@@ -201,6 +234,11 @@ def build_state_snapshot(
         )
         if current_company.get("purpose"):
             lines.append(f"  purpose: {current_company['purpose']}")
+        if current_company_units:
+            unit_labels = ", ".join(
+                u.get("name") or u.get("unit_id", "?") for u in current_company_units
+            )
+            lines.append(f"  Units: {unit_labels}")
     else:
         lines.append("- current Company: none selected")
         if known_companies:

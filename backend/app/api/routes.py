@@ -8,8 +8,9 @@ a later concern once there's real traffic to justify it.
 
 from __future__ import annotations
 
+import os
 import uuid
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 
@@ -1170,12 +1171,26 @@ def universal_chat(req: UniversalChatRequest) -> UniversalChatResponse:
             side_effects=UniversalChatSideEffects(),
         )
 
+    # Enumerate the current Company's Units by name so the router can
+    # match "add to tech unit" against the actual Unit names.
+    current_units_snapshot: List[Dict[str, Any]] = []
+    if current_company:
+        for uid in current_company.get("unit_ids") or []:
+            try:
+                ts = TeamStore(uid)
+                current_units_snapshot.append({
+                    "unit_id": uid, "name": ts.name() or uid,
+                })
+            except Exception:
+                current_units_snapshot.append({"unit_id": uid, "name": uid})
+
     snapshot = build_state_snapshot(
         current_company=current_company,
         current_unit_members=current_members,
         current_session_id=req.current_session_id,
         pending_proposal=pending,
         known_companies=known_companies,
+        current_company_units=current_units_snapshot,
     )
     verdict = router_llm.classify(req.message, snapshot)
     intent = verdict.get("intent") or "casual_chat"
@@ -1395,6 +1410,108 @@ def universal_chat(req: UniversalChatRequest) -> UniversalChatResponse:
         )
         return UniversalChatResponse(intent=intent, reply=reply, side_effects=side_effects)
 
+    # --- add_employees_to_unit: attach specialists to an EXISTING Unit ---
+    if intent == "add_employees_to_unit":
+        if not current_company:
+            return UniversalChatResponse(
+                intent=intent,
+                reply="No Company yet — create one first, then I can add employees to its Units.",
+                side_effects=side_effects,
+            )
+        hint = str(verdict.get("target_unit_hint") or "").strip()
+        specialists = verdict.get("specialists") or []
+        if not isinstance(specialists, list) or not specialists:
+            return UniversalChatResponse(
+                intent=intent,
+                reply="I couldn't figure out which roles to add. Say something like 'add a Frontend Engineer and a Backend Engineer to the Tech Unit'.",
+                side_effects=side_effects,
+            )
+        target = _resolve_unit_by_hint(current_company, hint)
+        if not target:
+            unit_names = ", ".join(u["name"] for u in current_units_snapshot) or "(none yet)"
+            return UniversalChatResponse(
+                intent=intent,
+                reply=(
+                    f"I couldn't find a Unit matching {hint!r}. "
+                    f"Existing Units: {unit_names}. Rephrase with the Unit's name."
+                ),
+                side_effects=side_effects,
+            )
+        target_unit_id, target_unit_name = target["unit_id"], target["name"]
+
+        store = TeamStore(target_unit_id)
+        added_roles: List[str] = []
+        for s in specialists[:8]:  # sane cap
+            if not isinstance(s, dict):
+                continue
+            role = str(s.get("role") or "").strip()
+            mandate = str(s.get("mandate") or "").strip() or (
+                f"Handle work assigned to the {target_unit_name} in the {role} area."
+            )
+            if not role:
+                continue
+            store.add_member(role, mandate, is_supervisor=False)
+            added_roles.append(role)
+
+        if not added_roles:
+            return UniversalChatResponse(
+                intent=intent,
+                reply="Nothing to add — every role I saw was empty. Give me at least one role name.",
+                side_effects=side_effects,
+            )
+
+        side_effects.session_id = target_unit_id
+        side_effects.company_id = current_company["id"]
+        side_effects.org_refreshed = True
+        roster_str = ", ".join(added_roles)
+        reply = (
+            f"Added {len(added_roles)} to **{target_unit_name}**: {roster_str}. "
+            f"They're loaded into Canvas."
+        )
+        return UniversalChatResponse(intent=intent, reply=reply, side_effects=side_effects)
+
+    # --- delete_unit: detach + remove a Unit from the current Company ---
+    if intent == "delete_unit":
+        if not current_company:
+            return UniversalChatResponse(
+                intent=intent,
+                reply="No Company selected — nothing to delete from.",
+                side_effects=side_effects,
+            )
+        hint = str(verdict.get("target_unit_hint") or "").strip()
+        target = _resolve_unit_by_hint(current_company, hint)
+        if not target:
+            unit_names = ", ".join(u["name"] for u in current_units_snapshot) or "(none)"
+            return UniversalChatResponse(
+                intent=intent,
+                reply=(
+                    f"Couldn't find a Unit matching {hint!r}. "
+                    f"Existing: {unit_names}."
+                ),
+                side_effects=side_effects,
+            )
+        target_unit_id, target_unit_name = target["unit_id"], target["name"]
+        # Detach from Company, then wipe the team-store JSON so the
+        # Unit stops appearing in dropdowns and usage listings.
+        try:
+            company_store.remove_unit(current_company["id"], target_unit_id)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[warn] remove_unit failed for {target_unit_id}: {exc}")
+        try:
+            path = TeamStore(target_unit_id).path
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[warn] deleting team_data file failed for {target_unit_id}: {exc}")
+
+        side_effects.company_id = current_company["id"]
+        side_effects.org_refreshed = True
+        return UniversalChatResponse(
+            intent=intent,
+            reply=f"Deleted **{target_unit_name}** and released its employees.",
+            side_effects=side_effects,
+        )
+
     # --- run_task_* dispatch (task may already be clarifier-enriched) ---
     if intent in ("run_task_company", "run_task_unit"):
         task_str = str(verdict.get("task") or req.message).strip()
@@ -1407,6 +1524,47 @@ def universal_chat(req: UniversalChatRequest) -> UniversalChatResponse:
 
     # Should never reach here — VALID_INTENTS enforces the set
     return _fallthrough_response(side_effects)
+
+
+def _resolve_unit_by_hint(
+    company: Dict[str, Any], hint: str,
+) -> Optional[Dict[str, str]]:
+    """Fuzzy-match a Unit inside a Company by a name substring.
+
+    'tech' -> matches 'Tech Unit'; case-insensitive contains-check.
+    Ranking (best -> worst):
+      1. Exact name match (case-insensitive)
+      2. Unit name that starts with the hint
+      3. Any unit name containing the hint
+    Returns {"unit_id", "name"} or None if no plausible match.
+    """
+    hint = (hint or "").strip().lower()
+    if not hint:
+        return None
+    unit_ids = company.get("unit_ids") or []
+    exact, prefix, contains = [], [], []
+    for uid in unit_ids:
+        try:
+            ts = TeamStore(uid)
+            name = ts.name() or uid
+        except Exception:
+            name = uid
+        nlow = name.lower()
+        # Also match against a "core" version of the hint (strip
+        # trailing "unit" so "tech" and "tech unit" both hit "Tech Unit")
+        core = hint
+        if core.endswith(" unit"):
+            core = core[: -len(" unit")].strip()
+        if nlow == hint or nlow == f"{core} unit":
+            exact.append({"unit_id": uid, "name": name})
+        elif nlow.startswith(core):
+            prefix.append({"unit_id": uid, "name": name})
+        elif core in nlow:
+            contains.append({"unit_id": uid, "name": name})
+    for bucket in (exact, prefix, contains):
+        if bucket:
+            return bucket[0]
+    return None
 
 
 def _dispatch_run(
