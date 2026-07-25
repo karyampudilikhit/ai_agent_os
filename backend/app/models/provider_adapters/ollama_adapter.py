@@ -20,20 +20,32 @@ class OllamaAdapterError(Exception):
         self.context = context or {}
 
 class OllamaAdapter:
-    """Adapter for Ollama local model serving"""
-    
-    def __init__(self, base_url: str = "http://localhost:11434", model: str = "llama3"):
+    """Adapter for Ollama local model serving OR Ollama Cloud API.
+
+    When api_key is set (Ollama Cloud), attaches Authorization header
+    to every request. Cloud + local expose the same /api/generate
+    endpoint shape, so nothing else has to change."""
+
+    def __init__(
+        self,
+        base_url: str = "http://localhost:11434",
+        model: str = "llama3",
+        api_key: Optional[str] = None,
+    ):
         """
-        Initialize Ollama adapter
-        
         Args:
-            base_url: Ollama server URL
-            model: Model name to use
+            base_url: Ollama server URL. Local daemon by default;
+                      set to https://ollama.com for Ollama Cloud API.
+            model:    Model name.
+            api_key:  Ollama Cloud API key. Local daemon needs none.
         """
         self.base_url = base_url.rstrip("/")
         self.model = model
-        self.client = httpx.Client(timeout=300.0)
-        
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        self.client = httpx.Client(timeout=300.0, headers=headers)
+
         # Test connection silently
         try:
             self.client.get(f"{self.base_url}/api/tags", timeout=5.0)

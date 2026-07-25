@@ -31,9 +31,13 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_COMPANY_DIR = os.path.join(
-    os.path.dirname(__file__), "company_data"
-)
+def _default_company_dir() -> str:
+    override = os.environ.get("DATA_DIR", "").strip()
+    if override:
+        return os.path.join(override, "company_data")
+    return os.path.join(os.path.dirname(__file__), "company_data")
+
+DEFAULT_COMPANY_DIR = _default_company_dir()
 DEFAULT_COMPANY_ID = "personal"
 
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from typing import Any, Dict, Optional
 
@@ -84,12 +85,17 @@ def _build_adapter(model: str, use_mock: bool) -> Any:
     if use_mock:
         return MockAdapter(label=f"mock:{model}")
 
-    adapter = OllamaAdapter(model=model)
+    # OLLAMA_HOST + OLLAMA_API_KEY env vars let us swap between the
+    # local daemon (dev) and Ollama Cloud (deployed). Fallback to
+    # localhost so nothing changes for existing local dev.
+    base_url = os.environ.get("OLLAMA_HOST", "").strip() or "http://localhost:11434"
+    api_key = os.environ.get("OLLAMA_API_KEY", "").strip() or None
+    adapter = OllamaAdapter(base_url=base_url, model=model, api_key=api_key)
     probe = adapter.chat_completion("Say 'ok' and nothing else.", max_tokens=8)
     if probe.strip().lower().startswith("connection error"):
         logging.warning(
-            "Ollama unreachable (probe returned: %s...). Falling back to MockAdapter.",
-            probe[:80],
+            "Ollama unreachable at %s (probe returned: %s...). Falling back to MockAdapter.",
+            base_url, probe[:80],
         )
         return MockAdapter(label=f"mock:{model}-fallback")
     return adapter

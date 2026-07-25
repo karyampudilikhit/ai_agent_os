@@ -40,7 +40,15 @@ from backend.app.employees.employee_registry import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TEAM_DIR = os.path.join(os.path.dirname(__file__), "team_data")
+def _default_team_dir() -> str:
+    """Resolved fresh so DATA_DIR env changes at boot are picked up.
+    Falls back to <repo>/backend/app/employees/team_data for dev."""
+    override = os.environ.get("DATA_DIR", "").strip()
+    if override:
+        return os.path.join(override, "team_data")
+    return os.path.join(os.path.dirname(__file__), "team_data")
+
+DEFAULT_TEAM_DIR = _default_team_dir()
 SCHEMA_VERSION = 2
 
 

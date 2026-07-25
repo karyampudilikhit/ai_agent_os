@@ -19,7 +19,13 @@ from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MEMORY_DIR = os.path.join(os.path.dirname(__file__), "data")
+def _default_memory_dir() -> str:
+    override = os.environ.get("DATA_DIR", "").strip()
+    if override:
+        return os.path.join(override, "memory")
+    return os.path.join(os.path.dirname(__file__), "data")
+
+DEFAULT_MEMORY_DIR = _default_memory_dir()
 MAX_CONTEXT_ENTRIES = 3
 SUMMARY_CHARS = 400
 

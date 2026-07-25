@@ -36,9 +36,13 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_REGISTRY_DIR = os.path.join(
-    os.path.dirname(__file__), "data", "registry"
-)
+def _default_registry_dir() -> str:
+    override = os.environ.get("DATA_DIR", "").strip()
+    if override:
+        return os.path.join(override, "registry")
+    return os.path.join(os.path.dirname(__file__), "data", "registry")
+
+DEFAULT_REGISTRY_DIR = _default_registry_dir()
 
 
 def _slugify(text: str) -> str:

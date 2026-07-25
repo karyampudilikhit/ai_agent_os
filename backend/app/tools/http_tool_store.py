@@ -53,13 +53,9 @@ ALLOWED_AUTH_TYPES = {"none", "bearer", "api_key_header", "basic"}
 ALLOWED_PARAM_LOCATIONS = {"query", "body", "path", "header"}
 
 
-def _repo_root() -> Path:
-    """Repo root = 3 levels up from this file: tools/ -> app/ -> backend/ -> root."""
-    return Path(__file__).resolve().parents[3]
-
-
 def _store_path() -> Path:
-    return _repo_root() / STORE_FILENAME
+    from backend.app.utils.paths import under_data
+    return under_data(STORE_FILENAME)
 
 
 class HTTPToolStoreError(Exception):

@@ -26,12 +26,9 @@ QUEUE_FILENAME = ".pending_actions.json"
 MAX_QUEUE_SIZE = 500  # runaway guard — anything beyond this is a bug
 
 
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[3]
-
-
 def _queue_path() -> Path:
-    return _repo_root() / QUEUE_FILENAME
+    from backend.app.utils.paths import under_data
+    return under_data(QUEUE_FILENAME)
 
 
 class ApprovalQueueError(Exception):
