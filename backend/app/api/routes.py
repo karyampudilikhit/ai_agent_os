@@ -287,6 +287,11 @@ def run_task_on_team(session_id: str, req: RunTaskRequest) -> RunTaskResponse:
     if not store.members():
         raise HTTPException(status_code=400, detail="This Unit has no team yet. Design one first, or add members manually.")
 
+    # Count this run against the Unit for the "most-used Units" metric.
+    # Bumped up-front so a failed run still shows as usage — that's the
+    # honest view (workload attempted, not workload succeeded).
+    store.bump_run_count()
+
     supervisor_spec = store.supervisor()
     if not supervisor_spec:
         # Backfill for old sessions created before Supervisors existed
@@ -955,6 +960,10 @@ def run_task_on_company(
         the Unit's Supervisor sees the Company-level context above the
         specialist-level detail."""
         store = TeamStore(uid)
+        # Count this against the Unit for the "most-used Units" metric
+        # (CEO delegations count too — a Unit the CEO leans on hard
+        # should show up as high-usage).
+        store.bump_run_count()
         supervisor_spec = store.supervisor()
         if not supervisor_spec:
             sup = default_supervisor_spec()
@@ -1383,6 +1392,26 @@ def _fallthrough_response(side_effects: UniversalChatSideEffects) -> UniversalCh
         reply="I wasn't sure what to do with that. Try rephrasing.",
         side_effects=side_effects,
     )
+
+
+@router.get("/units/usage")
+def list_unit_usage():
+    """Which Units get used most. Powers the right-sidebar leaderboard.
+    Returns every Unit sorted by run_count desc, with a resolved
+    company_name so the UI can label rows.
+    Shape: {units: [{unit_id, name, company_id, company_name, run_count, last_run_at}]}"""
+    rows = TeamStore.list_usage()
+    company_names: Dict[str, str] = {}
+    for c in get_company_store().list():
+        company_names[c["id"]] = c.get("name") or c["id"]
+    out = []
+    for r in rows:
+        cid = r.get("company_id")
+        out.append({
+            **r,
+            "company_name": company_names.get(cid) if cid else None,
+        })
+    return {"units": out}
 
 
 @router.get("/runs/{run_id}", response_model=RunStatusResponse)

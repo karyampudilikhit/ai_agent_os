@@ -941,6 +941,68 @@
   }
   .session-select select { flex: 1; }
 
+  /* Unit Usage — right sidebar leaderboard. Shows which Units are
+     actually pulling weight vs. which are idle. */
+  .usage-body {
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .usage-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 8px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 12.5px;
+    position: relative;
+    overflow: hidden;
+  }
+  .usage-row .usage-fill {
+    position: absolute; left: 0; top: 0; bottom: 0;
+    background: linear-gradient(90deg, rgba(139,30,47,0.16), rgba(139,30,47,0.04));
+    z-index: 0;
+  }
+  .usage-row.top .usage-fill {
+    background: linear-gradient(90deg, rgba(139,30,47,0.28), rgba(139,30,47,0.06));
+  }
+  .usage-row .u-content {
+    position: relative; z-index: 1;
+    display: flex; align-items: center; gap: 8px; flex: 1;
+    min-width: 0;
+  }
+  .usage-row .u-rank {
+    color: var(--text-muted);
+    font-weight: 700;
+    font-size: 11px;
+    flex-shrink: 0;
+    width: 18px;
+  }
+  .usage-row.top .u-rank { color: var(--accent); }
+  .usage-row .u-name {
+    flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--text);
+  }
+  .usage-row .u-company {
+    font-size: 10.5px;
+    color: var(--text-dim);
+    margin-left: 4px;
+  }
+  .usage-row .u-count {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 1px 8px;
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+  .usage-row.top .u-count {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+
   /* Company section (Phase 3a — top of right sidebar, above Unit) */
   .company-section input, .company-section textarea, .company-section select {
     width: 100%; margin-bottom: 6px;
@@ -1255,6 +1317,16 @@
       </div>
       <div class="team-list" id="team-list"></div>
       <div class="hint" id="team-list-empty" style="display:none;">No employees yet — describe your project in the chat and the AI will build a team for you.</div>
+    </div>
+
+    <div class="section">
+      <div class="head">
+        <span>Unit Usage</span>
+        <button class="ghost small" id="usage-refresh" title="Refresh">↻</button>
+      </div>
+      <div id="usage-body" class="usage-body">
+        <div class="hint" style="font-size:11.5px;color:var(--text-muted);">No runs yet. Once a Unit takes a task, it shows up here.</div>
+      </div>
     </div>
 
     <div class="section">
@@ -1864,6 +1936,7 @@ function startRunPolling(runId, opts = {}) {
       resultBody.innerHTML = renderMarkdown(rec.output || '_(empty output)_');
       renderEvidence(rec.evidence || []);
       fetchPendingActions();
+      refreshUnitUsage();
       switchTab('output');
       const secs = Math.round((Date.now() - started) / 1000);
       appendMessage('assistant', `Done in ${secs}s. Full deliverable is on the Output tab.`);
@@ -1978,6 +2051,7 @@ async function sendMessage() {
       resultBody.innerHTML = renderMarkdown(fx.run_output || '_(empty output)_');
       renderEvidence(fx.evidence || []);
       fetchPendingActions();
+      refreshUnitUsage();
       switchTab('output');
     }
 
@@ -2346,6 +2420,44 @@ function renderOrgUnit(u) {
 
 companySelector.addEventListener('change', (e) => selectCompany(e.target.value));
 
+// ---- Unit Usage leaderboard --------------------------------------
+// Fetches /api/units/usage, renders top N in the right sidebar. Auto-
+// refreshes after every task run (chat handler calls it) and on a
+// 30s poll so counts stay live even without user activity.
+const usageBody = $('usage-body');
+const USAGE_MAX_ROWS = 5;
+
+async function refreshUnitUsage() {
+  try {
+    const data = await api('GET', '/api/units/usage');
+    const units = (data.units || []).filter(u => u.name); // hide unlabelled sessions
+    if (!units.length) {
+      usageBody.innerHTML = '<div class="hint" style="font-size:11.5px;color:var(--text-muted);">No runs yet. Once a Unit takes a task, it shows up here.</div>';
+      return;
+    }
+    const topN = units.slice(0, USAGE_MAX_ROWS);
+    const maxCount = Math.max(1, ...topN.map(u => u.run_count));
+    usageBody.innerHTML = topN.map((u, i) => {
+      const pct = Math.max(6, Math.round((u.run_count / maxCount) * 100));
+      const rank = i + 1;
+      const topClass = i === 0 && u.run_count > 0 ? ' top' : '';
+      return `<div class="usage-row${topClass}" title="${escapeHtml(u.name)} — ${u.run_count} run(s)">
+        <div class="usage-fill" style="width:${pct}%;"></div>
+        <div class="u-content">
+          <span class="u-rank">#${rank}</span>
+          <span class="u-name">${escapeHtml(u.name)}${u.company_name ? `<span class="u-company"> · ${escapeHtml(u.company_name)}</span>` : ''}</span>
+          <span class="u-count">${u.run_count}</span>
+        </div>
+      </div>`;
+    }).join('');
+  } catch (err) {
+    // Silent — don't spam chat if the endpoint is briefly down
+  }
+}
+
+$('usage-refresh').addEventListener('click', refreshUnitUsage);
+setInterval(refreshUnitUsage, 30000);
+
 // Clear-chat button — nukes local chat log ONLY (does not touch Units,
 // Companies, Employees, or pending actions on the server).
 const clearChatBtn = $('clear-chat-btn');
@@ -2361,6 +2473,7 @@ if (clearChatBtn) {
 // Company / Unit that was focused before the reload comes back.
 (async () => {
   restoreChatHistory();
+  refreshUnitUsage();
   await refreshCompanies();
   const sel = readSelection();
   if (sel.company_id) {

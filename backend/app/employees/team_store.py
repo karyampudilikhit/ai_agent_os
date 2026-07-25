@@ -91,6 +91,8 @@ class TeamStore:
             "company_id": None,
             "members": [],
             "created_at": datetime.utcnow().isoformat(),
+            "run_count": 0,
+            "last_run_at": None,
         }
 
     def _load(self) -> Dict:
@@ -106,6 +108,8 @@ class TeamStore:
         data.setdefault("name", None)
         data.setdefault("purpose", None)
         data.setdefault("company_id", None)
+        data.setdefault("run_count", 0)
+        data.setdefault("last_run_at", None)
 
         # Legacy v1 → v2 migration: any member with an inline "role"
         # field gets adopted into the registry and rewritten as
@@ -209,6 +213,20 @@ class TeamStore:
 
     def company_id(self) -> Optional[str]:
         return self._data.get("company_id")
+
+    def run_count(self) -> int:
+        return int(self._data.get("run_count") or 0)
+
+    def last_run_at(self) -> Optional[str]:
+        return self._data.get("last_run_at")
+
+    def bump_run_count(self) -> int:
+        """Increment this Unit's total run counter. Called on every task
+        run against the Unit — used to answer 'which Unit gets used most'."""
+        self._data["run_count"] = int(self._data.get("run_count") or 0) + 1
+        self._data["last_run_at"] = datetime.utcnow().isoformat()
+        self._save()
+        return self._data["run_count"]
 
     def raw_members(self) -> List[Dict]:
         """Underlying `{employee_id, is_supervisor?}` refs. For code
@@ -398,3 +416,31 @@ class TeamStore:
                 continue
         out.sort(key=lambda d: d.get("created_at") or "", reverse=True)
         return out
+
+    @staticmethod
+    def list_usage(team_dir: str = DEFAULT_TEAM_DIR) -> List[Dict]:
+        """Return every Unit sorted by run_count desc — powers the
+        'which Unit gets used most' metric in the right sidebar.
+        Units with zero runs are included at the bottom so the founder
+        can see idle Units too."""
+        if not os.path.isdir(team_dir):
+            return []
+        rows = []
+        for fname in os.listdir(team_dir):
+            if not fname.endswith(".json"):
+                continue
+            path = os.path.join(team_dir, fname)
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                rows.append({
+                    "session_id": data.get("session_id", fname[:-5]),
+                    "name": data.get("name"),
+                    "company_id": data.get("company_id"),
+                    "run_count": int(data.get("run_count") or 0),
+                    "last_run_at": data.get("last_run_at"),
+                })
+            except Exception:  # noqa: BLE001
+                continue
+        rows.sort(key=lambda d: (d["run_count"], d.get("last_run_at") or ""), reverse=True)
+        return rows
