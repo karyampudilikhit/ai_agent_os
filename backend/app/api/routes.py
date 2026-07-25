@@ -89,6 +89,12 @@ from backend.app.chat.universal_router import (
     format_proposal_for_chat,
 )
 from backend.app.chat.async_runs import get_store as get_run_store, submit as submit_run
+from backend.app.chat.clarifier import (
+    Clarifier,
+    enrich_task_with_qa,
+    format_questions_for_chat,
+)
+from backend.app.chat.clarification_store import get_store as get_clarification_store
 from backend.app.tools.mcp_client import get_registry as get_mcp_registry
 from backend.app.tools.mcp_store import get_store as get_mcp_store
 from backend.app.main import _build_adapter, _load_config
@@ -1104,6 +1110,10 @@ def universal_chat(req: UniversalChatRequest) -> UniversalChatResponse:
     router_llm = UniversalChatRouter(model_adapter=pipeline.adapter)
     proposal_store = get_pending_proposal_store()
     company_store = get_company_store()
+    clar_store = get_clarification_store()
+    clar_key = clar_store.key_for(
+        company_id=req.current_company_id, session_id=req.current_session_id,
+    )
 
     # --- build the state snapshot the router needs to classify ---
     current_company = None
@@ -1121,6 +1131,45 @@ def universal_chat(req: UniversalChatRequest) -> UniversalChatResponse:
     if current_company:
         pending = proposal_store.get(current_company["id"])
 
+    # ================================================================
+    # PENDING CLARIFICATION SHORT-CIRCUIT
+    # If we're mid-clarification for this context, treat the founder's
+    # message as answers to the pending questions instead of a new
+    # intent. Ask the clarifier if we now have enough — if so, enrich
+    # the original task with the Q&A and dispatch the real run. If not,
+    # return more questions (hard-capped at 10 total).
+    # ================================================================
+    pending_clar = clar_store.get(clar_key)
+    if pending_clar:
+        clarifier = Clarifier(model_adapter=pipeline.adapter)
+        updated = clar_store.append_answer(clar_key, req.message)
+        result = clarifier.next_step(
+            original_task=updated["task"],
+            questions_asked=updated["questions"],
+            answers=updated["answers"],
+        )
+        if result["ready"] or not result["questions"]:
+            # Enough context — enrich the original task and dispatch
+            enriched_task = enrich_task_with_qa(
+                updated["task"], updated["questions"], updated["answers"],
+            )
+            saved_intent = updated["intent"]
+            clar_store.clear(clar_key)
+            return _dispatch_run(
+                intent=saved_intent,
+                task=enriched_task,
+                current_company=current_company,
+                current_session_id=req.current_session_id,
+            )
+        # More questions
+        clar_store.append_questions(clar_key, result["questions"])
+        reply = format_questions_for_chat(result["questions"], first_pass=False)
+        return UniversalChatResponse(
+            intent="clarify",
+            reply=reply,
+            side_effects=UniversalChatSideEffects(),
+        )
+
     snapshot = build_state_snapshot(
         current_company=current_company,
         current_unit_members=current_members,
@@ -1128,10 +1177,37 @@ def universal_chat(req: UniversalChatRequest) -> UniversalChatResponse:
         pending_proposal=pending,
         known_companies=known_companies,
     )
-
     verdict = router_llm.classify(req.message, snapshot)
     intent = verdict.get("intent") or "casual_chat"
     side_effects = UniversalChatSideEffects()
+
+    # ================================================================
+    # PRE-RUN CLARIFICATION
+    # For run_task_* intents, always give the clarifier a chance to ask
+    # sharp questions first. If it decides the prompt is already tight,
+    # it returns ready=true and we dispatch immediately.
+    # ================================================================
+    if intent in ("run_task_unit", "run_task_company"):
+        task_str = str(verdict.get("task") or req.message).strip()
+        clarifier = Clarifier(model_adapter=pipeline.adapter)
+        initial = clarifier.initial_questions(task_str)
+        if initial["questions"] and not initial["ready"]:
+            clar_store.set(
+                clar_key,
+                task=task_str,
+                intent=intent,
+                questions=initial["questions"],
+                answers=[],
+                company_id=req.current_company_id,
+                session_id=req.current_session_id,
+            )
+            reply = format_questions_for_chat(initial["questions"], first_pass=True)
+            return UniversalChatResponse(
+                intent="clarify",
+                reply=reply,
+                side_effects=side_effects,
+            )
+        # No clarification needed — fall through to the normal run path
 
     if intent == "casual_chat":
         return UniversalChatResponse(
@@ -1319,14 +1395,39 @@ def universal_chat(req: UniversalChatRequest) -> UniversalChatResponse:
         )
         return UniversalChatResponse(intent=intent, reply=reply, side_effects=side_effects)
 
-    # --- run_task_company: kick the CEO. If the classifier picked this
-    #     but there's no Company, silently downgrade to Unit mode with
-    #     auto-create — the user didn't ask for a Company, they just
-    #     want the work done. Don't punish them with an error. ---
+    # --- run_task_* dispatch (task may already be clarifier-enriched) ---
+    if intent in ("run_task_company", "run_task_unit"):
+        task_str = str(verdict.get("task") or req.message).strip()
+        return _dispatch_run(
+            intent=intent,
+            task=task_str,
+            current_company=current_company,
+            current_session_id=req.current_session_id,
+        )
+
+    # Should never reach here — VALID_INTENTS enforces the set
+    return _fallthrough_response(side_effects)
+
+
+def _dispatch_run(
+    *,
+    intent: str,
+    task: str,
+    current_company: Optional[Dict[str, Any]],
+    current_session_id: Optional[str],
+) -> UniversalChatResponse:
+    """Kick the async run pipeline. Shared by the direct-run path and
+    the clarification-ready path — same behavior either way.
+
+    If intent is run_task_company but no Company is selected, silently
+    downgrade to run_task_unit (the founder wanted the work done, not a
+    lecture about altitudes)."""
+    side_effects = UniversalChatSideEffects()
+
     if intent == "run_task_company" and not current_company:
         intent = "run_task_unit"
+
     if intent == "run_task_company":
-        task = str(verdict.get("task") or req.message).strip()
         company_id = current_company["id"]
         run_id = get_run_store().create(intent=intent, company_id=company_id, task=task)
 
@@ -1349,41 +1450,34 @@ def universal_chat(req: UniversalChatRequest) -> UniversalChatResponse:
             side_effects=side_effects,
         )
 
-    # --- run_task_unit: kick a Unit's Supervisor in the background.
-    #     Auto-creates a Unit if none exists — a founder who just types
-    #     'run market research' shouldn't have to know what a Unit is. ---
-    if intent == "run_task_unit":
-        session_id = req.current_session_id
-        if not session_id:
-            session_id = TeamStore.new_session_id()
-            store = TeamStore(session_id)
-            sup = default_supervisor_spec()
-            store.add_member(sup["role"], sup["mandate"], is_supervisor=True)
-        task = str(verdict.get("task") or req.message).strip()
-        run_id = get_run_store().create(intent=intent, session_id=session_id, task=task)
-        _sid = session_id  # closure capture
-        _task = task
+    # run_task_unit — auto-create a Unit if none is selected
+    session_id = current_session_id
+    if not session_id:
+        session_id = TeamStore.new_session_id()
+        store = TeamStore(session_id)
+        sup = default_supervisor_spec()
+        store.add_member(sup["role"], sup["mandate"], is_supervisor=True)
+    run_id = get_run_store().create(intent="run_task_unit", session_id=session_id, task=task)
+    _sid = session_id
+    _task = task
 
-        def _unit_work():
-            result = run_task_on_team(_sid, RunTaskRequest(task=_task))
-            return (result.final_output or "",
-                    [e.model_dump() for e in (result.evidence or [])])
+    def _unit_work():
+        result = run_task_on_team(_sid, RunTaskRequest(task=_task))
+        return (result.final_output or "",
+                [e.model_dump() for e in (result.evidence or [])])
 
-        submit_run(run_id, _unit_work)
-        side_effects.run_id = run_id
-        side_effects.session_id = session_id
-        return UniversalChatResponse(
-            intent=intent,
-            reply=(
-                "On it — the Unit is running now. The deliverable will "
-                "appear on the Output tab as soon as it's ready. Keep "
-                "chatting while it works."
-            ),
-            side_effects=side_effects,
-        )
-
-    # Should never reach here — VALID_INTENTS enforces the set
-    return _fallthrough_response(side_effects)
+    submit_run(run_id, _unit_work)
+    side_effects.run_id = run_id
+    side_effects.session_id = session_id
+    return UniversalChatResponse(
+        intent="run_task_unit",
+        reply=(
+            "On it — the Unit is running now. The deliverable will "
+            "appear on the Output tab as soon as it's ready. Keep "
+            "chatting while it works."
+        ),
+        side_effects=side_effects,
+    )
 
 
 def _fallthrough_response(side_effects: UniversalChatSideEffects) -> UniversalChatResponse:
