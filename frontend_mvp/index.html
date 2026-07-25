@@ -1820,10 +1820,44 @@ async function loadTeam(sessionId) {
 }
 
 async function newSession() {
-  try {
-    const { session_id } = await api('POST', '/api/sessions');
-    await selectSession(session_id);
-  } catch (e) { appendMessage('assistant', 'Error creating session: ' + e.message); }
+  // "+ New" = HARD RESET. Nothing from past sessions bleeds through:
+  // chat wiped, Company deselected, Unit deselected, Team hidden, Unit
+  // Usage cleared, saved localStorage state cleared. No server-side
+  // session gets created here — nothing is real until the founder
+  // types something.
+  clearChatHistory();       // wipes localStorage chat
+  clearChat();              // resets DOM chat area to empty state
+  currentCompanyId = null;
+  currentCompanyMeta = null;
+  currentSessionId = null;
+  currentProposal = null;
+  try { localStorage.removeItem(SELECTION_KEY); } catch (_) {}
+  companySelector.value = '';
+  companyDetailEl.style.display = 'none';
+  if (companyEmptyHint) companyEmptyHint.style.display = '';
+  // Blank the Unit dropdown so no old session is auto-selected
+  sessionSelector.innerHTML = '<option value="">(no Unit)</option>';
+  // Blank the team list
+  const teamList = $('team-list');
+  if (teamList) teamList.innerHTML = '';
+  const teamEmpty = $('team-list-empty');
+  if (teamEmpty) teamEmpty.style.display = '';
+  const teamCount = $('team-list-count');
+  if (teamCount) teamCount.textContent = '';
+  // Blank Unit Usage (it re-populates only when refresh is clicked)
+  if (usageBody) {
+    usageBody.innerHTML = '<div class="hint" style="font-size:11.5px;color:var(--text-muted);">Nothing yet. Start a task and the Units doing work will show up here.</div>';
+  }
+  // Reset chat target badge + placeholder
+  refreshChatTargetBadge();
+  // Return to Canvas tab (empty state) — no output to show
+  switchTab('canvas');
+  const flow = $('flow-container');
+  if (flow) flow.innerHTML = '';
+  // Result body / evidence panel — clean slate
+  resultBody.classList.remove('md');
+  resultBody.innerHTML = '<div class="result-empty">No output yet — send a task to your team and it will show up here.</div>';
+  renderEvidence([]);
 }
 
 // ------------------------------------------------------------
@@ -2456,7 +2490,9 @@ async function refreshUnitUsage() {
 }
 
 $('usage-refresh').addEventListener('click', refreshUnitUsage);
-setInterval(refreshUnitUsage, 30000);
+// No auto-poll. The panel updates after task runs (see startRunPolling
+// success branch) and when the founder taps refresh. Otherwise it stays
+// where it was — no ghost history sneaking back in the background.
 
 // Clear-chat button — nukes local chat log ONLY (does not touch Units,
 // Companies, Employees, or pending actions on the server).
@@ -2473,7 +2509,9 @@ if (clearChatBtn) {
 // Company / Unit that was focused before the reload comes back.
 (async () => {
   restoreChatHistory();
-  refreshUnitUsage();
+  // Note: no refreshUnitUsage() on boot — the leaderboard should only
+  // fill in as the founder actually does work in the current session,
+  // otherwise it reads as "the app is pre-populating history".
   await refreshCompanies();
   const sel = readSelection();
   if (sel.company_id) {
