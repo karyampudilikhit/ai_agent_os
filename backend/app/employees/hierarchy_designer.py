@@ -32,41 +32,57 @@ MIN_SPECIALISTS_PER_UNIT = 1
 MAX_SPECIALISTS_PER_UNIT = 4
 
 
-DESIGN_PROMPT = """You are a startup CEO designing the initial org chart for a founder
-who just told you what they're building. Design the smallest, most
-useful company structure that would actually get the work done — not
-the biggest.
+DESIGN_PROMPT = """You are a CEO designing the initial org chart for a founder who
+just described what they're building. Design the smallest, most useful
+structure that would ACTUALLY get THAT specific company's work done.
 
 FOUNDER'S DESCRIPTION OF THE COMPANY:
 "{description}"
 
-Design {min_units}-{max_units} Units and, for each Unit, propose an
-initial roster of {min_specialists}-{max_specialists} specialists.
-Rules:
+STRICT RULES — read carefully:
 
-- Each Unit is a persistent functional area (e.g., "Market Research
-  Unit", "Go-To-Market Unit", "Product Discovery Unit", "Operations
-  Unit"). Not a project. Not a task.
+- Design {min_units}-{max_units} Units that DIRECTLY serve THIS
+  company's actual work. A due-diligence firm, a law practice, a
+  restaurant, a podcast studio, a hedge fund, and a SaaS startup all
+  need completely DIFFERENT Units. Do not default to a generic tech
+  startup structure (Product/Engineering/Design/Marketing/Ops) unless
+  the founder actually described a tech startup.
+
+- READ the founder's description literally. If they said "due diligence
+  firm", the Units should be things like Financial Analysis, Legal
+  Review, Market Intelligence — NOT Engineering or Product. If they
+  said "content agency", the Units should be things like Editorial,
+  Video Production, Client Success — NOT DevOps.
+
 - Each Unit must have a distinct scope. Do NOT create two Units that
   would obviously step on each other's work.
+
 - A Unit's name should be 2-4 words and end with "Unit". Its purpose
-  should be one sentence describing what it OWNS.
-- For each Unit, propose {min_specialists}-{max_specialists} initial
-  specialists as {{role, mandate}} pairs. Roles are 1-3 words. Mandates
-  are one sentence describing what only that person owns on this Unit.
-- Skip Units that don't apply to this specific company. A pre-launch
-  solo-founder SaaS with no customers does NOT need a Sales Unit yet.
+  should be one sentence describing what it OWNS in the context of
+  THIS company.
+
+- For each Unit, propose {min_specialists}-{max_specialists}
+  specialists as {{role, mandate}} pairs. Roles must be job titles a
+  real person in THIS industry would hold (a due-diligence firm has
+  "Analyst", "Sector Researcher"; NOT "Backend Engineer"). Mandates
+  are one sentence each — what only that person owns on this Unit.
+
+- Skip Units that don't apply. A pre-launch solo founder with no
+  customers does NOT need a Sales Unit yet. An investment firm does
+  NOT need a DevOps Unit.
+
 - Order the Units from most immediately useful to least.
 
-Return JSON only:
+Return JSON only, this exact shape (the field names below are the
+schema — do NOT copy the placeholder values, generate real ones
+tailored to the founder's actual company):
+
 {{"units": [
-  {{"name": "Market Research Unit",
-    "purpose": "Own market sizing, competitor tracking, and pricing intel.",
+  {{"name": "...",
+    "purpose": "...",
     "specialists": [
-      {{"role": "Market Researcher", "mandate": "..."}},
-      {{"role": "Competitive Analyst", "mandate": "..."}}
-    ]}},
-  ...
+      {{"role": "...", "mandate": "..."}}
+    ]}}
 ]}}
 
 JSON only."""
