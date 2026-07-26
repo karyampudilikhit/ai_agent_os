@@ -371,6 +371,13 @@ class UniversalChatRequest(BaseModel):
     message: str = Field(..., min_length=1)
     current_company_id: Optional[str] = None
     current_session_id: Optional[str] = None
+    # Execution mode:
+    #   "work" (default) — the AI does the assigned tasks end-to-end.
+    #   "plan"           — the AI only produces a plan (who does what,
+    #                      in what order); no specialists run, no actions
+    #                      fire. The plan is stored so a later Work-mode
+    #                      run can execute it.
+    mode: str = Field("work", description="'plan' | 'work'")
 
 
 class UniversalChatSideEffects(BaseModel):

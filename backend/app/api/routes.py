@@ -69,9 +69,9 @@ from backend.app.employees.employee_coordinator import EmployeeCoordinator
 from backend.app.employees.employee_spawner import EmployeeSpawner
 from backend.app.employees.idea_validation_employee import IdeaValidationEmployee
 from backend.app.employees.memory_store import EmployeeMemoryStore
-from backend.app.employees.ceo_manager import default_ceo_spec
+from backend.app.employees.ceo_manager import CEOManager, default_ceo_spec
 from backend.app.employees.hierarchy_designer import HierarchyDesigner
-from backend.app.employees.supervisor import default_supervisor_spec
+from backend.app.employees.supervisor import SupervisorPlanner, default_supervisor_spec
 from backend.app.employees.team_store import TeamStore
 from backend.app.employees.company_store import CompanyStoreError
 from backend.app.employees.company_store import get_store as get_company_store
@@ -96,6 +96,7 @@ from backend.app.chat.clarifier import (
     format_questions_for_chat,
 )
 from backend.app.chat.clarification_store import get_store as get_clarification_store
+from backend.app.chat.plan_store import PlanStore, get_store as get_plan_store
 from backend.app.tools.mcp_client import get_registry as get_mcp_registry
 from backend.app.tools.mcp_store import get_store as get_mcp_store
 from backend.app.main import _build_adapter, _load_config
@@ -1161,6 +1162,7 @@ def universal_chat(req: UniversalChatRequest) -> UniversalChatResponse:
                 task=enriched_task,
                 current_company=current_company,
                 current_session_id=req.current_session_id,
+                mode=req.mode,
             )
         # More questions
         clar_store.append_questions(clar_key, result["questions"])
@@ -1183,6 +1185,40 @@ def universal_chat(req: UniversalChatRequest) -> UniversalChatResponse:
                 })
             except Exception:
                 current_units_snapshot.append({"unit_id": uid, "name": uid})
+
+    # ================================================================
+    # PLAN -> WORK HANDOFF
+    # In Work mode, if a plan was drafted earlier for this context and
+    # the founder says an execution word ("go", "execute", "do it"),
+    # run the stored plan directly — don't let the router misfile "go"
+    # as casual chat.
+    # ================================================================
+    if req.mode == "work":
+        plan_key = get_plan_store().key_for(
+            company_id=req.current_company_id, session_id=req.current_session_id,
+        )
+        stored_plan = get_plan_store().get(plan_key)
+        if stored_plan:
+            msg_norm = req.message.strip().lower().rstrip("!.")
+            EXEC_TRIGGERS = {
+                "go", "execute", "execute it", "execute the plan", "do it",
+                "run it", "run the plan", "proceed", "start", "ship it",
+                "make it happen", "go ahead", "let's go", "lets go",
+                "yes go", "run", "do the work", "begin",
+            }
+            if msg_norm in EXEC_TRIGGERS:
+                exec_intent = (
+                    "run_task_company"
+                    if stored_plan.get("altitude") == "company"
+                    else "run_task_unit"
+                )
+                return _dispatch_run(
+                    intent=exec_intent,
+                    task=stored_plan.get("task") or req.message,
+                    current_company=current_company,
+                    current_session_id=req.current_session_id,
+                    mode="work",
+                )
 
     snapshot = build_state_snapshot(
         current_company=current_company,
@@ -1520,6 +1556,7 @@ def universal_chat(req: UniversalChatRequest) -> UniversalChatResponse:
             task=task_str,
             current_company=current_company,
             current_session_id=req.current_session_id,
+            mode=req.mode,
         )
 
     # Should never reach here — VALID_INTENTS enforces the set
@@ -1567,30 +1604,192 @@ def _resolve_unit_by_hint(
     return None
 
 
-def _dispatch_run(
+def _format_unit_plan_markdown(
+    task: str, unit_name: str, plan: List[Dict[str, str]],
+) -> str:
+    """Render a Supervisor delegation plan as a readable markdown plan."""
+    lines = [f"## Plan — {unit_name}", "", f"**Task:** {task}", "", "### Steps"]
+    if not plan:
+        lines.append("_The Supervisor would handle this solo — no specialists to delegate to yet._")
+    for i, step in enumerate(plan, 1):
+        role = step.get("role", "?")
+        sub_task = step.get("sub_task", "")
+        lines.append(f"{i}. **{role}** — {sub_task}")
+        brief = step.get("task_brief")
+        if brief:
+            lines.append(f"   - _Brief:_ {brief}")
+    lines += ["", "---", "_This is a plan only. Switch to **Work** mode and say \"go\" to execute it._"]
+    return "\n".join(lines)
+
+
+def _format_company_plan_markdown(
+    task: str, company_name: str, plan: List[Dict[str, Any]],
+    unit_names: Dict[str, str],
+) -> str:
+    """Render a CEO cross-Unit delegation plan as readable markdown."""
+    lines = [f"## Plan — {company_name}", "", f"**Task:** {task}", "", "### Delegation across Units"]
+    if not plan:
+        lines.append("_No Units have staffed teams yet — nothing to delegate to._")
+    for i, step in enumerate(plan, 1):
+        uid = step.get("unit_id", "")
+        uname = unit_names.get(uid, uid)
+        sub_task = step.get("sub_task", "")
+        lines.append(f"{i}. **{uname}** — {sub_task}")
+        brief = step.get("unit_brief")
+        if brief:
+            lines.append(f"   - _Brief:_ {brief}")
+    lines += ["", "---", "_This is a plan only. Switch to **Work** mode and say \"go\" to execute it._"]
+    return "\n".join(lines)
+
+
+def _dispatch_plan(
     *,
     intent: str,
     task: str,
     current_company: Optional[Dict[str, Any]],
     current_session_id: Optional[str],
 ) -> UniversalChatResponse:
+    """PLAN mode: produce a plan only. No specialists run, no actions
+    fire. The plan is stored (PlanStore) so a later Work-mode run can
+    execute it. Runs async like a normal run so the frontend polling
+    is identical."""
+    side_effects = UniversalChatSideEffects()
+    plan_store = get_plan_store()
+
+    if intent == "run_task_company" and not current_company:
+        intent = "run_task_unit"
+
+    if intent == "run_task_company":
+        company = current_company
+        company_id = company["id"]
+        clar_key = PlanStore.key_for(company_id=company_id)
+        run_id = get_run_store().create(intent="plan_company", company_id=company_id, task=task)
+
+        def _company_plan():
+            pipeline = _build_pipeline()
+            # Build the units snapshot the CEO planner needs.
+            units_for_ceo: List[Dict[str, Any]] = []
+            unit_names: Dict[str, str] = {}
+            for uid in company.get("unit_ids") or []:
+                ts = TeamStore(uid)
+                members = ts.members()
+                if not members:
+                    continue
+                nm = ts.name() or uid
+                unit_names[uid] = nm
+                units_for_ceo.append({
+                    "unit_id": uid, "name": nm, "purpose": ts.purpose() or "",
+                    "members": [
+                        {"role": m.get("role"), "mandate": m.get("mandate"),
+                         "is_supervisor": bool(m.get("is_supervisor"))}
+                        for m in members
+                    ],
+                })
+            ceo = CEOManager(model_adapter=pipeline.adapter)
+            plan = ceo.plan_company_delegation(task, company, units_for_ceo)
+            md = _format_company_plan_markdown(task, company.get("name") or "Company", plan, unit_names)
+            plan_store.set(clar_key, task=task, plan_markdown=md, altitude="company")
+            return (md, [])
+
+        submit_run(run_id, _company_plan)
+        side_effects.run_id = run_id
+        side_effects.company_id = company_id
+        return UniversalChatResponse(
+            intent="plan_company",
+            reply=(
+                "Planning mode — the CEO is drafting a delegation plan across "
+                "your Units. No work runs yet. The plan lands on the Output "
+                "tab shortly; review it, then flip to Work mode and say \"go\"."
+            ),
+            side_effects=side_effects,
+        )
+
+    # Unit-level plan
+    session_id = current_session_id
+    if not session_id:
+        session_id = TeamStore.new_session_id()
+        store = TeamStore(session_id)
+        sup = default_supervisor_spec()
+        store.add_member(sup["role"], sup["mandate"], is_supervisor=True)
+    clar_key = PlanStore.key_for(session_id=session_id)
+    run_id = get_run_store().create(intent="plan_unit", session_id=session_id, task=task)
+    _sid = session_id
+    _task = task
+
+    def _unit_plan():
+        pipeline = _build_pipeline()
+        ts = TeamStore(_sid)
+        specialists = ts.specialists()
+        planner = SupervisorPlanner(model_adapter=pipeline.adapter)
+        plan = planner.design_delegation(_task, specialists)
+        unit_name = ts.name() or "Unit"
+        md = _format_unit_plan_markdown(_task, unit_name, plan)
+        plan_store.set(clar_key, task=_task, plan_markdown=md, altitude="unit")
+        return (md, [])
+
+    submit_run(run_id, _unit_plan)
+    side_effects.run_id = run_id
+    side_effects.session_id = session_id
+    return UniversalChatResponse(
+        intent="plan_unit",
+        reply=(
+            "Planning mode — the Supervisor is drafting a plan. No work runs "
+            "yet. The plan lands on the Output tab shortly; review it, then "
+            "flip to Work mode and say \"go\"."
+        ),
+        side_effects=side_effects,
+    )
+
+
+def _dispatch_run(
+    *,
+    intent: str,
+    task: str,
+    current_company: Optional[Dict[str, Any]],
+    current_session_id: Optional[str],
+    mode: str = "work",
+) -> UniversalChatResponse:
     """Kick the async run pipeline. Shared by the direct-run path and
     the clarification-ready path — same behavior either way.
+
+    mode == "plan"  -> produce a plan only (delegated to _dispatch_plan).
+    mode == "work"  -> full execution. If a plan was drafted earlier for
+                       this context (PlanStore), fold it into the task so
+                       the run executes the reviewed plan rather than
+                       re-planning from scratch.
 
     If intent is run_task_company but no Company is selected, silently
     downgrade to run_task_unit (the founder wanted the work done, not a
     lecture about altitudes)."""
+    if mode == "plan":
+        return _dispatch_plan(
+            intent=intent, task=task,
+            current_company=current_company,
+            current_session_id=current_session_id,
+        )
+
     side_effects = UniversalChatSideEffects()
+    plan_store = get_plan_store()
 
     if intent == "run_task_company" and not current_company:
         intent = "run_task_unit"
 
     if intent == "run_task_company":
         company_id = current_company["id"]
-        run_id = get_run_store().create(intent=intent, company_id=company_id, task=task)
+        # Fold in any reviewed plan for this Company.
+        stored_plan = plan_store.get(PlanStore.key_for(company_id=company_id))
+        effective_task = task
+        if stored_plan and stored_plan.get("altitude") == "company":
+            effective_task = (
+                f"{stored_plan['task']}\n\n"
+                f"APPROVED PLAN — execute this delegation:\n{stored_plan['plan_markdown']}"
+            )
+        run_id = get_run_store().create(intent=intent, company_id=company_id, task=effective_task)
 
         def _company_work():
-            result = run_task_on_company(company_id, CompanyRunRequest(task=task))
+            result = run_task_on_company(company_id, CompanyRunRequest(task=effective_task))
+            # Clear the plan once executed so it doesn't leak into the next task.
+            plan_store.clear(PlanStore.key_for(company_id=company_id))
             return (result.final_output or "",
                     [e.model_dump() for e in (result.evidence or [])])
 
@@ -1615,12 +1814,20 @@ def _dispatch_run(
         store = TeamStore(session_id)
         sup = default_supervisor_spec()
         store.add_member(sup["role"], sup["mandate"], is_supervisor=True)
-    run_id = get_run_store().create(intent="run_task_unit", session_id=session_id, task=task)
+    stored_plan = plan_store.get(PlanStore.key_for(session_id=session_id))
+    effective_task = task
+    if stored_plan and stored_plan.get("altitude") == "unit":
+        effective_task = (
+            f"{stored_plan['task']}\n\n"
+            f"APPROVED PLAN — execute this delegation:\n{stored_plan['plan_markdown']}"
+        )
+    run_id = get_run_store().create(intent="run_task_unit", session_id=session_id, task=effective_task)
     _sid = session_id
-    _task = task
+    _task = effective_task
 
     def _unit_work():
         result = run_task_on_team(_sid, RunTaskRequest(task=_task))
+        plan_store.clear(PlanStore.key_for(session_id=_sid))
         return (result.final_output or "",
                 [e.model_dump() for e in (result.evidence or [])])
 

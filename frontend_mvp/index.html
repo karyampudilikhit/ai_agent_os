@@ -1134,6 +1134,34 @@
     font-weight: 600;
   }
 
+  /* Plan / Work mode toggle in the chat header */
+  .mode-toggle {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    overflow: hidden;
+    margin-right: 4px;
+  }
+  .mode-btn {
+    border: none;
+    background: var(--panel);
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 11px;
+    cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease;
+  }
+  .mode-btn:hover { color: var(--text); }
+  .mode-btn.active[data-mode="plan"] {
+    background: var(--info, #2563eb);
+    color: #fff;
+  }
+  .mode-btn.active[data-mode="work"] {
+    background: var(--accent);
+    color: #fff;
+  }
+
   /* Scrollbars */
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -1163,6 +1191,10 @@
     <div class="chat-header">
       <div class="title">Studio Chat<span id="chat-target-badge" class="chat-target-badge">Unit</span></div>
       <div class="actions">
+        <div class="mode-toggle" id="mode-toggle" title="Plan = the AI only drafts a plan. Work = the AI does the tasks.">
+          <button type="button" class="mode-btn" data-mode="plan" id="mode-plan-btn">Plan</button>
+          <button type="button" class="mode-btn active" data-mode="work" id="mode-work-btn">Work</button>
+        </div>
         <button class="ghost small" id="clear-chat-btn" title="Clear chat history (does not delete Units or Companies)">Clear</button>
         <button class="ghost small" id="new-session-btn">+ New</button>
       </div>
@@ -1952,6 +1984,7 @@ async function sendMessage() {
       message: text,
       current_company_id: currentCompanyId || null,
       current_session_id: currentSessionId || null,
+      mode: chatMode,
     });
 
     appendMessage('assistant', chatRes.reply);
@@ -2374,6 +2407,35 @@ function renderOrgUnit(u) {
 // (for switching between companies you've already created).
 
 companySelector.addEventListener('change', (e) => selectCompany(e.target.value));
+
+// Plan / Work mode toggle. Plan = the AI only drafts a plan (no
+// specialists run, no actions fire). Work = the AI does the tasks.
+// Persisted so a reload keeps the founder's chosen mode.
+const MODE_KEY = 'vision_ai_mode_v1';
+let chatMode = (() => {
+  try { const m = localStorage.getItem(MODE_KEY); return m === 'plan' ? 'plan' : 'work'; }
+  catch (_) { return 'work'; }
+})();
+const modePlanBtn = $('mode-plan-btn');
+const modeWorkBtn = $('mode-work-btn');
+function applyModeUI() {
+  if (modePlanBtn) modePlanBtn.classList.toggle('active', chatMode === 'plan');
+  if (modeWorkBtn) modeWorkBtn.classList.toggle('active', chatMode === 'work');
+  // Nudge the input placeholder so the mode is obvious while typing.
+  if (chatMode === 'plan') {
+    chatInputEl.placeholder = 'Plan mode — describe the goal; the AI drafts a plan, no work runs.';
+  } else {
+    chatInputEl.placeholder = 'Type anything — build me a company, run market research, add a specialist…';
+  }
+}
+function setChatMode(m) {
+  chatMode = (m === 'plan') ? 'plan' : 'work';
+  try { localStorage.setItem(MODE_KEY, chatMode); } catch (_) {}
+  applyModeUI();
+}
+if (modePlanBtn) modePlanBtn.addEventListener('click', () => setChatMode('plan'));
+if (modeWorkBtn) modeWorkBtn.addEventListener('click', () => setChatMode('work'));
+applyModeUI();
 
 // Clear-chat button — nukes local chat log ONLY (does not touch Units,
 // Companies, Employees, or pending actions on the server).
