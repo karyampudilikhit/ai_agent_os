@@ -1162,6 +1162,51 @@
     color: #fff;
   }
 
+  /* Toolbar row under the chat input — mode toggle + attach button */
+  .chat-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 14px 10px;
+  }
+
+  /* Attached-file chips, shown above the input box while composing */
+  .attached-files {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 14px 0;
+  }
+  .file-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 9px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 11.5px;
+    color: var(--text);
+    max-width: 220px;
+  }
+  .file-chip .file-chip-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .file-chip.uploading { color: var(--text-muted); font-style: italic; }
+  .file-chip-remove {
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0;
+    flex-shrink: 0;
+  }
+  .file-chip-remove:hover { color: var(--danger); }
+
   /* Scrollbars */
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -1191,10 +1236,6 @@
     <div class="chat-header">
       <div class="title">Studio Chat<span id="chat-target-badge" class="chat-target-badge">Unit</span></div>
       <div class="actions">
-        <div class="mode-toggle" id="mode-toggle" title="Plan = the AI only drafts a plan. Work = the AI does the tasks.">
-          <button type="button" class="mode-btn" data-mode="plan" id="mode-plan-btn">Plan</button>
-          <button type="button" class="mode-btn active" data-mode="work" id="mode-work-btn">Work</button>
-        </div>
         <button class="ghost small" id="clear-chat-btn" title="Clear chat history (does not delete Units or Companies)">Clear</button>
         <button class="ghost small" id="new-session-btn">+ New</button>
       </div>
@@ -1203,9 +1244,18 @@
     <div class="chat-messages" id="chat-messages"></div>
 
     <div class="chat-input">
+      <div class="attached-files" id="attached-files" style="display:none;"></div>
       <div class="chat-input-inner">
         <textarea id="chat-input" rows="1" placeholder="Ask, build…  (Shift + Enter for new line)"></textarea>
         <button class="send-btn" id="send-btn">Send ↑</button>
+      </div>
+      <div class="chat-toolbar">
+        <div class="mode-toggle" id="mode-toggle" title="Plan = the AI only drafts a plan. Work = the AI does the tasks.">
+          <button type="button" class="mode-btn" data-mode="plan" id="mode-plan-btn">Plan</button>
+          <button type="button" class="mode-btn active" data-mode="work" id="mode-work-btn">Work</button>
+        </div>
+        <button type="button" class="ghost small" id="attach-btn" title="Attach a file — the AI will read it (txt, md, csv, json, docx, xlsx, pptx)">📎 Attach</button>
+        <input type="file" id="file-input" multiple style="display:none;">
       </div>
     </div>
   </aside>
@@ -1951,7 +2001,7 @@ function startRunPolling(runId, opts = {}) {
 // The main "send a message" flow — this is what the chat does
 async function sendMessage() {
   const text = chatInputEl.value.trim();
-  if (!text) return;
+  if (!text && !attachedFiles.length) return;
 
   chatInputEl.value = '';
   chatInputEl.style.height = 'auto';
@@ -1959,7 +2009,24 @@ async function sendMessage() {
   const emptyState = chatMessagesEl.querySelector('.chat-empty');
   if (emptyState) emptyState.remove();
 
-  appendMessage('user', text);
+  // Fold attached files' extracted content into what the AI actually
+  // sees, but keep the chat bubble showing what the founder typed
+  // (plus a note of which files were attached) — the raw preview dump
+  // would be unreadable noise in the transcript.
+  let effectiveText = text;
+  if (attachedFiles.length) {
+    const blocks = attachedFiles.map(f =>
+      `[Attached file: ${f.filename}]\n---\n${f.preview}\n---`
+    ).join('\n\n');
+    effectiveText = text ? `${blocks}\n\n${text}` : blocks;
+  }
+  const displayText = attachedFiles.length
+    ? `${text}${text ? '\n' : ''}📎 ${attachedFiles.map(f => f.filename).join(', ')}`
+    : text;
+
+  appendMessage('user', displayText);
+  attachedFiles = [];
+  renderAttachedFiles();
 
   try {
     // Router calls can be fast (casual_chat, add_unit) or take many
@@ -1981,7 +2048,7 @@ async function sendMessage() {
     // thing. Everything below is just plumbing the side_effects back
     // into the UI — no mode toggles, no wrong-path errors.
     const chatRes = await api('POST', `/api/chat`, {
-      message: text,
+      message: effectiveText,
       current_company_id: currentCompanyId || null,
       current_session_id: currentSessionId || null,
       mode: chatMode,
@@ -2436,6 +2503,74 @@ function setChatMode(m) {
 if (modePlanBtn) modePlanBtn.addEventListener('click', () => setChatMode('plan'));
 if (modeWorkBtn) modeWorkBtn.addEventListener('click', () => setChatMode('work'));
 applyModeUI();
+
+// ---- File upload ---------------------------------------------------
+// Founder attaches a file; it uploads immediately (not on Send), shows
+// as a chip, and its extracted text preview gets folded into the next
+// chat message so the AI actually sees the content, not just a name.
+let attachedFiles = []; // {file_id, filename, preview, download_url, stored_path}
+
+const attachBtn = $('attach-btn');
+const fileInputEl = $('file-input');
+const attachedFilesEl = $('attached-files');
+
+if (attachBtn && fileInputEl) {
+  attachBtn.addEventListener('click', () => fileInputEl.click());
+
+  fileInputEl.addEventListener('change', async () => {
+    const files = Array.from(fileInputEl.files || []);
+    fileInputEl.value = ''; // allow re-selecting the same file later
+    for (const file of files) {
+      const chip = document.createElement('span');
+      chip.className = 'file-chip uploading';
+      chip.innerHTML = `<span class="file-chip-name">Uploading ${escapeHtml(file.name)}…</span>`;
+      attachedFilesEl.style.display = '';
+      attachedFilesEl.appendChild(chip);
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await fetch('/api/uploads', { method: 'POST', body: formData });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.detail || `upload failed (HTTP ${res.status})`);
+        }
+        const data = await res.json();
+        attachedFiles.push(data);
+        renderAttachedFiles();
+      } catch (err) {
+        chip.remove();
+        appendMessage('assistant', `Couldn't attach ${file.name}: ${err.message}`);
+        if (!attachedFiles.length) attachedFilesEl.style.display = 'none';
+      }
+    }
+  });
+}
+
+function renderAttachedFiles() {
+  if (!attachedFilesEl) return;
+  attachedFilesEl.innerHTML = '';
+  if (!attachedFiles.length) {
+    attachedFilesEl.style.display = 'none';
+    return;
+  }
+  attachedFilesEl.style.display = '';
+  attachedFiles.forEach((f, i) => {
+    const chip = document.createElement('span');
+    chip.className = 'file-chip';
+    chip.innerHTML = `<span class="file-chip-name" title="${escapeHtml(f.filename)}">📄 ${escapeHtml(f.filename)}</span><button type="button" class="file-chip-remove" data-i="${i}" title="Remove">×</button>`;
+    attachedFilesEl.appendChild(chip);
+  });
+}
+
+if (attachedFilesEl) {
+  attachedFilesEl.addEventListener('click', (e) => {
+    const btn = e.target.closest('.file-chip-remove');
+    if (!btn) return;
+    const i = parseInt(btn.dataset.i, 10);
+    attachedFiles.splice(i, 1);
+    renderAttachedFiles();
+  });
+}
 
 // Clear-chat button — nukes local chat log ONLY (does not touch Units,
 // Companies, Employees, or pending actions on the server).

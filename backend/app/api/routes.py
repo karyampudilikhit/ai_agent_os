@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import os
 import uuid
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi.responses import FileResponse
 
 from backend.app.api.schemas import (
     AddMemberRequest,
@@ -1851,6 +1853,134 @@ def _fallthrough_response(side_effects: UniversalChatSideEffects) -> UniversalCh
         reply="I wasn't sure what to do with that. Try rephrasing.",
         side_effects=side_effects,
     )
+
+
+# ---------------------------------------------------------------------------
+# Workspace files — uploads (founder -> AI) and downloads (AI -> founder)
+#
+# Both sides of the same sandbox the action layer already writes into
+# (backend.app.actions.builtin._workspace). Uploads land under
+# workspace/uploads/<random>_<name>; generated documents
+# (create_pptx/docx/xlsx) land at the workspace root or wherever the
+# LLM named them. Download just streams anything inside that sandbox.
+# ---------------------------------------------------------------------------
+
+UPLOAD_SUBDIR = "uploads"
+MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # 15MB — generous for docs, not for video
+MAX_UPLOAD_PREVIEW_CHARS = 6000
+
+
+def _extract_upload_preview(path: Path, suffix: str) -> str:
+    """Best-effort text preview so the AI actually sees what's in the
+    file instead of just a filename. Unsupported/binary types get a
+    plain notice — the file still exists on disk and is still
+    referenceable, just not auto-read."""
+    suffix = suffix.lower()
+    try:
+        if suffix in (".txt", ".md", ".csv", ".json", ".log", ".yaml", ".yml"):
+            return path.read_text(encoding="utf-8", errors="replace")[:MAX_UPLOAD_PREVIEW_CHARS]
+        if suffix == ".docx":
+            import docx
+            d = docx.Document(str(path))
+            text = "\n".join(p.text for p in d.paragraphs if p.text.strip())
+            return text[:MAX_UPLOAD_PREVIEW_CHARS]
+        if suffix == ".xlsx":
+            import openpyxl
+            wb = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
+            lines: List[str] = []
+            for ws in wb.worksheets[:3]:
+                lines.append(f"= {ws.title} =")
+                for i, row in enumerate(ws.iter_rows(values_only=True)):
+                    if i >= 200:
+                        lines.append("... (truncated)")
+                        break
+                    lines.append(", ".join("" if c is None else str(c) for c in row))
+            return "\n".join(lines)[:MAX_UPLOAD_PREVIEW_CHARS]
+        if suffix == ".pptx":
+            from pptx import Presentation
+            prs = Presentation(str(path))
+            lines = []
+            for i, slide in enumerate(prs.slides, 1):
+                lines.append(f"--- Slide {i} ---")
+                for shape in slide.shapes:
+                    if getattr(shape, "has_text_frame", False):
+                        t = shape.text_frame.text.strip()
+                        if t:
+                            lines.append(t)
+            return "\n".join(lines)[:MAX_UPLOAD_PREVIEW_CHARS]
+    except Exception as exc:  # noqa: BLE001
+        return f"(could not extract a text preview: {exc})"
+    return "(binary file — no text preview available; the file is saved and can still be referenced by path)"
+
+
+@router.post("/uploads")
+async def upload_file(file: UploadFile = File(...)):
+    """Founder -> AI. Saves into workspace/uploads/, extracts a text
+    preview for known formats (txt/md/csv/json/docx/xlsx/pptx), and
+    returns enough for the frontend to fold the content into the next
+    chat message. PDF extraction is NOT yet supported — flagged in the
+    response so the founder isn't surprised."""
+    from backend.app.actions.builtin._workspace import workspace_root
+
+    root = workspace_root()
+    upload_dir = root / UPLOAD_SUBDIR
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    safe_name = os.path.basename(file.filename or "upload.bin")
+    file_id = uuid.uuid4().hex[:10]
+    stored_name = f"{file_id}_{safe_name}"
+    target = upload_dir / stored_name
+
+    size = 0
+    try:
+        with open(target, "wb") as f:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    f.close()
+                    target.unlink(missing_ok=True)
+                    raise HTTPException(413, f"File too large — max {MAX_UPLOAD_BYTES // (1024*1024)}MB")
+                f.write(chunk)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        target.unlink(missing_ok=True)
+        raise HTTPException(400, f"Upload failed: {exc}")
+
+    suffix = Path(safe_name).suffix
+    if suffix.lower() == ".pdf":
+        preview = "(PDF text extraction isn't supported yet — the file is saved, but its contents won't be auto-read into the chat.)"
+    else:
+        preview = _extract_upload_preview(target, suffix)
+    rel = target.relative_to(root)
+    return {
+        "file_id": file_id,
+        "filename": safe_name,
+        "stored_path": rel.as_posix(),
+        "size_bytes": size,
+        "preview": preview,
+        "download_url": f"/api/workspace/download/{rel.as_posix()}",
+    }
+
+
+@router.get("/workspace/download/{file_path:path}")
+def download_workspace_file(file_path: str):
+    """AI -> founder. Streams any file inside the sandboxed workspace
+    (generated documents, uploaded files) as a real download — this is
+    what turns 'Created deck.pptx' in the chat into a clickable link."""
+    from backend.app.actions.builtin._workspace import resolve_within, workspace_root
+
+    root = workspace_root()
+    try:
+        target = resolve_within(root, file_path)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    if not target.exists() or not target.is_file():
+        raise HTTPException(404, f"No such file: {file_path}")
+    return FileResponse(str(target), filename=target.name)
 
 
 @router.get("/units/usage")

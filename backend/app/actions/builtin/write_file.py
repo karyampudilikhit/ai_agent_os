@@ -11,31 +11,10 @@ next tier is Vision Desktop Agent for full-machine access.
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
 from typing import Any, Dict
 
 from backend.app.actions.action_registry import ActionSpec
-
-
-def _workspace_root() -> Path:
-    override = os.environ.get("VISION_WORKSPACE_DIR", "").strip()
-    if override:
-        root = Path(override).expanduser().resolve()
-    else:
-        root = Path(__file__).resolve().parents[4] / "workspace"
-    root.mkdir(parents=True, exist_ok=True)
-    return root
-
-
-def _resolve_within(root: Path, rel: str) -> Path:
-    """Resolve `rel` under `root` and reject any escape."""
-    candidate = (root / rel).resolve()
-    try:
-        candidate.relative_to(root)
-    except ValueError as exc:
-        raise ValueError(f"path escapes workspace: {rel!r}") from exc
-    return candidate
+from backend.app.actions.builtin._workspace import resolve_within, workspace_root
 
 
 def _handler(args: Dict[str, Any]) -> str:
@@ -43,9 +22,9 @@ def _handler(args: Dict[str, Any]) -> str:
     content = str(args.get("content") or "")
     if not rel:
         return "(missing 'path')"
-    root = _workspace_root()
+    root = workspace_root()
     try:
-        target = _resolve_within(root, rel)
+        target = resolve_within(root, rel)
     except ValueError as exc:
         return f"(rejected: {exc})"
     target.parent.mkdir(parents=True, exist_ok=True)

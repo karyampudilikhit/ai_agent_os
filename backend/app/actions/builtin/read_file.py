@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from backend.app.actions.action_registry import ActionSpec
-from backend.app.actions.builtin.write_file import _resolve_within, _workspace_root
+from backend.app.actions.builtin._workspace import resolve_within, workspace_root
 
 MAX_READ_BYTES = 200_000
 
@@ -18,9 +18,9 @@ def _handler(args: Dict[str, Any]) -> str:
     rel = str(args.get("path") or "").strip()
     if not rel:
         return "(missing 'path')"
-    root = _workspace_root()
+    root = workspace_root()
     try:
-        target = _resolve_within(root, rel)
+        target = resolve_within(root, rel)
     except ValueError as exc:
         return f"(rejected: {exc})"
     if not target.exists():
