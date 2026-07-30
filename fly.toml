@@ -4,7 +4,7 @@
 # Region `bom` = Mumbai (closest to Bengaluru / India). If you're not
 # in India change to sin/sfo/etc. — `flyctl platform regions` lists all.
 
-app = "vision-ai-CHANGE-ME"
+app = "neutron-ai"
 primary_region = "bom"
 
 [build]
