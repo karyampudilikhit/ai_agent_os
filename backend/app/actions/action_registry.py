@@ -47,6 +47,20 @@ class ActionSpec:
     handler: Callable[[Dict[str, Any]], str]
     preview: Callable[[Dict[str, Any]], str]
     mutating: bool = True
+    # True for tools whose whole point is to carry a large, carefully
+    # written deliverable (a full slide deck, a full document) as their
+    # arguments. The MCPPlanner's pre-flight tool-call step happens
+    # BEFORE a specialist has written anything — asking it to also
+    # freehand 5 slides of real content in one cramped, token-capped
+    # JSON blob produces empty/placeholder output (confirmed: this is
+    # exactly what create_pptx got the first time it was wired in —
+    # every slide came back as {} and rendered as "Slide 1", "Slide 2"
+    # with zero bullets). These tools are still directly callable
+    # (registry.call), just hidden from the planner's tool listing;
+    # the real path to a real file is the post-synthesis auto-convert
+    # in routes._maybe_generate_document, which works off the
+    # specialist's ALREADY-WRITTEN, properly-reasoned deliverable text.
+    planner_excluded: bool = False
 
     def qualified_name(self) -> str:
         return f"{CONNECTION_NAMESPACE}.{self.name}"
@@ -69,9 +83,15 @@ class ActionRegistry:
 
     # ---- discovery (MCP-shape) -------------------------------------
 
-    def list_tools(self) -> List[Dict[str, Any]]:
+    def list_tools(self, for_planner: bool = False) -> List[Dict[str, Any]]:
+        """for_planner=True hides tools marked planner_excluded — see
+        ActionSpec.planner_excluded for why. GET /api/actions (the
+        founder-visible listing) always calls this with the default,
+        so every registered action still shows up there."""
         out: List[Dict[str, Any]] = []
         for spec in self._actions.values():
+            if for_planner and spec.planner_excluded:
+                continue
             properties: Dict[str, Dict[str, str]] = {}
             required: List[str] = []
             for p in spec.parameters:

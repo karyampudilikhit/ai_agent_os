@@ -98,4 +98,5 @@ SPEC = ActionSpec(
     handler=_handler,
     preview=_preview,
     mutating=False,
+    planner_excluded=True,
 )

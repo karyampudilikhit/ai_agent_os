@@ -106,4 +106,9 @@ SPEC = ActionSpec(
     handler=_handler,
     preview=_preview,
     mutating=False,
+    # See ActionSpec.planner_excluded — the pre-flight planner call
+    # can't be trusted to freehand a whole deck's content. Real files
+    # get made by routes._maybe_generate_document converting the
+    # specialist's finished deliverable instead.
+    planner_excluded=True,
 )

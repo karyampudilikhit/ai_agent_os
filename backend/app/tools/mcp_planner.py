@@ -84,7 +84,13 @@ class MCPPlanner:
         registry = get_registry()
         mcp_tools = registry.list_all_tools()
         http_tools = _http_runner.list_tools()
-        action_tools = _action_registry.list_tools()
+        # for_planner=True hides tools that carry a whole deliverable's
+        # worth of content as arguments (create_pptx/docx/xlsx) — this
+        # pre-flight call happens before any specialist has written
+        # real content, so asking it to freehand slide/document text
+        # here produces empty placeholders. Those tools get invoked
+        # separately, after synthesis, from the actual finished text.
+        action_tools = _action_registry.list_tools(for_planner=True)
         tools = mcp_tools + http_tools + action_tools
         if not tools:
             return None

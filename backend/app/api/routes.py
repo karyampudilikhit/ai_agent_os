@@ -1743,6 +1743,68 @@ def _dispatch_plan(
     )
 
 
+PPTX_TRIGGER_WORDS = ("pptx", "powerpoint", "power point", "slide deck", "pitch deck")
+DOCX_TRIGGER_WORDS = ("docx", "word doc", "word document")
+XLSX_TRIGGER_WORDS = ("xlsx", "excel", "spreadsheet")
+
+
+def _slugify_filename(text: str, max_len: int = 40) -> str:
+    import re as _re
+    slug = _re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
+    return (slug[:max_len] or "deliverable")
+
+
+def _maybe_generate_document(task: str, final_output: str) -> str:
+    """Deterministic post-synthesis conversion — no LLM call. If the
+    task text asked for a specific file format, convert the ALREADY
+    -WRITTEN deliverable into a real pptx/docx/xlsx and append a
+    download link. Returns '' if no format was requested (the common
+    case) so callers can blindly append the result.
+
+    This exists because asking the LLM to freehand full document
+    content inside the pre-flight tool-call step produced empty
+    placeholder output (see ActionSpec.planner_excluded). Converting
+    the finished, properly-reasoned text sidesteps that entirely."""
+    from backend.app.actions.builtin import create_pptx, create_docx, create_xlsx
+    from backend.app.actions.builtin._markdown_convert import (
+        markdown_to_pptx_slides, markdown_to_xlsx_table,
+    )
+
+    task_lower = task.lower()
+    base_name = _slugify_filename(task[:60]) or "deliverable"
+    notes: List[str] = []
+
+    if any(kw in task_lower for kw in PPTX_TRIGGER_WORDS):
+        title, slides = markdown_to_pptx_slides(final_output, fallback_title=task[:80])
+        if slides:
+            result = create_pptx._handler({
+                "filename": f"{base_name}.pptx", "title": title, "slides": slides,
+            })
+            notes.append(result)
+        else:
+            notes.append("(Asked for a .pptx, but the deliverable had no clear slide structure to convert — no file created.)")
+
+    if any(kw in task_lower for kw in DOCX_TRIGGER_WORDS):
+        result = create_docx._handler({
+            "filename": f"{base_name}.docx", "title": task[:80], "content": final_output,
+        })
+        notes.append(result)
+
+    if any(kw in task_lower for kw in XLSX_TRIGGER_WORDS):
+        headers, rows = markdown_to_xlsx_table(final_output)
+        if headers:
+            result = create_xlsx._handler({
+                "filename": f"{base_name}.xlsx", "headers": headers, "rows": rows,
+            })
+            notes.append(result)
+        else:
+            notes.append("(Asked for a .xlsx, but the deliverable had no table to export — no file created.)")
+
+    if not notes:
+        return ""
+    return "\n\n---\n📎 **Generated file(s):**\n" + "\n".join(f"- {n}" for n in notes)
+
+
 def _dispatch_run(
     *,
     intent: str,
@@ -1792,8 +1854,12 @@ def _dispatch_run(
             result = run_task_on_company(company_id, CompanyRunRequest(task=effective_task))
             # Clear the plan once executed so it doesn't leak into the next task.
             plan_store.clear(PlanStore.key_for(company_id=company_id))
-            return (result.final_output or "",
-                    [e.model_dump() for e in (result.evidence or [])])
+            output = result.final_output or ""
+            try:
+                output += _maybe_generate_document(task, output)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[warn] document auto-generation failed: {exc}")
+            return (output, [e.model_dump() for e in (result.evidence or [])])
 
         submit_run(run_id, _company_work)
         side_effects.run_id = run_id
@@ -1830,8 +1896,12 @@ def _dispatch_run(
     def _unit_work():
         result = run_task_on_team(_sid, RunTaskRequest(task=_task))
         plan_store.clear(PlanStore.key_for(session_id=_sid))
-        return (result.final_output or "",
-                [e.model_dump() for e in (result.evidence or [])])
+        output = result.final_output or ""
+        try:
+            output += _maybe_generate_document(task, output)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[warn] document auto-generation failed: {exc}")
+        return (output, [e.model_dump() for e in (result.evidence or [])])
 
     submit_run(run_id, _unit_work)
     side_effects.run_id = run_id
