@@ -142,16 +142,22 @@ INTENTS — pick exactly one and fill only its fields:
   selected. Signals: "launch our...", "find clients for our...", "have
   the whole company work on...", explicit mention of the CEO or
   multiple Units. Fields:
-    - task  (string; the raw task text)
+    - task  (string; OMIT this field or set it to "" — the caller
+      already has the original message, echoing it back wastes tokens
+      and truncates the JSON on long inputs)
 
 - "run_task_unit": DEFAULT for any task-shaped message when there is no
   Company selected, or when the founder didn't ask for a Company/CEO —
   just a single small team job. Triggers: "run market research on X",
-  "write me a...", "draft an email to...", "summarize...", any task
-  that doesn't need cross-Unit coordination. Auto-creates a Unit if
-  none is selected — the founder doesn't need to know what a Unit is.
+  "write me a...", "draft an email to...", "summarize...", "draft me
+  a plan for...", "create a...", "design a...", any request for a
+  concrete piece of work regardless of length or number of sub-points.
+  Auto-creates a Unit if none is selected — the founder doesn't need
+  to know what a Unit is.
   Fields:
-    - task  (string)
+    - task  (string; OMIT this field or set it to "" — the caller
+      already has the original message, echoing it back wastes tokens
+      and truncates the JSON on long inputs)
 
 - "casual_chat": greeting, question about the app, thanks, or anything
   that doesn't need a side effect. Fields:
@@ -181,7 +187,12 @@ class UniversalChatRouter:
                     state_snapshot=state_snapshot, message=message
                 ),
                 temperature=0.1,
-                max_tokens=600,
+                # 900 is deliberately generous — the classifier only
+                # emits a small JSON blob, but on very long inputs some
+                # models still try to echo big chunks back into the
+                # `task` field even after we tell them not to. This
+                # gives us headroom before the response gets truncated.
+                max_tokens=900,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("chat router LLM call failed: %s", exc)
@@ -197,6 +208,11 @@ class UniversalChatRouter:
         parsed = _extract_json(raw) or {}
         intent = str(parsed.get("intent") or "").strip()
         if intent not in VALID_INTENTS:
+            logger.warning(
+                "chat router returned invalid/unparseable intent %r. "
+                "Raw response (first 500 chars): %s",
+                intent, (raw or "")[:500].replace("\n", " ")
+            )
             return {
                 "intent": "casual_chat",
                 "reply": (
@@ -269,6 +285,12 @@ _JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
 
 
 def _extract_json(text: str) -> Optional[Dict[str, Any]]:
+    """Parse the model's JSON response, with two rounds of tolerance:
+    (1) strip code fences and try, (2) crop to the outermost {...}
+    and try again, (3) if we hit a truncation (unterminated string
+    or missing closing braces from max_tokens cutoff), synthesize the
+    closers and try one more time — better a partial classification
+    than a dead 'I wasn't sure what you meant' fallback."""
     if not text:
         return None
     stripped = text.strip()
@@ -281,6 +303,33 @@ def _extract_json(text: str) -> Optional[Dict[str, Any]]:
     if s >= 0 and e > s:
         try:
             return json.loads(stripped[s : e + 1])
+        except json.JSONDecodeError:
+            pass
+    # Truncated JSON — the response ran out of tokens mid-string.
+    # Try to close the last open string, then close any open braces.
+    if s >= 0:
+        candidate = stripped[s:]
+        # If we're inside an unterminated string, close it.
+        quotes = 0
+        escape = False
+        for ch in candidate:
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch == '"':
+                quotes += 1
+        if quotes % 2 == 1:
+            candidate += '"'
+        # Balance braces.
+        opens = candidate.count("{")
+        closes = candidate.count("}")
+        if opens > closes:
+            candidate += "}" * (opens - closes)
+        try:
+            return json.loads(candidate)
         except json.JSONDecodeError:
             return None
     return None
