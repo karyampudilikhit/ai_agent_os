@@ -1147,13 +1147,24 @@ def universal_chat(req: UniversalChatRequest) -> UniversalChatResponse:
     if pending_clar:
         clarifier = Clarifier(model_adapter=pipeline.adapter)
         updated = clar_store.append_answer(clar_key, req.message)
+        context = _build_clarifier_context(
+            current_company=current_company,
+            session_id=req.current_session_id,
+            clar_key=clar_key,
+        )
         result = clarifier.next_step(
             original_task=updated["task"],
             questions_asked=updated["questions"],
             answers=updated["answers"],
+            context=context,
         )
         if result["ready"] or not result["questions"]:
-            # Enough context — enrich the original task and dispatch
+            # Enough context — enrich the original task and dispatch.
+            # Persist the (Q, A) pairs to cross-turn memory FIRST so
+            # the next task in this session still sees them.
+            clar_store.record_qa(
+                clar_key, updated["questions"], updated["answers"],
+            )
             enriched_task = enrich_task_with_qa(
                 updated["task"], updated["questions"], updated["answers"],
             )
@@ -1242,8 +1253,16 @@ def universal_chat(req: UniversalChatRequest) -> UniversalChatResponse:
     # ================================================================
     if intent in ("run_task_unit", "run_task_company"):
         task_str = str(verdict.get("task") or req.message).strip()
+        # Remember this raw prompt so 'this / that / the plan' in the
+        # NEXT turn can resolve via clarifier context.
+        clar_store.record_prompt(clar_key, req.message)
         clarifier = Clarifier(model_adapter=pipeline.adapter)
-        initial = clarifier.initial_questions(task_str)
+        context = _build_clarifier_context(
+            current_company=current_company,
+            session_id=req.current_session_id,
+            clar_key=clar_key,
+        )
+        initial = clarifier.initial_questions(task_str, context=context)
         if initial["questions"] and not initial["ready"]:
             clar_store.set(
                 clar_key,
@@ -1805,6 +1824,69 @@ def _maybe_generate_document(task: str, final_output: str) -> str:
     return "\n\n---\n📎 **Generated file(s):**\n" + "\n".join(f"- {n}" for n in notes)
 
 
+# How much of a prior deliverable the clarifier gets to read. Long
+# enough to carry the names/labels the founder will refer to next.
+CLARIFIER_SNIPPET_CHARS = 2500
+
+
+def _build_clarifier_context(
+    *,
+    current_company: Optional[Dict[str, Any]],
+    session_id: Optional[str],
+    clar_key: str,
+) -> Dict[str, Any]:
+    """Assemble the context the Clarifier reads on every call.
+
+    Three feeds — each closes a specific 'why is it asking me that
+    again' bug the founder reported:
+      1. Company purpose  → clarifier stops re-asking who/what the
+         founder builds when a Company is already loaded.
+      2. Recent deliverables (last 2 completed runs on this session
+         or company)  → 'give me a script for THIS video idea' can
+         resolve to whatever the last run produced.
+      3. Prior Q&A memory (across turns)  → an answer given two
+         turns ago about audience still counts as answered today.
+    """
+    company_purpose = ""
+    if current_company:
+        parts = []
+        name = str(current_company.get("name") or "").strip()
+        if name:
+            parts.append(f"{name}")
+        purpose = str(current_company.get("purpose") or "").strip()
+        if purpose:
+            parts.append(purpose)
+        desc = str(current_company.get("description") or "").strip()
+        if desc and desc != purpose:
+            parts.append(desc)
+        company_purpose = " — ".join(parts)
+
+    recent = get_run_store().list_recent_done(
+        session_id=session_id,
+        company_id=(current_company or {}).get("id"),
+        limit=2,
+    )
+    recent_deliverables: List[Dict[str, str]] = []
+    for r in recent:
+        # Generous snippet — a personas / ideas deliverable buries the
+        # names the founder will refer to next ("each persona", "the
+        # Finance-Free Friday one") well past the first few hundred
+        # chars. Truncating too early is what makes the clarifier ask
+        # "which personas?" about personas it just wrote.
+        recent_deliverables.append({
+            "task": str(r.get("task") or ""),
+            "snippet": str(r.get("output") or "")[:CLARIFIER_SNIPPET_CHARS],
+        })
+
+    mem = get_clarification_store().get_memory(clar_key)
+    return {
+        "company_purpose": company_purpose,
+        "recent_deliverables": recent_deliverables,
+        "prior_qa": mem.get("prior_qa") or [],
+        "last_user_prompt": mem.get("last_user_prompt") or "",
+    }
+
+
 def _dispatch_run(
     *,
     intent: str,
@@ -1848,7 +1930,12 @@ def _dispatch_run(
                 f"{stored_plan['task']}\n\n"
                 f"APPROVED PLAN — execute this delegation:\n{stored_plan['plan_markdown']}"
             )
-        run_id = get_run_store().create(intent=intent, company_id=company_id, task=effective_task)
+        run_id = get_run_store().create(
+            intent=intent,
+            company_id=company_id,
+            session_id=current_session_id,
+            task=effective_task,
+        )
 
         def _company_work():
             result = run_task_on_company(company_id, CompanyRunRequest(task=effective_task))
@@ -1889,7 +1976,16 @@ def _dispatch_run(
             f"{stored_plan['task']}\n\n"
             f"APPROVED PLAN — execute this delegation:\n{stored_plan['plan_markdown']}"
         )
-    run_id = get_run_store().create(intent="run_task_unit", session_id=session_id, task=effective_task)
+    # Tag the run with BOTH scopes. A Unit run launched while a Company
+    # is selected must still be findable by company_id — otherwise the
+    # next turn's clarifier can't see the deliverable it just produced
+    # ("give me a message for each persona" -> "which personas?").
+    run_id = get_run_store().create(
+        intent="run_task_unit",
+        session_id=session_id,
+        company_id=(current_company or {}).get("id"),
+        task=effective_task,
+    )
     _sid = session_id
     _task = effective_task
 

@@ -1,2777 +1,1270 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Vision AI — Playground</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Vision AI — The AI co-founder, hired in 90 seconds.</title>
+<meta name="description" content="Vision AI is an AI co-founder for solo founders. Spins up a Company of AI employees — Supervisor plus specialists — that actually do the work with a founder-approval gate on every irreversible action. No fabricated evidence." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 <style>
   :root {
-    /* Warm stone neutrals — softer than pure white/grey, easier on eyes */
-    --bg: #fafaf9;
-    --bg-2: #f5f5f4;
-    --panel: #ffffff;
-    --panel-2: #fafaf9;
-    --panel-3: #f5f5f4;
-    --border: #e7e5e4;
-    --border-strong: #d6d3d1;
-    --text: #1c1917;
-    --text-muted: #78716c;
+    /* Palette taken straight from the app's dark theme so the marketing
+       page and the playground read as one product. Crimson accent =
+       app's --accent-2 (#b83043) for a slightly brighter feel on the
+       marketing hero, with the app's --accent (#8b1e2f) for hovers. */
+    --bg: #0c0c0c;
+    --surface: #191919;
+    --surface-2: #1e1e1e;
+    --surface-3: #262626;
+    --border: #2a2a2a;
+    --border-strong: #3a3a3a;
+    --text: #f5f5f4;
     --text-dim: #a8a29e;
-    /* Deep metallic red — near-burgundy base + oxblood highlight.
-       Reads as aged wine / leather-book leather. The dark stop stays
-       above pure black so the gradient still shows a sheen. */
-    --accent: #5c0f1a;
-    --accent-2: #8b1e2f;
-    --accent-fg: #ffffff;
-    --accent-soft: rgba(92, 15, 26, 0.09);
-    /* Semantic colors — desaturated to match minimal palette. Danger
-       shifted to orange-red so error states don't blur into the
-       metallic-red accent. */
-    --ok: #4d7c0f;
-    --warn: #a16207;
-    --danger: #c2410c;
-    --info: #0369a1;
-    /* Softer shadows — no strong drop-shadow feel */
-    --shadow-sm: 0 1px 2px rgba(28, 25, 23, 0.04);
-    --shadow-md: 0 2px 6px rgba(28, 25, 23, 0.04), 0 12px 32px -16px rgba(28, 25, 23, 0.08);
+    --text-muted: #78716c;
+    --accent: #b83043;
+    --accent-dim: #8b1e2f;
+    --accent-soft: rgba(139, 30, 47, 0.16);
+    --accent-glow: rgba(184, 48, 67, 0.42);
+    --success: #7dd3fc;
+    --warn: #eab308;
+    --serif: 'Instrument Serif', 'New York', Georgia, serif;
+    --sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
   }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      /* Warm off-black — softer than pure #000, less clinical */
-      --bg: #0c0c0c;
-      --bg-2: #131313;
-      --panel: #191919;
-      --panel-2: #1e1e1e;
-      --panel-3: #262626;
-      --border: #2a2a2a;
-      --border-strong: #3a3a3a;
-      --text: #f5f5f4;
-      --text-muted: #a8a29e;
-      --text-dim: #78716c;
-      /* Deeper metallic red for dark mode — pulled down but kept
-         above the point where it merges with the near-black
-         background. Highlight stop stays crimson so the gradient
-         still shows a sheen. */
-      --accent: #8b1e2f;
-      --accent-2: #b83043;
-      --accent-soft: rgba(139, 30, 47, 0.16);
-      --info: #7dd3fc;
-      --shadow-sm: 0 1px 2px rgba(0,0,0,0.35);
-      --shadow-md: 0 2px 6px rgba(0,0,0,0.35), 0 12px 32px -16px rgba(0,0,0,0.55);
-      color-scheme: dark;
-    }
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; height: 100vh; overflow: hidden; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+  *,*::before,*::after { box-sizing: border-box; }
+  html,body {
+    margin:0; padding:0;
     background: var(--bg);
     color: var(--text);
+    font-family: var(--sans);
+    font-size: 16px;
     line-height: 1.55;
-    font-size: 14px;
     -webkit-font-smoothing: antialiased;
-    letter-spacing: -0.005em;
+    text-rendering: optimizeLegibility;
+    overflow-x: hidden;
   }
+  ::selection { background: var(--accent); color: var(--bg); }
+  a { color: inherit; text-decoration: none; }
+  button { font-family: inherit; cursor: pointer; }
 
-  /* ---------- App layout ---------- */
-  .app {
-    display: grid;
-    grid-template-columns: 340px 1fr 340px;
-    grid-template-rows: 56px 1fr;
-    grid-template-areas:
-      "header  header  header"
-      "left    center  right";
-    height: 100vh;
+  /* ================ NAV ================ */
+  nav.top {
+    position: fixed; top: 0; left: 0; right: 0;
+    z-index: 50;
+    padding: 18px 40px;
+    display: flex; align-items: center; justify-content: space-between;
+    transition: background .3s ease, backdrop-filter .3s ease, border-color .3s ease;
+    border-bottom: 1px solid transparent;
   }
-
-  /* Header */
-  header {
-    grid-area: header;
-    padding: 0 24px;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 20px;
-    background: var(--bg);
-  }
-  header .brand { display: flex; align-items: center; gap: 12px; }
-  .brand-mark {
-    width: 28px; height: 28px;
-    border-radius: 8px;
-    background: linear-gradient(135deg, var(--accent), var(--accent-2));
-    display: flex; align-items: center; justify-content: center;
-    color: white; font-weight: 700; font-size: 13px;
-  }
-  .brand h1 { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.2; }
-  .brand .subtitle { color: var(--text-muted); font-size: 12.5px; }
-  header .header-status {
-    font-size: 12.5px;
-    color: var(--text-muted);
-    display: flex; align-items: center; gap: 8px;
-  }
-  header .pulse {
-    width: 7px; height: 7px; border-radius: 50%;
-    background: var(--info);
-    animation: pulse 1.4s ease-in-out infinite;
-    display: none;
-  }
-  header.busy .pulse { display: inline-block; }
-  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
-
-  /* ---------- LEFT: Studio Chat ---------- */
-  .left {
-    grid-area: left;
-    background: var(--bg-2);
-    border-right: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-  }
-  .chat-header {
-    padding: 14px 18px 10px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+  nav.top.scrolled {
+    background: rgba(10,10,11,0.78);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
     border-bottom: 1px solid var(--border);
   }
-  .chat-header .title {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text);
+  nav .brand {
+    font-family: var(--serif);
+    font-size: 22px;
+    letter-spacing: -0.01em;
+    display: flex; align-items: center; gap: 10px;
   }
-  .chat-header .actions { display: flex; gap: 6px; align-items: center; }
-
-  .chat-messages {
-    flex: 1;
-    overflow-y: auto;
-    padding: 16px 16px 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    min-height: 0;
-  }
-
-  .msg {
-    max-width: 90%;
-    padding: 10px 14px;
-    border-radius: 12px;
-    font-size: 13px;
-    line-height: 1.5;
-    animation: msg-in 0.2s ease-out;
-  }
-  @keyframes msg-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-  .msg.user {
-    align-self: flex-end;
+  nav .brand-dot {
+    width: 9px; height: 9px; border-radius: 50%;
     background: var(--accent);
-    color: white;
-    border-bottom-right-radius: 4px;
+    box-shadow: 0 0 12px var(--accent-glow);
+    animation: pulse 2.4s ease-in-out infinite;
+    flex: none;
   }
-  .msg.assistant {
-    align-self: flex-start;
-    background: var(--panel-2);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-bottom-left-radius: 4px;
-  }
-  .msg.assistant.status {
-    background: transparent;
+  @keyframes pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .6; transform: scale(.85); } }
+  nav .links { display: flex; gap: 32px; font-size: 14px; color: var(--text-dim); }
+  nav .links a:hover { color: var(--text); }
+  nav .cta {
+    background: var(--text); color: var(--bg);
+    padding: 9px 18px; border-radius: 999px;
+    font-size: 14px; font-weight: 500;
     border: none;
-    padding: 4px 4px;
-    color: var(--text-muted);
-    font-size: 12.5px;
-    max-width: 100%;
+    transition: transform .15s ease, background .15s ease;
   }
-  .msg-steps { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
-  .step {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 12.5px;
-    color: var(--text-muted);
-  }
-  .step .icon {
-    width: 14px; height: 14px;
-    border-radius: 50%;
-    border: 1.5px solid var(--text-dim);
-    background: transparent;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 9px;
-    flex-shrink: 0;
-    color: transparent;
-  }
-  .step.working .icon {
-    border-color: var(--info);
-    color: var(--info);
-    animation: pulse 1.4s ease-in-out infinite;
-  }
-  .step.working .icon::before { content: '●'; font-size: 8px; }
-  .step.done .icon {
-    background: var(--ok);
-    border-color: var(--ok);
-    color: white;
-  }
-  .step.done .icon::before { content: '✓'; font-size: 9px; font-weight: 700; }
-  .step.done { color: var(--text); }
-
-  .chat-input {
-    padding: 12px 16px 16px;
-    border-top: 1px solid var(--border);
-    background: var(--bg-2);
-  }
-  .chat-input-inner {
-    display: flex;
-    gap: 8px;
-    align-items: flex-end;
-    background: var(--panel);
-    border: 1px solid var(--border-strong);
-    border-radius: 12px;
-    padding: 8px 8px 8px 14px;
-    box-shadow: var(--shadow-sm);
-    transition: border-color 0.14s, box-shadow 0.14s;
-  }
-  .chat-input-inner:focus-within {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-soft);
-  }
-  .chat-input textarea {
-    flex: 1;
-    background: transparent;
-    border: none;
-    padding: 6px 0;
-    font-size: 13.5px;
-    font-family: inherit;
-    resize: none;
-    min-height: 24px;
-    max-height: 140px;
-    line-height: 1.5;
-    color: var(--text);
-  }
-  .chat-input textarea:focus { outline: none; }
-  .chat-input textarea::placeholder { color: var(--text-dim); }
-
-  .chat-empty {
-    text-align: center;
-    color: var(--text-dim);
-    font-size: 13px;
-    padding: 40px 20px;
-    line-height: 1.6;
+  nav .cta:hover { transform: translateY(-1px); background: #fff; }
+  @media (max-width: 720px) {
+    nav.top { padding: 14px 20px; }
+    nav .links { display: none; }
   }
 
-  /* ---------- Buttons / inputs ---------- */
-  button {
-    font-family: inherit;
-    font-size: 13px;
-    font-weight: 600;
-    background: var(--accent);
-    color: var(--accent-fg);
-    border: none;
-    border-radius: 8px;
-    padding: 8px 14px;
-    cursor: pointer;
-    transition: filter 0.14s, transform 0.05s;
-    letter-spacing: -0.005em;
-  }
-  button:hover { filter: brightness(1.06); }
-  button:active { transform: translateY(1px); }
-  button:disabled { opacity: 0.4; cursor: not-allowed; filter: none; transform: none; }
-  button.secondary {
-    background: var(--panel);
-    color: var(--text);
-    border: 1px solid var(--border-strong);
-    font-weight: 500;
-  }
-  button.secondary:hover { background: var(--panel-2); }
-  button.ghost {
-    background: transparent;
-    border: 1px solid var(--border);
-    color: var(--text-muted);
-    font-weight: 500;
-  }
-  button.ghost:hover { color: var(--text); border-color: var(--border-strong); background: var(--panel); }
-  button.small { padding: 4px 10px; font-size: 12px; }
-  button.icon {
-    background: transparent;
-    color: var(--text-dim);
-    padding: 2px 8px;
-    font-size: 15px;
-    font-weight: 400;
-    line-height: 1;
-    border-radius: 4px;
-  }
-  button.icon:hover { color: var(--danger); background: transparent; }
-  button.send-btn { padding: 8px 14px; border-radius: 8px; }
-
-  input, textarea, select {
-    font-family: inherit;
-    font-size: 13px;
-    color: var(--text);
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 8px 11px;
-    width: 100%;
-    transition: border-color 0.14s;
-  }
-  input::placeholder, textarea::placeholder { color: var(--text-dim); }
-  input:focus, textarea:focus, select:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-soft);
-  }
-  textarea { resize: vertical; min-height: 56px; line-height: 1.5; font-family: inherit; }
-
-  /* ---------- CENTER: Canvas ---------- */
-  .center {
-    grid-area: center;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    background: var(--bg);
-  }
-  .tabs {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    padding: 12px 24px 0;
-    border-bottom: 1px solid var(--border);
-  }
-  .tab {
-    background: transparent;
-    color: var(--text-muted);
-    border: none;
-    padding: 8px 14px;
-    font-weight: 500;
-    font-size: 13px;
-    border-radius: 8px 8px 0 0;
+  /* ================ HERO ================ */
+  section.hero {
+    min-height: 100vh;
+    display: flex; flex-direction: column; justify-content: center;
+    padding: 120px 40px 60px;
     position: relative;
-    top: 1px;
-    border-bottom: 2px solid transparent;
-    cursor: pointer;
-    letter-spacing: -0.005em;
-  }
-  .tab:hover { color: var(--text); background: transparent; filter: none; }
-  .tab.active {
-    color: var(--text);
-    border-bottom-color: var(--accent);
-    font-weight: 600;
-  }
-  .tab .dot {
-    display: none;
-    width: 6px; height: 6px;
-    border-radius: 50%;
-    background: var(--accent);
-    margin-left: 6px;
-    vertical-align: middle;
-  }
-  .tab.has-new .dot { display: inline-block; }
-  .tabs .spacer { flex: 1; }
-  .canvas-count { font-size: 12px; color: var(--text-dim); padding-right: 6px; }
-
-  .canvas-body {
-    flex: 1;
-    overflow: auto;
-    padding: 28px 32px;
-    background:
-      radial-gradient(circle at 12px 12px, var(--border) 1px, transparent 1px) 0 0 / 20px 20px,
-      var(--bg);
-    position: relative;
-  }
-  .canvas-body.hidden { display: none; }
-
-  /* Flow layout — sequential horizontal chain of employees */
-  .flow-container {
-    display: flex;
-    align-items: stretch;
-    gap: 32px;
-    flex-wrap: wrap;
-  }
-  .flow-container.empty { justify-content: center; }
-
-  .emp-node {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 14px;
-    position: relative;
-    width: 240px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    animation: card-in 0.3s ease-out;
-    transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
-    box-shadow: var(--shadow-sm);
-  }
-  /* Arrow between adjacent nodes in the flow */
-  .emp-node:not(:last-child)::after {
-    content: '';
-    position: absolute;
-    right: -32px;
-    top: 50%;
-    width: 32px;
-    height: 2px;
-    background: var(--border-strong);
-    transform: translateY(-1px);
-  }
-  .emp-node:not(:last-child)::before {
-    content: '';
-    position: absolute;
-    right: -12px;
-    top: 50%;
-    width: 0; height: 0;
-    border-left: 8px solid var(--border-strong);
-    border-top: 5px solid transparent;
-    border-bottom: 5px solid transparent;
-    transform: translateY(-5px);
-    z-index: 1;
-  }
-  @keyframes card-in {
-    from { opacity: 0; transform: translateY(6px) scale(0.98); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
-  }
-  .emp-node:hover { border-color: var(--border-strong); }
-  .emp-node.is-working {
-    border-color: var(--info);
-    box-shadow: 0 0 0 1px var(--info), 0 0 24px -8px rgba(37, 99, 235, 0.5);
-  }
-  .emp-node.has-result { border-color: rgba(22, 163, 74, 0.4); }
-  .emp-node.has-fabrication { border-color: rgba(217, 119, 6, 0.4); }
-  /* Arrow line color when the source has completed */
-  .emp-node.has-result:not(:last-child)::after,
-  .emp-node.has-result:not(:last-child)::before {
-    background: var(--ok);
-    border-left-color: var(--ok);
-  }
-
-  .emp-node .top {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 8px;
-  }
-  .emp-node .top-left {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-width: 0;
-    flex: 1;
-  }
-  .emp-node .avatar {
-    width: 32px; height: 32px;
-    border-radius: 8px;
-    background: linear-gradient(135deg, var(--accent), var(--accent-2));
-    color: white;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 12px;
-    font-weight: 700;
-    flex-shrink: 0;
-  }
-  .emp-node.is-working .avatar {
-    background: linear-gradient(135deg, var(--info), #7dd3fc);
-    animation: avatar-pulse 1.6s ease-in-out infinite;
-  }
-  @keyframes avatar-pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.06)} }
-
-  /* Supervisor is visually distinct — sits at the front of the flow */
-  .emp-node.is-supervisor {
-    background: linear-gradient(180deg, var(--accent-soft), var(--panel));
-    border-color: var(--accent);
-  }
-  .emp-node.is-supervisor .avatar {
-    background: linear-gradient(135deg, #eab308, #ca8a04);
-  }
-  .emp-node.is-supervisor .role-badge {
-    display: inline-block;
-    background: var(--accent);
-    color: white;
-    font-size: 9.5px;
-    font-weight: 700;
-    padding: 1px 6px;
-    border-radius: 4px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    margin-left: 6px;
-    vertical-align: middle;
-  }
-  .team-list-item.is-supervisor .mini-avatar {
-    background: linear-gradient(135deg, #eab308, #ca8a04);
-  }
-  .team-list-item.is-supervisor .role::after {
-    content: 'SUPERVISOR';
-    font-size: 9px;
-    font-weight: 700;
-    color: var(--accent);
-    letter-spacing: 0.06em;
-    margin-left: 6px;
-  }
-
-  /* Connectors */
-  .connector-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 10px;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    margin-bottom: 6px;
-    font-size: 12.5px;
-  }
-  .connector-item .name { flex: 1; font-weight: 600; color: var(--text); }
-  .connector-item .tool-count { color: var(--text-dim); font-size: 11px; font-family: ui-monospace, monospace; }
-  .connector-item.disabled { opacity: 0.5; }
-  #connectors-form input { margin-bottom: 6px; font-size: 12.5px; }
-  #connectors-form button { width: 100%; margin-top: 4px; }
-  .emp-node .role-name {
-    font-weight: 600;
-    font-size: 13.5px;
-    color: var(--text);
-    line-height: 1.25;
     overflow: hidden;
-    text-overflow: ellipsis;
+  }
+  .hero-grain {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(1200px 600px at 20% -10%, var(--accent-soft), transparent 60%),
+      radial-gradient(900px 500px at 90% 110%, rgba(125,190,122,0.06), transparent 60%);
+    pointer-events: none;
+  }
+  .hero-wrap {
+    max-width: 1200px; margin: 0 auto; width: 100%;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 60px;
+    align-items: center;
+    position: relative; z-index: 1;
+  }
+  @media (max-width: 960px) {
+    .hero-wrap { grid-template-columns: 1fr; gap: 48px; }
+  }
+  .hero-eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 12px;
+    color: var(--text-dim);
+    padding: 6px 12px; border: 1px solid var(--border);
+    border-radius: 999px;
+    margin-bottom: 28px;
+  }
+  .hero-eyebrow .live-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--success); box-shadow: 0 0 8px rgba(125,190,122,0.6);
+  }
+  h1.headline {
+    font-family: var(--serif);
+    font-weight: 400;
+    font-size: clamp(48px, 6.8vw, 92px);
+    line-height: 0.98;
+    letter-spacing: -0.028em;
+    margin: 0 0 28px;
+    color: var(--text);
+  }
+  h1.headline .em {
+    font-style: italic;
+    color: var(--accent);
+    position: relative;
     white-space: nowrap;
   }
-  .emp-node .working-badge, .emp-node .done-badge {
-    display: none;
-    font-size: 10.5px;
-    font-weight: 600;
-    margin-top: 2px;
-    letter-spacing: 0.02em;
+  h1.headline .em::after {
+    content: '';
+    position: absolute; left: 0; bottom: 6px;
+    width: 100%; height: 8px;
+    background: var(--accent-soft);
+    z-index: -1;
   }
-  .emp-node .working-badge { color: var(--info); }
-  .emp-node .done-badge { color: var(--ok); }
-  .emp-node.is-working .working-badge { display: block; }
-  .emp-node.has-result:not(.is-working) .done-badge { display: block; }
-  .emp-node .mandate {
-    color: var(--text-muted);
-    font-size: 12px;
-    line-height: 1.5;
-    display: -webkit-box;
-    -webkit-line-clamp: 4;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
+  .hero-lede {
+    font-size: 18px; color: var(--text-dim); max-width: 480px;
+    margin-bottom: 40px;
   }
-  .emp-node .metadata {
-    font-size: 10.5px;
-    color: var(--text-dim);
-    padding-top: 8px;
-    border-top: 1px solid var(--border);
-    display: none;
-    font-family: ui-monospace, monospace;
-  }
-  .emp-node.has-result:not(.is-working) .metadata { display: block; }
-  .fab-warn { color: var(--warn); font-weight: 600; }
-  .fab-ok { color: var(--ok); }
-
-  .canvas-empty {
-    margin: 60px auto;
-    max-width: 460px;
-    text-align: center;
-    padding: 36px 24px;
-    border: 1.5px dashed var(--border-strong);
-    border-radius: 14px;
-    background: var(--panel-2);
-  }
-  .canvas-empty .headline {
-    font-size: 15px;
-    color: var(--text);
-    margin-bottom: 6px;
-    font-weight: 600;
-  }
-  .canvas-empty .hint { color: var(--text-muted); font-size: 13px; line-height: 1.55; }
-
-  /* Output tab */
-  .result-panel {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 24px 28px;
-    box-shadow: var(--shadow-sm);
-    max-width: 900px;
-    margin: 0 auto;
-  }
-  .result-body {
-    font-size: 14px;
-    line-height: 1.65;
-    color: var(--text);
-  }
-  /* Markdown-rendered content — used in Output and in assistant chat
-     messages. Keeps prose readable and makes tables actually usable
-     instead of a wall of pipes. */
-  .md h1, .md h2, .md h3, .md h4 {
-    color: var(--text);
-    font-weight: 700;
-    line-height: 1.3;
-    margin: 20px 0 8px;
-  }
-  .md h1 { font-size: 22px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
-  .md h2 { font-size: 18px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
-  .md h3 { font-size: 15.5px; }
-  .md h4 { font-size: 14px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
-  .md p { margin: 8px 0; }
-  .md ul, .md ol { margin: 8px 0 8px 22px; padding: 0; }
-  .md li { margin: 3px 0; }
-  .md li > p { margin: 0; }
-  .md hr {
+  .hero-lede em { color: var(--text); font-style: normal; font-weight: 500; }
+  .hero-actions { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .btn-primary {
+    background: var(--text); color: var(--bg);
+    padding: 14px 28px; border-radius: 999px;
+    font-size: 15px; font-weight: 500;
     border: none;
+    transition: transform .15s ease, background .15s ease;
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .btn-primary:hover { transform: translateY(-2px); background: #fff; }
+  .btn-primary .arrow { transition: transform .2s ease; }
+  .btn-primary:hover .arrow { transform: translateX(3px); }
+  .btn-ghost {
+    background: transparent; color: var(--text);
+    padding: 14px 22px; border-radius: 999px;
+    font-size: 15px; font-weight: 500;
+    border: 1px solid var(--border-strong);
+    transition: background .15s ease, border-color .15s ease;
+  }
+  .btn-ghost:hover { background: var(--surface); border-color: var(--accent); }
+  .hero-meta {
+    margin-top: 44px; padding-top: 28px;
     border-top: 1px solid var(--border);
-    margin: 18px 0;
+    display: flex; gap: 40px;
+    font-family: var(--mono); font-size: 12px; color: var(--text-muted);
   }
-  .md a { color: var(--info); text-decoration: underline; }
-  .md a:hover { color: var(--accent); }
-  .md strong { color: var(--text); font-weight: 700; }
-  .md em { color: var(--text); font-style: italic; }
-  .md code {
-    background: var(--panel-2);
+  .hero-meta strong { color: var(--text); font-weight: 500; font-family: var(--sans); font-size: 15px; display: block; margin-top: 4px; }
+
+  /* ================ HERO DEMO (right side) ================ */
+  .demo-frame {
+    background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 1px 6px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 12.5px;
-    color: var(--accent);
+    border-radius: 16px;
+    padding: 20px;
+    box-shadow: 0 40px 80px -20px rgba(0,0,0,0.5), 0 0 60px -20px var(--accent-glow);
+    position: relative;
+    min-height: 480px;
   }
-  .md pre {
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
+  .demo-frame::before {
+    content: ''; position: absolute; inset: -1px; border-radius: 16px;
+    background: linear-gradient(135deg, var(--accent-soft), transparent 40%);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+    padding: 1px;
+    pointer-events: none;
+  }
+  .demo-header {
+    display: flex; align-items: center; gap: 8px;
+    padding-bottom: 16px; border-bottom: 1px solid var(--border);
+    margin-bottom: 20px;
+  }
+  .demo-dots { display: flex; gap: 6px; }
+  .demo-dots span { width: 10px; height: 10px; border-radius: 50%; background: var(--border-strong); }
+  .demo-title { font-family: var(--mono); font-size: 12px; color: var(--text-muted); margin-left: auto; }
+  .prompt-line {
+    font-family: var(--mono); font-size: 13px;
+    color: var(--text-dim);
     padding: 12px 14px;
-    overflow-x: auto;
-    margin: 10px 0;
-  }
-  .md pre code {
-    background: transparent;
-    border: none;
-    padding: 0;
-    color: var(--text);
-    font-size: 12.5px;
-    line-height: 1.55;
-  }
-  .md blockquote {
-    border-left: 3px solid var(--accent);
-    background: var(--panel-2);
-    color: var(--text-muted);
-    padding: 8px 14px;
-    margin: 10px 0;
-    border-radius: 0 6px 6px 0;
-  }
-  .md table {
-    border-collapse: collapse;
-    width: 100%;
-    margin: 12px 0;
-    font-size: 13px;
-    overflow-x: auto;
-    display: block;
-  }
-  .md thead { background: var(--panel-2); }
-  .md th, .md td {
-    border: 1px solid var(--border);
-    padding: 7px 10px;
-    text-align: left;
-    vertical-align: top;
-  }
-  .md th {
-    font-weight: 700;
-    color: var(--text);
-    background: var(--panel-2);
-  }
-  .md tbody tr:nth-child(even) { background: rgba(0, 0, 0, 0.02); }
-  @media (prefers-color-scheme: dark) {
-    .md tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.02); }
-  }
-  .result-empty {
-    color: var(--text-dim);
-    text-align: center;
-    padding: 60px 20px;
-    font-size: 14px;
-  }
-
-  /* Evidence ledger — makes verification status visible instead of
-     leaving it buried in prose. A blind benchmark proved readers (even
-     AI judges) skip checking sources unless the status is right there
-     to look at, so this sits directly above the deliverable, not in a
-     collapsed footnote. */
-  .evidence-panel {
-    margin: 0 auto 14px auto;
-    max-width: 900px;
-  }
-  .evidence-toggle {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
+    background: var(--surface-2);
     border-radius: 10px;
-    padding: 10px 14px;
-    font-size: 12.5px;
-    color: var(--text-muted);
-    cursor: pointer;
-    user-select: none;
+    min-height: 44px;
+    display: flex; align-items: center;
+    margin-bottom: 24px;
   }
-  .evidence-toggle:hover { border-color: var(--border-strong); }
-  .evidence-toggle .chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 2px 8px;
+  .prompt-line .caret {
+    display: inline-block; width: 7px; height: 15px;
+    background: var(--accent); margin-left: 2px;
+    animation: blink 1s steps(1) infinite;
+    vertical-align: -2px;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+  .prompt-line .prefix { color: var(--accent); margin-right: 8px; }
+
+  /* ===== Tree viz — SVG branches + absolute-positioned HTML nodes ===== */
+  .tree-viz {
+    position: relative;
+    width: 100%; height: 340px;
+    padding: 4px 0;
+  }
+  .tree-viz svg.tree-lines {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    overflow: visible;
+    pointer-events: none;
+  }
+  .tree-lines .branch {
+    fill: none;
+    stroke: var(--border-strong);
+    stroke-width: 1.4;
+    stroke-linecap: round;
+    /* Keep the stroke a constant pixel width even though the SVG stretches
+       non-uniformly to fill the container. Without this, a wide/short
+       viewbox would draw an oval-shaped stroke. */
+    vector-effect: non-scaling-stroke;
+    stroke-dasharray: 400;
+    stroke-dashoffset: 400;
+    transition: stroke-dashoffset .55s cubic-bezier(.35,.75,.4,1), stroke .35s ease, stroke-width .35s ease;
+  }
+  .tree-lines .branch.drawn { stroke-dashoffset: 0; }
+  .tree-lines .branch.active { stroke: var(--accent); stroke-width: 1.8; }
+  .tree-lines .branch.done   { stroke: var(--accent-dim); stroke-width: 1.4; }
+
+  .tree-node {
+    position: absolute;
+    transform: translate(-50%, -50%) scale(0.85);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
     border-radius: 999px;
-    font-size: 11px;
-    font-weight: 600;
+    padding: 8px 14px;
+    font-size: 12px;
+    display: inline-flex; align-items: center; gap: 8px;
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity .45s ease, transform .45s cubic-bezier(.35,.75,.4,1),
+                border-color .3s ease, background .3s ease, box-shadow .3s ease;
   }
-  .evidence-toggle .chip.verified { background: rgba(77, 124, 15, 0.14); color: var(--ok); }
-  .evidence-toggle .chip.unknown { background: rgba(161, 98, 7, 0.14); color: var(--warn); }
-  .evidence-toggle .chip.unsourced { background: rgba(194, 65, 12, 0.14); color: var(--danger); }
-  .evidence-toggle .caret { margin-left: auto; transition: transform 0.15s ease; }
-  .evidence-toggle.open .caret { transform: rotate(180deg); }
-  .evidence-list {
-    display: none;
-    margin-top: 6px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    overflow: hidden;
-  }
-  .evidence-list.open { display: block; }
-  .evidence-row {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    padding: 9px 14px;
-    font-size: 12.5px;
-    line-height: 1.5;
-    border-bottom: 1px solid var(--border);
-    background: var(--panel);
-  }
-  .evidence-row:last-child { border-bottom: none; }
-  .evidence-row .badge {
-    flex-shrink: 0;
+  .tree-node.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  .tree-node.root {
+    background: linear-gradient(135deg, var(--accent-dim), var(--accent));
+    border-color: var(--accent);
+    color: #fff; font-weight: 500;
+    box-shadow: 0 8px 24px -8px var(--accent-glow);
+    padding: 10px 18px;
     font-size: 13px;
-    line-height: 1.5;
   }
-  .evidence-row .text { color: var(--text); flex: 1; }
-  .evidence-row .source {
-    display: block;
-    margin-top: 2px;
-    font-size: 11px;
-    color: var(--info);
-    word-break: break-all;
+  .tree-node.working {
+    border-color: var(--accent);
+    background: rgba(184, 48, 67, 0.08);
+    box-shadow: 0 0 0 4px rgba(184, 48, 67, 0.06);
   }
-  .evidence-row.unsourced .text { color: var(--danger); }
+  .tree-node.done {
+    border-color: var(--accent-dim);
+  }
+  .tree-node .role-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--text-muted); flex: none;
+  }
+  .tree-node.root .role-dot { background: #fff; box-shadow: 0 0 8px rgba(255,255,255,0.6); }
+  .tree-node.working .role-dot {
+    background: var(--accent);
+    box-shadow: 0 0 6px var(--accent-glow);
+    animation: pulse 1s infinite;
+  }
+  .tree-node.done .role-dot { background: var(--accent-dim); }
+  .tree-node .role-name { font-weight: 500; }
+  .tree-node .role-tag {
+    color: var(--text-muted); font-family: var(--mono); font-size: 10px;
+  }
+  .tree-node.root .role-tag { color: rgba(255,255,255,0.75); }
 
-  /* Pending actions — when the AI wants to actually DO something
-     (send email, post Slack, write a file), the request lands here and
-     waits for the founder's tap. Sits above the deliverable so it's
-     the first thing you see. */
-  .pending-actions-panel {
-    margin: 0 auto 14px auto;
-    max-width: 900px;
+  .deliverable-toast {
+    position: absolute; bottom: -12px; right: -12px;
+    background: var(--surface-2);
     border: 1px solid var(--accent);
     border-radius: 10px;
-    background: var(--panel-2);
-    overflow: hidden;
-  }
-  .pending-actions-head {
-    display: flex;
-    align-items: center;
-    gap: 8px;
     padding: 10px 14px;
-    font-size: 12.5px;
-    font-weight: 600;
-    color: var(--accent);
-    background: rgba(139, 30, 47, 0.06);
-    border-bottom: 1px solid var(--border);
-  }
-  .pa-title { flex: 0 0 auto; }
-  .pa-count {
-    padding: 1px 8px;
-    border-radius: 999px;
-    background: var(--accent);
-    color: #fff;
-    font-size: 11px;
-    font-weight: 700;
-  }
-  .pa-refresh {
-    margin-left: auto;
-    background: transparent;
-    color: var(--text-muted);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 2px 8px;
-    cursor: pointer;
     font-size: 12px;
+    display: flex; align-items: center; gap: 10px;
+    box-shadow: 0 12px 28px rgba(0,0,0,0.55), 0 0 24px -8px var(--accent-glow);
+    opacity: 0; transform: translateY(10px) scale(0.9);
+    transition: opacity .4s ease, transform .4s ease;
   }
-  .pa-refresh:hover { color: var(--accent); border-color: var(--accent); }
-  .pending-actions-list { display: flex; flex-direction: column; }
-  .pa-row {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border);
-    font-size: 12.5px;
-  }
-  .pa-row:last-child { border-bottom: none; }
-  .pa-row .pa-meta {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-  }
-  .pa-row .pa-action-name {
-    font-weight: 600;
-    color: var(--text);
-    text-transform: uppercase;
-    font-size: 11px;
-    letter-spacing: 0.03em;
-  }
-  .pa-row .pa-preview {
-    color: var(--text-muted);
-    line-height: 1.5;
-    word-break: break-word;
-  }
-  .pa-row .pa-buttons {
-    display: flex;
-    gap: 6px;
-    flex-shrink: 0;
-  }
-  .pa-btn {
-    padding: 5px 12px;
-    border-radius: 6px;
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-    border: 1px solid var(--border);
-    background: var(--panel);
-    color: var(--text);
-  }
-  .pa-btn.approve {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: #fff;
-  }
-  .pa-btn.approve:hover { background: var(--accent-2); }
-  .pa-btn.reject:hover { border-color: var(--danger); color: var(--danger); }
-  .pa-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
-  .pa-row.executed .pa-action-name { color: var(--ok); }
-  .pa-row.rejected .pa-action-name { color: var(--danger); }
-  .pa-row .pa-status {
-    font-size: 11px;
-    color: var(--text-muted);
-    padding: 4px 10px;
-    border-radius: 6px;
-    background: var(--panel);
+  .deliverable-toast.show { opacity: 1; transform: translateY(0) scale(1); }
+  .deliverable-toast .check {
+    width: 16px; height: 16px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent-dim), var(--accent));
+    color: #fff; display: grid; place-items: center; font-size: 11px; font-weight: 700;
   }
 
-  /* ---------- RIGHT: Edit ---------- */
-  .right {
-    grid-area: right;
-    background: var(--bg-2);
-    border-left: 1px solid var(--border);
-    padding: 18px 16px;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
-    min-height: 0;
+  /* ================ SECTION HEADS ================ */
+  section { padding: 120px 40px; position: relative; }
+  .container { max-width: 1200px; margin: 0 auto; }
+  .section-eyebrow {
+    font-family: var(--mono); font-size: 12px; color: var(--accent);
+    text-transform: uppercase; letter-spacing: 0.12em;
+    margin-bottom: 20px;
   }
-  .right .section {
-    background: var(--panel);
+  h2.section-h {
+    font-family: var(--serif);
+    font-weight: 400;
+    font-size: clamp(38px, 4.6vw, 62px);
+    line-height: 1.04;
+    letter-spacing: -0.025em;
+    margin: 0 0 24px;
+    max-width: 800px;
+  }
+  h2.section-h em { color: var(--accent); font-style: italic; }
+  .section-lede { font-size: 18px; color: var(--text-dim); max-width: 620px; margin-bottom: 60px; }
+
+  /* ================ BENTO ================ */
+  .bento {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    grid-auto-rows: 220px;
+    gap: 16px;
+  }
+  @media (max-width: 960px) {
+    .bento { grid-template-columns: repeat(2, 1fr); grid-auto-rows: 200px; }
+  }
+  @media (max-width: 560px) {
+    .bento { grid-template-columns: 1fr; }
+  }
+  .bento .cell {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color .2s ease, transform .2s ease;
+    display: flex; flex-direction: column;
+  }
+  .bento .cell:hover { border-color: var(--border-strong); transform: translateY(-2px); }
+  .cell .cell-label {
+    font-family: var(--mono); font-size: 11px; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    margin-bottom: 12px;
+  }
+  .cell .cell-h {
+    font-family: var(--serif); font-size: 26px; line-height: 1.15;
+    letter-spacing: -0.02em; margin: 0 0 10px;
+  }
+  .cell .cell-p { font-size: 14px; color: var(--text-dim); }
+  .cell.wide { grid-column: span 2; }
+  .cell.tall { grid-row: span 2; }
+  .cell.accent { background: linear-gradient(155deg, var(--surface), var(--surface-2)); }
+
+  /* verification card — crimson signals "caught + rewritten" */
+  .verify-badge {
+    margin-top: auto;
+    padding: 12px; border-radius: 10px;
+    background: var(--accent-soft);
+    border: 1px solid rgba(184, 48, 67, 0.35);
+    font-family: var(--mono); font-size: 12px; color: var(--accent);
+    display: flex; align-items: flex-start; gap: 10px;
+  }
+  .verify-badge .flag {
+    padding: 2px 7px; border-radius: 4px;
+    background: rgba(184, 48, 67, 0.24); color: #ffb3bf;
+    font-weight: 600; letter-spacing: 0.05em; flex: none;
+  }
+  .strike-line {
+    text-decoration: line-through; color: var(--text-muted);
+    display: block; margin-top: 6px;
+  }
+  .replaced-line { color: var(--text-dim); display: block; margin-top: 4px; }
+
+  /* approval card */
+  .approval-row {
+    margin-top: auto;
+    background: var(--surface-2);
     border: 1px solid var(--border);
     border-radius: 10px;
-    padding: 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
+    padding: 12px 14px;
+    display: flex; align-items: center; gap: 10px;
   }
-  .right .section .head {
-    font-size: 11px;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    font-weight: 600;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+  .approval-row .a-icon {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--warn); color: var(--bg);
+    display: grid; place-items: center; font-weight: 700; font-size: 14px;
   }
-  .right .section .hint {
-    font-size: 12px;
-    color: var(--text-dim);
-    line-height: 1.5;
+  .approval-row .a-body { flex: 1; }
+  .approval-row .a-title { font-size: 13px; font-weight: 500; }
+  .approval-row .a-sub { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+  .approval-row .a-actions { display: flex; gap: 6px; }
+  .approval-row .a-btn {
+    padding: 5px 10px; border-radius: 6px; font-size: 11px;
+    background: transparent; border: 1px solid var(--border-strong); color: var(--text-dim);
   }
-  .team-list {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
+  .approval-row .a-btn.primary { background: var(--text); color: var(--bg); border-color: var(--text); }
+
+  /* memory / hierarchy */
+  .hierarchy-list { margin-top: auto; font-family: var(--mono); font-size: 12px; line-height: 1.9; color: var(--text-dim); }
+  .hierarchy-list .arr { color: var(--accent); }
+
+  /* ================ LIVE DEMOS ================ */
+  .demos-scroll {
+    display: flex; gap: 20px;
+    overflow-x: auto;
+    padding: 8px 40px 20px;
+    margin: 0 -40px;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
   }
-  .team-list-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 8px 10px;
-    background: var(--panel-2);
+  .demos-scroll::-webkit-scrollbar { display: none; }
+  .demo-card {
+    flex: 0 0 380px;
+    background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 14px;
+    padding: 20px;
+    scroll-snap-align: start;
+    transition: border-color .2s ease, transform .2s ease;
+    display: flex; flex-direction: column;
+    min-height: 340px;
   }
-  .team-list-item .mini-avatar {
-    width: 22px; height: 22px;
-    border-radius: 6px;
-    background: linear-gradient(135deg, var(--accent), var(--accent-2));
-    color: white;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 10px; font-weight: 700;
-    flex-shrink: 0;
+  .demo-card:hover { border-color: var(--accent); transform: translateY(-3px); }
+  .demo-card .dc-head {
+    display: flex; align-items: center; gap: 10px;
+    padding-bottom: 12px; border-bottom: 1px solid var(--border); margin-bottom: 14px;
   }
-  .team-list-item .role {
-    flex: 1;
-    font-size: 12.5px;
-    color: var(--text);
-    font-weight: 500;
-    min-width: 0;
+  .demo-card .dc-tag {
+    padding: 3px 8px; border-radius: 5px; font-family: var(--mono); font-size: 10px;
+    background: var(--accent-soft); color: var(--accent);
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  .demo-card .dc-title { font-weight: 500; font-size: 14px; }
+  .demo-card .dc-prompt {
+    font-family: var(--mono); font-size: 11px; color: var(--text-muted);
+    padding: 8px 10px; background: var(--surface-2); border-radius: 6px;
+    margin-bottom: 14px; border-left: 2px solid var(--accent);
+  }
+  .demo-card .dc-body { font-size: 13px; color: var(--text-dim); line-height: 1.6; flex: 1; }
+  .demo-card .dc-body strong { color: var(--text); font-weight: 500; }
+  .demo-card .dc-persona { padding: 10px 0; border-top: 1px solid var(--border); }
+  .demo-card .dc-persona:first-child { border-top: none; padding-top: 0; }
+  .demo-card .dc-persona-name { font-family: var(--serif); font-size: 16px; color: var(--text); font-style: italic; }
+  .demo-card .dc-persona-meta { font-family: var(--mono); font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+  .demo-card .dc-foot {
+    margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--mono); font-size: 10px; color: var(--text-muted);
+  }
+  .demo-card .dc-foot .dot { width: 4px; height: 4px; border-radius: 50%; background: var(--success); }
+
+  /* ================ BEFORE/AFTER ================ */
+  .before-after {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr 1fr;
+    gap: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
-
-  /* Sessions selector at top of right panel */
-  .session-select {
-    display: flex; gap: 6px; align-items: center;
-  }
-  .session-select select { flex: 1; }
-
-  /* Company section (Phase 3a — top of right sidebar, above Unit) */
-  .company-section input, .company-section textarea, .company-section select {
-    width: 100%; margin-bottom: 6px;
-    padding: 7px 9px;
-    background: var(--panel);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    font-family: inherit; font-size: 12.5px;
-  }
-  .company-section textarea { min-height: 60px; resize: vertical; }
-  .company-section .row { display: flex; gap: 6px; }
-  .company-section .row > * { flex: 1; }
-  .company-mode-toggle {
-    display: flex;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 2px;
-    gap: 2px;
-  }
-  .company-mode-toggle button {
-    flex: 1;
-    padding: 5px 8px;
-    border: none;
-    background: transparent;
+  .ba-head {
+    padding: 20px 24px;
+    background: var(--surface-2);
+    font-family: var(--mono); font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.12em;
     color: var(--text-muted);
-    font-size: 12px;
-    font-weight: 500;
-    border-radius: 6px;
-    cursor: pointer;
-  }
-  .company-mode-toggle button.on {
-    background: var(--accent);
-    color: #fff;
-  }
-  .ceo-badge {
-    display: inline-flex; align-items: center; gap: 5px;
-    padding: 3px 8px;
-    border-radius: 999px;
-    background: linear-gradient(135deg, var(--accent), var(--accent-2));
-    color: #fff;
-    font-size: 10.5px;
-    font-weight: 700;
-    letter-spacing: 0.03em;
-    text-transform: uppercase;
-  }
-  .company-purpose {
-    font-size: 11.5px;
-    color: var(--text-muted);
-    line-height: 1.5;
-    padding: 6px 0;
-  }
-  .hierarchy-proposal {
-    margin-top: 8px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--panel);
-    max-height: 340px;
-    overflow-y: auto;
-  }
-  .hierarchy-proposal .proposed-unit {
-    padding: 8px 10px;
     border-bottom: 1px solid var(--border);
   }
-  .hierarchy-proposal .proposed-unit:last-child { border-bottom: none; }
-  .hierarchy-proposal .u-name {
-    font-size: 12px; font-weight: 600;
-    color: var(--text);
-    margin-bottom: 3px;
-  }
-  .hierarchy-proposal .u-purpose {
-    font-size: 11px; color: var(--text-muted); line-height: 1.4;
-    margin-bottom: 4px;
-  }
-  .hierarchy-proposal .u-specialists {
-    display: flex; flex-wrap: wrap; gap: 4px;
-  }
-  .hierarchy-proposal .u-specialist {
-    padding: 2px 8px;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    font-size: 10.5px;
-    color: var(--text-muted);
+  .ba-head:nth-child(3) { color: var(--accent); }
+  .ba-row { padding: 22px 24px; border-bottom: 1px solid var(--border); font-size: 15px; }
+  .ba-row.job { font-family: var(--serif); font-size: 22px; font-style: italic; color: var(--text); }
+  .ba-row.old { color: var(--text-muted); }
+  .ba-row.new { color: var(--text); }
+  .ba-row:last-child, .ba-row:nth-last-child(-n+3) { border-bottom: none; }
+  @media (max-width: 720px) {
+    .before-after { grid-template-columns: 1fr; }
+    .ba-head { display: none; }
+    .ba-head:first-child { display: block; }
+    .ba-row.job { padding-top: 24px; }
+    .ba-row.old::before { content: 'Manual: '; color: var(--text-muted); font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; display: block; margin-bottom: 4px; }
+    .ba-row.new::before { content: 'Vision AI: '; color: var(--accent); font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; display: block; margin-bottom: 4px; }
   }
 
-  /* Org tree Canvas — the whole Company hierarchy rendered as a tree */
-  .org-tree {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 30px 20px;
-    gap: 24px;
-  }
-  .org-empty {
-    color: var(--text-muted);
-    font-size: 13px;
-    text-align: center;
-    padding: 60px 20px;
-    max-width: 500px;
-  }
-  .org-empty h3 {
-    color: var(--text); font-size: 15px; margin-bottom: 8px;
-  }
-  .org-node {
-    background: var(--panel-2);
+  /* ================ STEPS ================ */
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  @media (max-width: 800px) { .steps { grid-template-columns: 1fr; } }
+  .step {
+    background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 12px 16px;
-    min-width: 220px;
-    max-width: 320px;
+    border-radius: 14px;
+    padding: 32px 28px;
+    position: relative;
   }
-  .org-node.ceo {
-    border-color: var(--accent);
-    background: linear-gradient(135deg, rgba(139,30,47,0.10), rgba(184,48,67,0.06));
+  .step-num {
+    font-family: var(--serif); font-size: 60px; font-style: italic;
+    color: var(--accent); line-height: 1; margin-bottom: 16px;
   }
-  .org-node .role {
-    font-size: 13.5px; font-weight: 700; color: var(--text);
-    display: flex; align-items: center; gap: 8px;
-  }
-  .org-node .mandate {
-    font-size: 11.5px; color: var(--text-muted); line-height: 1.5;
-    margin-top: 4px;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-  }
-  .org-tree-connector {
-    width: 2px; height: 18px; background: var(--border-strong);
-  }
-  .org-units-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 18px;
-    justify-content: center;
-    align-items: flex-start;
-    width: 100%;
-  }
-  .org-unit-column {
-    display: flex; flex-direction: column; align-items: center; gap: 10px;
-    min-width: 240px;
-  }
-  .org-unit-card {
-    background: var(--panel);
+  .step h3 { font-family: var(--serif); font-size: 24px; font-weight: 400; margin: 0 0 10px; letter-spacing: -0.02em; }
+  .step p { color: var(--text-dim); font-size: 14px; margin: 0; }
+
+  /* ================ PRICING ================ */
+  .price-card {
+    max-width: 480px; margin: 0 auto;
+    background: var(--surface);
     border: 1px solid var(--border-strong);
-    border-radius: 12px;
-    padding: 12px 14px;
-    width: 100%;
+    border-radius: 20px;
+    padding: 40px;
+    text-align: left;
+    position: relative;
+    box-shadow: 0 40px 80px -30px rgba(233,112,78,0.2);
   }
-  .org-unit-card .unit-title {
-    font-size: 13px; font-weight: 700; color: var(--text);
-    margin-bottom: 3px;
+  .price-card::before {
+    content: '';
+    position: absolute; inset: -1px; border-radius: 20px;
+    background: linear-gradient(135deg, var(--accent), transparent 60%);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+    padding: 1px; pointer-events: none;
   }
-  .org-unit-card .unit-purpose {
-    font-size: 11px; color: var(--text-muted); line-height: 1.4;
-    margin-bottom: 8px;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  .price-badge {
+    display: inline-block;
+    padding: 4px 10px; border-radius: 5px;
+    background: var(--accent-soft); color: var(--accent);
+    font-family: var(--mono); font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.1em;
+    margin-bottom: 20px;
   }
-  .org-unit-card .unit-members {
-    display: flex; flex-direction: column; gap: 4px;
-  }
-  .org-member {
-    display: flex; align-items: center; gap: 6px;
-    padding: 4px 8px;
-    background: var(--panel-2);
-    border-radius: 6px;
-    font-size: 11.5px;
-    color: var(--text);
-  }
-  .org-member.supervisor {
-    background: rgba(139,30,47,0.10);
-    color: var(--accent);
-    font-weight: 600;
-  }
-  .org-member .role-name {
-    flex: 1;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .chat-target-badge {
-    padding: 3px 8px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    font-size: 11px;
-    color: var(--text-muted);
-    margin-left: 8px;
-  }
-  .chat-target-badge.company-mode {
-    background: var(--accent);
-    color: #fff;
-    border-color: var(--accent);
-    font-weight: 600;
-  }
+  .price-amount { font-family: var(--serif); font-size: 72px; line-height: 1; color: var(--text); }
+  .price-per { color: var(--text-muted); font-family: var(--mono); font-size: 14px; margin-left: 4px; }
+  .price-lede { color: var(--text-dim); margin: 12px 0 24px; }
+  .price-list { list-style: none; padding: 0; margin: 0 0 28px; font-size: 14px; }
+  .price-list li { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; color: var(--text-dim); border-bottom: 1px solid var(--border); }
+  .price-list li:last-child { border-bottom: none; }
+  .price-list .tick { color: var(--accent); font-weight: 700; flex: none; }
+  .price-list li strong { color: var(--text); font-weight: 500; }
+  .price-fine { font-family: var(--mono); font-size: 11px; color: var(--text-muted); text-align: center; margin-top: 20px; }
 
-  /* Plan / Work mode toggle in the chat header */
-  .mode-toggle {
-    display: inline-flex;
-    border: 1px solid var(--border);
-    border-radius: 7px;
-    overflow: hidden;
-    margin-right: 4px;
+  /* ================ FAQ ================ */
+  .faq { max-width: 800px; margin: 0 auto; }
+  .faq-item {
+    border-bottom: 1px solid var(--border);
+    padding: 24px 0;
   }
-  .mode-btn {
-    border: none;
-    background: var(--panel);
-    color: var(--text-muted);
-    font-size: 11px;
-    font-weight: 600;
-    padding: 4px 11px;
-    cursor: pointer;
-    transition: background 0.12s ease, color 0.12s ease;
+  .faq-q {
+    font-family: var(--serif); font-size: 22px; letter-spacing: -0.015em;
+    cursor: pointer; display: flex; justify-content: space-between; align-items: center;
+    gap: 20px;
+    list-style: none;
   }
-  .mode-btn:hover { color: var(--text); }
-  .mode-btn.active[data-mode="plan"] {
-    background: var(--info, #2563eb);
-    color: #fff;
+  .faq-q::-webkit-details-marker { display: none; }
+  .faq-q .plus {
+    color: var(--accent); font-family: var(--serif); font-size: 28px; line-height: 1;
+    transition: transform .3s ease;
+    flex: none;
   }
-  .mode-btn.active[data-mode="work"] {
-    background: var(--accent);
-    color: #fff;
-  }
+  details[open] .faq-q .plus { transform: rotate(45deg); }
+  .faq-a { padding-top: 14px; color: var(--text-dim); font-size: 15px; line-height: 1.65; }
 
-  /* Toolbar row under the chat input — mode toggle + attach button */
-  .chat-toolbar {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 7px 14px 10px;
+  /* ================ FOOTER ================ */
+  footer {
+    padding: 60px 40px 40px;
+    border-top: 1px solid var(--border);
+    text-align: center;
   }
+  footer .brand-big {
+    font-family: var(--serif); font-size: 32px; letter-spacing: -0.02em;
+    margin-bottom: 12px;
+  }
+  footer p { color: var(--text-muted); font-family: var(--mono); font-size: 12px; }
 
-  /* Attached-file chips, shown above the input box while composing */
-  .attached-files {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    padding: 8px 14px 0;
+  /* ================ FINAL CTA ================ */
+  section.final-cta {
+    text-align: center;
+    padding: 140px 40px;
+    background: radial-gradient(800px 400px at 50% 50%, var(--accent-soft), transparent 70%);
   }
-  .file-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 9px;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    font-size: 11.5px;
-    color: var(--text);
-    max-width: 220px;
-  }
-  .file-chip .file-chip-name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .file-chip.uploading { color: var(--text-muted); font-style: italic; }
-  .file-chip-remove {
-    border: none;
-    background: transparent;
-    color: var(--text-muted);
-    cursor: pointer;
-    font-size: 14px;
-    line-height: 1;
-    padding: 0;
-    flex-shrink: 0;
-  }
-  .file-chip-remove:hover { color: var(--danger); }
-
-  /* Scrollbars */
-  ::-webkit-scrollbar { width: 8px; height: 8px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
-  ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+  section.final-cta h2 { max-width: 900px; margin-left: auto; margin-right: auto; }
+  .final-cta .actions { justify-content: center; margin-top: 40px; }
 </style>
 </head>
 <body>
 
-<div class="app">
+<nav class="top" id="topnav">
+  <a href="/" class="brand">
+    <span class="brand-dot"></span>
+    <span>Vision AI</span>
+  </a>
+  <div class="links">
+    <a href="#how">How it works</a>
+    <a href="#work">The work</a>
+    <a href="#pricing">Pricing</a>
+    <a href="#faq">FAQ</a>
+  </div>
+  <a href="/app/" class="cta">Open the app</a>
+</nav>
 
-  <header id="app-header">
-    <div class="brand">
-      <div class="brand-mark">V</div>
+<!-- ================================ HERO ================================ -->
+<section class="hero">
+  <div class="hero-grain"></div>
+  <div class="hero-wrap">
+
+    <div class="hero-copy">
+      <div class="hero-eyebrow">
+        <span class="live-dot"></span>
+        <span>Founding 100 · seats open</span>
+      </div>
+      <h1 class="headline">
+        The AI <span class="em">co-founder</span>,<br />
+        hired in 90 seconds.
+      </h1>
+      <p class="hero-lede">
+        Vision AI spins up a <em>Company</em> of AI employees — a Supervisor plus specialists — that actually do your work. Draft the deck, write the outreach, build the spreadsheet. With verification and a founder-approval gate on every irreversible action.
+      </p>
+      <div class="hero-actions">
+        <a href="/app/" class="btn-primary">
+          Start building free
+          <span class="arrow">→</span>
+        </a>
+        <a href="#work" class="btn-ghost">See it work</a>
+      </div>
+      <div class="hero-meta">
+        <div>
+          Approval-gated
+          <strong>Every irreversible action</strong>
+        </div>
+        <div>
+          No fabricated evidence
+          <strong>Claims cite a source</strong>
+        </div>
+        <div>
+          Flat pricing
+          <strong>$29/mo · unlimited</strong>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: animated demo -->
+    <div class="demo-frame">
+      <div class="demo-header">
+        <div class="demo-dots"><span></span><span></span><span></span></div>
+        <div class="demo-title" id="demo-title">Vision AI · live</div>
+      </div>
+      <div class="prompt-line">
+        <span class="prefix">you</span>
+        <span id="typed-prompt"></span><span class="caret"></span>
+      </div>
+      <div class="tree-viz" id="tree-viz">
+        <svg class="tree-lines" id="tree-lines" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="deliverable-toast" id="deliverable-toast">
+        <span class="check">✓</span>
+        <span id="deliverable-text">Deliverable ready</span>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ================================ BENTO ================================ -->
+<section id="how">
+  <div class="container">
+    <div class="section-eyebrow">What Vision AI is</div>
+    <h2 class="section-h">A team, not a chatbot. <em>An org that ships work.</em></h2>
+    <p class="section-lede">
+      Every AI startup gives you a text box. Vision AI gives you a Company: a CEO on top, Supervisors running Units, specialists doing the work. Talk to the CEO. The org handles the rest.
+    </p>
+
+    <div class="bento">
+      <div class="cell wide">
+        <div class="cell-label">Hierarchy · locked vocabulary</div>
+        <h3 class="cell-h">Employee → Team → Unit → Company.</h3>
+        <p class="cell-p">One CEO, three Units, twelve specialists — assembled from one prompt. Fire and rehire from the chat.</p>
+        <div class="hierarchy-list">
+          Company &nbsp;<span class="arr">→</span>&nbsp; Fundraising Ops<br />
+          &nbsp;&nbsp;└ Unit &nbsp;<span class="arr">→</span>&nbsp; Content · Investor Research · Legal Ops<br />
+          &nbsp;&nbsp;&nbsp;&nbsp;└ Employee &nbsp;<span class="arr">→</span>&nbsp; Copywriter · Analyst · Counsel
+        </div>
+      </div>
+
+      <div class="cell accent">
+        <div class="cell-label">Trust layer</div>
+        <h3 class="cell-h">Zero fabricated evidence.</h3>
+        <p class="cell-p">Every stat cites a source. Made-up numbers get caught and rewritten before you see them.</p>
+        <div class="verify-badge">
+          <span class="flag">FLAGGED</span>
+          <span>
+            <span class="strike-line">"Founders spend 47% of time on ops"</span>
+            <span class="replaced-line">→ removed · no verifiable source</span>
+          </span>
+        </div>
+      </div>
+
+      <div class="cell">
+        <div class="cell-label">Approval gate</div>
+        <h3 class="cell-h">Nothing sends without your tap.</h3>
+        <p class="cell-p">Emails drafted, docs generated, files posted — all queued until you say yes.</p>
+        <div class="approval-row">
+          <div class="a-icon">!</div>
+          <div class="a-body">
+            <div class="a-title">Send outreach to 12 investors</div>
+            <div class="a-sub">queued · awaiting approval</div>
+          </div>
+          <div class="a-actions">
+            <button class="a-btn">Skip</button>
+            <button class="a-btn primary">Send</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="cell wide">
+        <div class="cell-label">Cross-turn memory</div>
+        <h3 class="cell-h">It remembers what you already said.</h3>
+        <p class="cell-p">Answers to earlier questions stick. Prior deliverables stay in context. "Give me a script for the Finance-Free Friday video" just works — no re-explaining what it is.</p>
+        <div class="hierarchy-list" style="margin-top:16px;">
+          <span style="color:var(--accent)">you:</span> give me a script for that video idea<br />
+          <span style="color:var(--success)">Vision AI:</span> On it — the Finance-Free Friday one. 60s script for solo founders on LinkedIn, in your voice.
+        </div>
+      </div>
+
+      <div class="cell">
+        <div class="cell-label">Real actions</div>
+        <h3 class="cell-h">Finished files. Not "here's how you would…"</h3>
+        <p class="cell-p">.pptx, .docx, .xlsx — actually generated, downloadable, opens in your app of choice.</p>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ================================ LIVE DEMOS ================================ -->
+<section id="work">
+  <div class="container">
+    <div class="section-eyebrow">The work · live examples</div>
+    <h2 class="section-h">Real deliverables, <em>not screenshots of prompts.</em></h2>
+    <p class="section-lede">
+      Five things Vision AI actually shipped this week for founders using it now. Every one is a finished file, not a stub.
+    </p>
+  </div>
+  <div class="demos-scroll">
+
+    <div class="demo-card">
+      <div class="dc-head">
+        <span class="dc-tag">Research</span>
+        <span class="dc-title">Investor personas</span>
+      </div>
+      <div class="dc-prompt">"do audience research on our product, create personas"</div>
+      <div class="dc-body">
+        <div class="dc-persona">
+          <div class="dc-persona-name">"Solo Sam"</div>
+          <div class="dc-persona-meta">32 · technical solo founder</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">Pain: drowning in non-coding work.</div>
+        </div>
+        <div class="dc-persona">
+          <div class="dc-persona-name">"Scaling Sara"</div>
+          <div class="dc-persona-meta">38 · seed-stage founder</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">Pain: can't afford headcount.</div>
+        </div>
+        <div class="dc-persona">
+          <div class="dc-persona-name">"Bootstrapped Ben"</div>
+          <div class="dc-persona-meta">45 · agency owner</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">Pain: manual ops eat margin.</div>
+        </div>
+      </div>
+      <div class="dc-foot"><span class="dot"></span>3 personas · Research Unit · 4m 20s</div>
+    </div>
+
+    <div class="demo-card">
+      <div class="dc-head">
+        <span class="dc-tag">Content</span>
+        <span class="dc-title">Video ideas</span>
+      </div>
+      <div class="dc-prompt">"3 video ideas for solo founders on LinkedIn"</div>
+      <div class="dc-body">
+        <div class="dc-persona">
+          <div class="dc-persona-name">Idea 1 · "Finance-Free Friday"</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">Solo founder shows Vision AI closing their books in 5 minutes.</div>
+        </div>
+        <div class="dc-persona">
+          <div class="dc-persona-name">Idea 2 · "The 3am Investor"</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">AI drafts the investor update overnight while founder sleeps.</div>
+        </div>
+        <div class="dc-persona">
+          <div class="dc-persona-name">Idea 3 · "Meeting Preview"</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">AI briefs founder on attendees the moment they join the call.</div>
+        </div>
+      </div>
+      <div class="dc-foot"><span class="dot"></span>Content Unit · 2m 05s</div>
+    </div>
+
+    <div class="demo-card">
+      <div class="dc-head">
+        <span class="dc-tag">Sales</span>
+        <span class="dc-title">Cold outbound</span>
+      </div>
+      <div class="dc-prompt">"first-touch email to Dana at Northwind, they just raised Series B"</div>
+      <div class="dc-body">
+        <div style="font-size:13px;color:var(--text);font-family:var(--serif);font-style:italic;font-size:15px;margin-bottom:8px;">"Before you hire SDR #5"</div>
+        <p style="font-size:13px;color:var(--text-dim);margin:0;">Dana — saw the Series B closed, and that you're already hiring 4 SDRs to chase it. The research eating a rep's first 90 days is now <strong>one agent inside HubSpot</strong>, personalizing off live signals. 15 minutes this week?</p>
+      </div>
+      <div class="dc-foot"><span class="dot"></span>Deliverability 98 · 96 words · personalized from 4 signals</div>
+    </div>
+
+    <div class="demo-card">
+      <div class="dc-head">
+        <span class="dc-tag">Fundraising</span>
+        <span class="dc-title">Investor spreadsheet</span>
+      </div>
+      <div class="dc-prompt">"build an investor target spreadsheet: 18 India + 12 US, pre-seed AI angels"</div>
+      <div class="dc-body">
+        <div style="font-family:var(--mono);font-size:11px;color:var(--text-muted);border:1px solid var(--border);border-radius:6px;overflow:hidden;">
+          <div style="background:var(--surface-2);padding:6px 10px;border-bottom:1px solid var(--border);">
+            Name · Firm · Geo · Check · Tier
+          </div>
+          <div style="padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text-dim);">Kunal S. · AngelList · India · $50k · T1</div>
+          <div style="padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text-dim);">Sahil L. · SaaStr · US · $100k · T1</div>
+          <div style="padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text-dim);">Ankur N. · Blume · India · $75k · T2</div>
+          <div style="padding:6px 10px;color:var(--text-muted);">+ 27 more · sorted by warm-intro odds</div>
+        </div>
+      </div>
+      <div class="dc-foot"><span class="dot"></span>30 rows · .xlsx · Investor Research Unit</div>
+    </div>
+
+    <div class="demo-card">
+      <div class="dc-head">
+        <span class="dc-tag">Deck</span>
+        <span class="dc-title">Pitch deck</span>
+      </div>
+      <div class="dc-prompt">"pitch deck for our pre-seed round"</div>
+      <div class="dc-body">
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">
+          <div style="aspect-ratio:16/10;background:var(--surface-2);border-radius:4px;padding:8px;font-family:var(--serif);font-size:10px;font-style:italic;">The AI co-founder.</div>
+          <div style="aspect-ratio:16/10;background:var(--surface-2);border-radius:4px;padding:8px;font-family:var(--mono);font-size:8px;color:var(--text-muted);">Problem</div>
+          <div style="aspect-ratio:16/10;background:var(--surface-2);border-radius:4px;padding:8px;font-family:var(--mono);font-size:8px;color:var(--text-muted);">Market</div>
+          <div style="aspect-ratio:16/10;background:var(--surface-2);border-radius:4px;padding:8px;font-family:var(--mono);font-size:8px;color:var(--text-muted);">Product</div>
+          <div style="aspect-ratio:16/10;background:var(--surface-2);border-radius:4px;padding:8px;font-family:var(--mono);font-size:8px;color:var(--text-muted);">Why now</div>
+          <div style="aspect-ratio:16/10;background:var(--surface-2);border-radius:4px;padding:8px;font-family:var(--mono);font-size:8px;color:var(--text-muted);">Ask</div>
+        </div>
+        <p style="font-size:12px;color:var(--text-muted);margin:12px 0 0;">13 slides · Series-A grade layout · your voice</p>
+      </div>
+      <div class="dc-foot"><span class="dot"></span>.pptx · Content Unit · 3m 40s</div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ================================ BEFORE / AFTER ================================ -->
+<section>
+  <div class="container">
+    <div class="section-eyebrow">Same work · different worker</div>
+    <h2 class="section-h">You already know how to do it. <em>Vision AI does it faster.</em></h2>
+    <p class="section-lede">Five jobs solo founders burn a week on. Same output, less time.</p>
+
+    <div class="before-after">
+      <div class="ba-head">The job</div>
+      <div class="ba-head">Manual</div>
+      <div class="ba-head">Vision AI</div>
+
+      <div class="ba-row job">Draft investor outreach</div>
+      <div class="ba-row old">2 hours · generic</div>
+      <div class="ba-row new">Personalized from live signals · 4 min</div>
+
+      <div class="ba-row job">Build a pitch deck</div>
+      <div class="ba-row old">A full weekend in Keynote</div>
+      <div class="ba-row new">13 slides · your voice · in 4 min</div>
+
+      <div class="ba-row job">Research 30 investors</div>
+      <div class="ba-row old">20 open tabs · half a day</div>
+      <div class="ba-row new">Ranked xlsx with warm-intro odds</div>
+
+      <div class="ba-row job">Write a month of content</div>
+      <div class="ba-row old">A freelancer · $2k/mo</div>
+      <div class="ba-row new">One Content Unit · shipped overnight</div>
+
+      <div class="ba-row job">Answer "what did we quote them?"</div>
+      <div class="ba-row old">Memory + scattered docs</div>
+      <div class="ba-row new">Your second brain answers, with sources</div>
+    </div>
+  </div>
+</section>
+
+<!-- ================================ HOW IT WORKS ================================ -->
+<section>
+  <div class="container">
+    <div class="section-eyebrow">How it works</div>
+    <h2 class="section-h">Describe. Hire. <em>Delegate.</em></h2>
+    <p class="section-lede">Three steps between "one idea" and "a functioning org that ships."</p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">01</div>
+        <h3>Describe</h3>
+        <p>One prompt. "Build me a fundraising ops company." The CEO drafts the org — Units, Supervisors, specialists. You approve or edit.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">02</div>
+        <h3>Hire</h3>
+        <p>The org materializes in seconds. Every employee has a role, a scoped mandate, and access to the tools they need — Gmail, Slack, files, MCP servers.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">03</div>
+        <h3>Delegate</h3>
+        <p>Talk to the CEO like a co-founder. It plans, delegates across Units, synthesizes the final deliverable. Approval-gated actions ship on your tap.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================================ PRICING ================================ -->
+<section id="pricing">
+  <div class="container">
+    <div style="text-align:center;">
+      <div class="section-eyebrow">Pricing</div>
+      <h2 class="section-h" style="margin-left:auto;margin-right:auto;">One flat price. <em>Every employee.</em></h2>
+      <p class="section-lede" style="margin-left:auto;margin-right:auto;">No per-seat, no per-token, no metering surprises. Founders hate metered pricing. So do we.</p>
+    </div>
+
+    <div class="price-card">
+      <div class="price-badge">Founding 100 · seats open</div>
       <div>
-        <h1>Vision AI <span class="subtitle">· Playground</span></h1>
+        <span class="price-amount">$29</span>
+        <span class="price-per">/ mo</span>
       </div>
+      <p class="price-lede">Everything below, unlimited, forever locked at this price for the founding cohort.</p>
+      <ul class="price-list">
+        <li><span class="tick">✓</span> <span><strong>Unlimited</strong> Companies, Units, employees</span></li>
+        <li><span class="tick">✓</span> <span><strong>Every action tool</strong> — .pptx, .docx, .xlsx, email, Slack, files, MCP</span></li>
+        <li><span class="tick">✓</span> <span><strong>Verification layer</strong> — zero fabricated evidence</span></li>
+        <li><span class="tick">✓</span> <span><strong>Approval-gated actions</strong> — nothing sends without you</span></li>
+        <li><span class="tick">✓</span> <span><strong>Second brain</strong> — cross-turn memory that actually sticks</span></li>
+        <li><span class="tick">✓</span> <span><strong>Price locked</strong> at $29 for life</span></li>
+      </ul>
+      <a href="/app/" class="btn-primary" style="width:100%;justify-content:center;">
+        Start free — no card
+        <span class="arrow">→</span>
+      </a>
+      <p class="price-fine">7-day zero-risk guarantee · a working employee doing real work, or a full refund.</p>
     </div>
-    <div class="header-status">
-      <span class="pulse"></span>
-      <span id="header-status"></span>
+  </div>
+</section>
+
+<!-- ================================ FAQ ================================ -->
+<section id="faq">
+  <div class="container">
+    <div class="section-eyebrow">Common questions</div>
+    <h2 class="section-h" style="text-align:center;margin-left:auto;margin-right:auto;">Answered.</h2>
+
+    <div class="faq">
+      <details class="faq-item">
+        <summary class="faq-q">
+          <span>How is this different from ChatGPT / Claude?</span>
+          <span class="plus">+</span>
+        </summary>
+        <div class="faq-a">A chatbot gives you text. Vision AI gives you an org: a CEO that plans, Supervisors that delegate, specialists that ship finished .pptx / .docx / .xlsx files and take real actions. Plus the trust layer — verification and approval-gating — that a raw model doesn't have.</div>
+      </details>
+
+      <details class="faq-item">
+        <summary class="faq-q">
+          <span>What does "approval-gated" actually mean?</span>
+          <span class="plus">+</span>
+        </summary>
+        <div class="faq-a">Every irreversible action — sending an email, posting to Slack, publishing a file — is queued until you tap approve. Nothing leaves your control silently. You can also whitelist specific action types you want auto-approved.</div>
+      </details>
+
+      <details class="faq-item">
+        <summary class="faq-q">
+          <span>Can I use my own AI model?</span>
+          <span class="plus">+</span>
+        </summary>
+        <div class="faq-a">Yes. Vision AI runs on gpt-oss locally by default, and plugs into Anthropic, OpenAI, or your own Ollama endpoint. Bring your own keys — we don't mark up tokens.</div>
+      </details>
+
+      <details class="faq-item">
+        <summary class="faq-q">
+          <span>What happens on day one?</span>
+          <span class="plus">+</span>
+        </summary>
+        <div class="faq-a">Type your business into the CEO. It designs the org. You approve. First deliverable ships within the hour — usually a research doc, a spreadsheet, or a first draft of outreach. The average founder deploys three Units on day one.</div>
+      </details>
+
+      <details class="faq-item">
+        <summary class="faq-q">
+          <span>What if it doesn't work for me?</span>
+          <span class="plus">+</span>
+        </summary>
+        <div class="faq-a">7-day zero-risk guarantee. If you don't have a working employee doing real work within the first week, email me and I'll refund you. The risk is mine.</div>
+      </details>
     </div>
-  </header>
+  </div>
+</section>
 
-  <!-- LEFT: Studio Chat -->
-  <aside class="left">
-    <div class="chat-header">
-      <div class="title">Studio Chat<span id="chat-target-badge" class="chat-target-badge">Unit</span></div>
-      <div class="actions">
-        <button class="ghost small" id="clear-chat-btn" title="Clear chat history (does not delete Units or Companies)">Clear</button>
-        <button class="ghost small" id="new-session-btn">+ New</button>
-      </div>
+<!-- ================================ FINAL CTA ================================ -->
+<section class="final-cta">
+  <div class="container">
+    <h2 class="section-h">Your first hire is <em>waiting.</em></h2>
+    <p class="section-lede" style="margin-left:auto;margin-right:auto;">Founding 100 seats are open. Every new employee, tool, and update stays free forever at this price.</p>
+    <div class="hero-actions actions">
+      <a href="/app/" class="btn-primary">
+        Start building free
+        <span class="arrow">→</span>
+      </a>
+      <a href="#pricing" class="btn-ghost">See what's included</a>
     </div>
+  </div>
+</section>
 
-    <div class="chat-messages" id="chat-messages"></div>
-
-    <div class="chat-input">
-      <div class="attached-files" id="attached-files" style="display:none;"></div>
-      <div class="chat-input-inner">
-        <textarea id="chat-input" rows="1" placeholder="Ask, build…  (Shift + Enter for new line)"></textarea>
-        <button class="send-btn" id="send-btn">Send ↑</button>
-      </div>
-      <div class="chat-toolbar">
-        <div class="mode-toggle" id="mode-toggle" title="Plan = the AI only drafts a plan. Work = the AI does the tasks.">
-          <button type="button" class="mode-btn" data-mode="plan" id="mode-plan-btn">Plan</button>
-          <button type="button" class="mode-btn active" data-mode="work" id="mode-work-btn">Work</button>
-        </div>
-        <button type="button" class="ghost small" id="attach-btn" title="Attach a file — the AI will read it (txt, md, csv, json, docx, xlsx, pptx)">📎 Attach</button>
-        <input type="file" id="file-input" multiple style="display:none;">
-      </div>
-    </div>
-  </aside>
-
-  <!-- CENTER: Canvas / Output tabs -->
-  <main class="center">
-    <div class="tabs">
-      <button class="tab active" data-tab="canvas">Canvas</button>
-      <button class="tab" data-tab="org">Org</button>
-      <button class="tab" data-tab="output">Output<span class="dot"></span></button>
-      <div class="spacer"></div>
-      <span class="canvas-count" id="canvas-count"></span>
-    </div>
-
-    <div class="canvas-body" id="tab-canvas">
-      <div id="flow-container" class="flow-container"></div>
-    </div>
-
-    <div class="canvas-body hidden" id="tab-org">
-      <div class="org-tree" id="org-tree">
-        <div class="org-empty">
-          <h3>No Company selected</h3>
-          Create a Company in the right sidebar, describe what you're building, and the CEO will propose an org chart. Once applied, every CEO / Supervisor / specialist shows up here.
-        </div>
-      </div>
-    </div>
-
-    <div class="canvas-body hidden" id="tab-output">
-      <div class="pending-actions-panel" id="pending-actions-panel" style="display:none;">
-        <div class="pending-actions-head">
-          <span class="pa-title">Pending actions</span>
-          <span class="pa-count" id="pa-count">0</span>
-          <button class="pa-refresh" id="pa-refresh" type="button" title="Refresh">↻</button>
-        </div>
-        <div class="pending-actions-list" id="pending-actions-list"></div>
-      </div>
-      <div class="evidence-panel" id="evidence-panel" style="display:none;">
-        <div class="evidence-toggle" id="evidence-toggle"></div>
-        <div class="evidence-list" id="evidence-list"></div>
-      </div>
-      <div class="result-panel">
-        <div class="result-body" id="result-body">
-          <div class="result-empty">No output yet — send a task to your team and it will show up here.</div>
-        </div>
-      </div>
-    </div>
-  </main>
-
-  <!-- RIGHT: Edit / manage employees -->
-  <aside class="right">
-    <div class="section company-section">
-      <div class="head">Company</div>
-      <div class="row">
-        <select id="company-selector"><option value="">(no Company yet)</option></select>
-      </div>
-      <div id="company-detail" style="display:none;">
-        <div style="display:flex;align-items:center;gap:6px;margin-top:4px;">
-          <span class="ceo-badge">★ CEO hired</span>
-          <span id="company-unit-count" style="font-size:11px;color:var(--text-dim);"></span>
-        </div>
-        <div class="company-purpose" id="company-purpose-display"></div>
-      </div>
-      <div class="hint" id="company-empty-hint" style="font-size:11.5px;color:var(--text-muted);line-height:1.5;">
-        Type what you want to build in the chat — e.g. <em>"build me an AI agency with market, growth, and outreach units — CEO picks the specialists."</em> The CEO will propose the whole hierarchy, and one <strong>yes</strong> hires everyone.
-      </div>
-    </div>
-
-    <div class="section">
-      <div class="head">Unit</div>
-      <div class="session-select">
-        <select id="session-selector"></select>
-      </div>
-    </div>
-
-    <div class="section">
-      <div class="head">
-        <span>Your Team</span>
-        <span id="team-list-count" style="text-transform:none;letter-spacing:0;color:var(--text-dim);font-weight:400;font-size:11px;"></span>
-      </div>
-      <div class="team-list" id="team-list"></div>
-      <div class="hint" id="team-list-empty" style="display:none;">No employees yet — describe your project in the chat and the AI will build a team for you.</div>
-    </div>
-
-    <div class="section">
-      <div class="head">Add Employee</div>
-      <input id="new-role" type="text" placeholder="Role (e.g. Growth Lead)">
-      <textarea id="new-mandate" placeholder="Mandate — what they own on this team"></textarea>
-      <button class="secondary" id="add-btn">+ Add</button>
-    </div>
-
-    <div class="section">
-      <div class="head">
-        <span>Connectors</span>
-        <button class="ghost small" id="connectors-toggle">▾</button>
-      </div>
-      <div class="hint" id="connectors-hint">Give your team access to real tools (Notion, Slack, GitHub…) via MCP. Nothing connected yet.</div>
-      <div id="connectors-list" style="display:none;"></div>
-      <div id="connectors-form" style="display:none; margin-top:10px;">
-        <input id="conn-name" type="text" placeholder="Short name (e.g. notion)">
-        <input id="conn-command" type="text" placeholder="Command (e.g. npx)">
-        <input id="conn-args" type="text" placeholder="Args, space-separated">
-        <input id="conn-env" type="text" placeholder="ENV_VAR=value ENV_VAR2=value (optional)">
-        <button class="secondary" id="conn-add-btn">+ Connect</button>
-      </div>
-    </div>
-  </aside>
-
-</div>
+<footer>
+  <div class="brand-big">Vision AI</div>
+  <p>The AI co-founder for solo founders · built by an indie hacker · runs on your machine</p>
+</footer>
 
 <script>
-const API_BASE = (window.location.protocol === 'http:' || window.location.protocol === 'https:')
-  ? window.location.origin
-  : 'http://127.0.0.1:8000';
+  // Nav scroll effect
+  const nav = document.getElementById('topnav');
+  const onScroll = () => nav.classList.toggle('scrolled', window.scrollY > 20);
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
 
-const $ = id => document.getElementById(id);
-const chatMessagesEl = $('chat-messages');
-const chatInputEl = $('chat-input');
-const flowContainer = $('flow-container');
-const teamListEl = $('team-list');
-const teamListCount = $('team-list-count');
-const teamListEmpty = $('team-list-empty');
-const sessionSelector = $('session-selector');
-const canvasCount = $('canvas-count');
-const headerEl = $('app-header');
-const headerStatus = $('header-status');
-const resultBody = $('result-body');
+  // ===================== HERO TREE ANIMATION =====================
+  // A real parent -> child tree drawn as SVG branches + HTML nodes.
+  // Levels: root (CEO) -> units -> specialists. Each scenario declares
+  // the tree; positions get auto-computed so branches always line up
+  // with node centres, regardless of how many units/specialists.
+  const scenarios = [
+    {
+      title: 'Fundraising Ops',
+      prompt: 'build me a fundraising ops company',
+      deliverable: 'Investor list ready · 30 rows · .xlsx',
+      root: { role: 'CEO', tag: 'plans + synthesizes' },
+      units: [
+        { role: 'Content Unit',      tag: 'deck + outreach',
+          children: [{ role: 'Copywriter' }, { role: 'Deck Designer' }] },
+        { role: 'Investor Research', tag: '30 targets',
+          children: [{ role: 'Analyst' }, { role: 'Data Curator' }] },
+        { role: 'Legal Ops',         tag: 'SAFE + terms',
+          children: [{ role: 'Counsel' }] },
+      ],
+    },
+    {
+      title: 'Marketing',
+      prompt: 'spin up a marketing team for LinkedIn',
+      deliverable: '3 video ideas + 60s script · ready',
+      root: { role: 'CEO', tag: 'plans + synthesizes' },
+      units: [
+        { role: 'Content Unit',      tag: 'scripts + posts',
+          children: [{ role: 'Copywriter' }, { role: 'Video Scriptwriter' }] },
+        { role: 'Audience Research', tag: 'personas',
+          children: [{ role: 'Insight Strategist' }, { role: 'Data Curator' }] },
+      ],
+    },
+    {
+      title: 'Research',
+      prompt: 'do audience research on our product',
+      deliverable: '3 personas · with pain points · ready',
+      root: { role: 'CEO', tag: 'plans + synthesizes' },
+      units: [
+        { role: 'Research Unit', tag: 'personas',
+          children: [{ role: 'Audience Analyst' }, { role: 'Data Curator' }, { role: 'Insight Strategist' }] },
+        { role: 'Insights Unit', tag: 'buying triggers',
+          children: [{ role: 'Market Analyst' }, { role: 'Trend Watcher' }] },
+      ],
+    },
+  ];
 
-let currentSessionId = null;
-let lastRunByRole = {};
-let progressTimer = null;
-let currentSteps = null;  // active step-list in the chat log
+  const $prompt = document.getElementById('typed-prompt');
+  const $viz    = document.getElementById('tree-viz');
+  const $svg    = document.getElementById('tree-lines');
+  const $toast  = document.getElementById('deliverable-toast');
+  const $toastText = document.getElementById('deliverable-text');
+  const $title  = document.getElementById('demo-title');
 
-// ------------------------------------------------------------
-// API helper
-async function api(method, path, body) {
-  const res = await fetch(API_BASE + path, {
-    method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `${method} ${path} failed (${res.status})`);
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+
+  async function typeText(el, text, speed = 30) {
+    el.textContent = '';
+    for (const ch of text) {
+      el.textContent += ch;
+      await wait(speed + Math.random() * 18);
+    }
   }
-  if (res.status === 204) return null;
-  return res.json();
-}
 
-// ------------------------------------------------------------
-// Chat message rendering
-// Self-contained markdown -> HTML renderer. Handles the shapes real
-// deliverables use: headings, tables (GFM), bold/italic, ordered +
-// unordered lists, inline + fenced code, links, hr, blockquote.
-// Purposely NOT a full CommonMark parser — no image/reference/nested
-// list support. The output is HTML injected inside a .md container so
-// its CSS wraps every element.
-function renderMarkdown(md) {
-  if (!md) return '';
-  const lines = String(md).replace(/\r\n/g, '\n').split('\n');
-  const out = [];
-  let listStack = []; // stack of 'ul' | 'ol'
-  const closeAllLists = () => { while (listStack.length) out.push(`</${listStack.pop()}>`); };
+  const SVGNS = 'http://www.w3.org/2000/svg';
 
-  const escapeHtml = (s) => String(s).replace(/[&<>"']/g, c => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
-
-  const renderInline = (s) => {
-    let x = escapeHtml(s);
-    // Inline code first — protects contents from further processing
-    const codeSlots = [];
-    x = x.replace(/`([^`]+)`/g, (m, code) => {
-      const idx = codeSlots.length;
-      codeSlots.push(`<code>${code}</code>`);
-      return `C${idx}`;
+  /** Layout: give every node a (%,%) position inside the viz box. */
+  function layout(scenario) {
+    // Row Y positions (viewBox is 0..100 in both dims).
+    const rootY = 12, unitY = 48, specY = 86;
+    // Spread units evenly across horizontal.
+    const units = scenario.units.map((u, i, arr) => {
+      const nx = arr.length === 1
+        ? 50
+        : 14 + (i * (72 / (arr.length - 1)));
+      return { ...u, x: nx, y: unitY };
     });
-    // Bold  **text**
-    x = x.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
-    // Italic  *text* — negative-look tricks kept simple; runs after bold
-    x = x.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
-    // Links  [text](url)
-    x = x.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, txt, url) => {
-      const safe = /^(https?:|mailto:|#|\/)/i.test(url) ? url : '#';
-      return `<a href="${safe}" target="_blank" rel="noopener">${txt}</a>`;
-    });
-    // Restore inline code
-    x = x.replace(/C(\d+)/g, (m, i) => codeSlots[parseInt(i, 10)]);
-    return x;
-  };
-
-  let i = 0;
-  while (i < lines.length) {
-    let line = lines[i];
-
-    // Fenced code block
-    if (line.trim().startsWith('```')) {
-      closeAllLists();
-      const lang = line.trim().slice(3).trim();
-      i++;
-      const buf = [];
-      while (i < lines.length && !lines[i].trim().startsWith('```')) { buf.push(lines[i]); i++; }
-      const cls = lang ? ` class="lang-${escapeHtml(lang)}"` : '';
-      out.push(`<pre><code${cls}>${escapeHtml(buf.join('\n'))}</code></pre>`);
-      i++; // skip closing ```
-      continue;
+    // Spread each unit's specialists evenly under its parent.
+    for (const u of units) {
+      const n = u.children.length;
+      const bandW = 26;                    // horizontal band width per unit
+      const startX = u.x - bandW / 2;
+      u.children = u.children.map((c, i) => ({
+        ...c,
+        x: n === 1 ? u.x : startX + (i * (bandW / (n - 1))),
+        y: specY,
+      }));
     }
-
-    // GFM table: header line, separator line, then data rows
-    if (line.trim().startsWith('|') && i + 1 < lines.length &&
-        /^\s*\|[\s:\-|]+\|\s*$/.test(lines[i + 1])) {
-      closeAllLists();
-      const splitCells = (row) => row.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
-      const headers = splitCells(line);
-      i += 2;
-      const rows = [];
-      while (i < lines.length && lines[i].trim().startsWith('|')) { rows.push(splitCells(lines[i])); i++; }
-      let t = '<table><thead><tr>';
-      headers.forEach(h => { t += `<th>${renderInline(h)}</th>`; });
-      t += '</tr></thead><tbody>';
-      rows.forEach(cells => {
-        t += '<tr>';
-        cells.forEach(c => { t += `<td>${renderInline(c)}</td>`; });
-        t += '</tr>';
-      });
-      t += '</tbody></table>';
-      out.push(t);
-      continue;
-    }
-
-    // Headings
-    let m = line.match(/^\s*(#{1,6})\s+(.+?)\s*#*\s*$/);
-    if (m) {
-      closeAllLists();
-      const level = m[1].length;
-      out.push(`<h${level}>${renderInline(m[2])}</h${level}>`);
-      i++; continue;
-    }
-
-    // Horizontal rule
-    if (/^\s*(?:-{3,}|_{3,}|\*{3,})\s*$/.test(line)) {
-      closeAllLists();
-      out.push('<hr>');
-      i++; continue;
-    }
-
-    // Blockquote
-    if (/^\s*>\s?/.test(line)) {
-      closeAllLists();
-      const buf = [];
-      while (i < lines.length && /^\s*>\s?/.test(lines[i])) {
-        buf.push(lines[i].replace(/^\s*>\s?/, ''));
-        i++;
-      }
-      out.push(`<blockquote>${renderInline(buf.join(' '))}</blockquote>`);
-      continue;
-    }
-
-    // Ordered list item
-    m = line.match(/^\s*\d+\.\s+(.+)$/);
-    if (m) {
-      if (listStack[listStack.length - 1] !== 'ol') { closeAllLists(); out.push('<ol>'); listStack.push('ol'); }
-      out.push(`<li>${renderInline(m[1])}</li>`);
-      i++; continue;
-    }
-
-    // Unordered list item
-    m = line.match(/^\s*[-*+]\s+(.+)$/);
-    if (m) {
-      if (listStack[listStack.length - 1] !== 'ul') { closeAllLists(); out.push('<ul>'); listStack.push('ul'); }
-      out.push(`<li>${renderInline(m[1])}</li>`);
-      i++; continue;
-    }
-
-    // Blank line — close open lists, otherwise skip
-    if (!line.trim()) {
-      closeAllLists();
-      i++; continue;
-    }
-
-    // Paragraph — merge subsequent non-blank, non-block lines
-    closeAllLists();
-    const buf = [line];
-    i++;
-    while (i < lines.length) {
-      const l = lines[i];
-      if (!l.trim()) break;
-      if (/^\s*#{1,6}\s+/.test(l)) break;
-      if (l.trim().startsWith('|')) break;
-      if (l.trim().startsWith('```')) break;
-      if (/^\s*(?:-{3,}|_{3,}|\*{3,})\s*$/.test(l)) break;
-      if (/^\s*\d+\.\s+/.test(l)) break;
-      if (/^\s*[-*+]\s+/.test(l)) break;
-      if (/^\s*>\s?/.test(l)) break;
-      buf.push(l);
-      i++;
-    }
-    out.push(`<p>${renderInline(buf.join(' '))}</p>`);
-  }
-  closeAllLists();
-  return out.join('\n');
-}
-
-function appendMessage(role, text, className) {
-  const msg = document.createElement('div');
-  msg.className = 'msg ' + role + (className ? ' ' + className : '');
-  // Assistant replies are frequently markdown (proposals, headings,
-  // tables). Render them. User messages stay plain — the founder isn't
-  // trying to inject HTML at themselves.
-  if (role === 'assistant') {
-    msg.classList.add('md');
-    msg.innerHTML = renderMarkdown(text);
-  } else {
-    msg.textContent = text;
-  }
-  chatMessagesEl.appendChild(msg);
-  chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
-  saveChatHistory(role, text);
-  return msg;
-}
-
-// ---- Chat + selection persistence (localStorage) ----------------
-// Founder reloads the page, prior chat is still there — like Claude
-// or ChatGPT. Also persist currentCompanyId + currentSessionId so
-// reload restores focus.
-const CHAT_KEY = 'vision_ai_chat_history_v1';
-const SELECTION_KEY = 'vision_ai_selection_v1';
-const CHAT_MAX_MESSAGES = 200;
-
-function saveChatHistory(role, text) {
-  try {
-    const arr = JSON.parse(localStorage.getItem(CHAT_KEY) || '[]');
-    arr.push({ role, text, ts: Date.now() });
-    if (arr.length > CHAT_MAX_MESSAGES) arr.splice(0, arr.length - CHAT_MAX_MESSAGES);
-    localStorage.setItem(CHAT_KEY, JSON.stringify(arr));
-  } catch (e) { /* quota exceeded — silently drop */ }
-}
-
-function clearChatHistory() {
-  localStorage.removeItem(CHAT_KEY);
-}
-
-function restoreChatHistory() {
-  try {
-    const arr = JSON.parse(localStorage.getItem(CHAT_KEY) || '[]');
-    if (!arr.length) return;
-    const emptyState = chatMessagesEl.querySelector('.chat-empty');
-    if (emptyState) emptyState.remove();
-    // Replay without re-saving each one — bypass appendMessage's save
-    arr.forEach(entry => {
-      const msg = document.createElement('div');
-      msg.className = 'msg ' + entry.role;
-      if (entry.role === 'assistant') {
-        msg.classList.add('md');
-        msg.innerHTML = renderMarkdown(entry.text);
-      } else {
-        msg.textContent = entry.text;
-      }
-      chatMessagesEl.appendChild(msg);
-    });
-    chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
-  } catch (e) { /* corrupt storage — ignore */ }
-}
-
-function saveSelection() {
-  try {
-    localStorage.setItem(SELECTION_KEY, JSON.stringify({
-      company_id: currentCompanyId || null,
-      session_id: currentSessionId || null,
-    }));
-  } catch (e) {}
-}
-
-function readSelection() {
-  try { return JSON.parse(localStorage.getItem(SELECTION_KEY) || '{}'); }
-  catch (e) { return {}; }
-}
-
-function appendStatusWithSteps(text, steps) {
-  // Assistant status message with a checklist of steps below
-  const msg = document.createElement('div');
-  msg.className = 'msg assistant status';
-  const label = document.createElement('div');
-  label.textContent = text;
-  const stepsWrap = document.createElement('div');
-  stepsWrap.className = 'msg-steps';
-  steps.forEach((s, i) => {
-    const step = document.createElement('div');
-    step.className = 'step';
-    step.dataset.role = s;
-    const icon = document.createElement('span');
-    icon.className = 'icon';
-    const lbl = document.createElement('span');
-    lbl.textContent = s;
-    step.appendChild(icon);
-    step.appendChild(lbl);
-    stepsWrap.appendChild(step);
-  });
-  msg.appendChild(label);
-  msg.appendChild(stepsWrap);
-  chatMessagesEl.appendChild(msg);
-  chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
-  currentSteps = stepsWrap;
-  return msg;
-}
-
-function updateStep(role, phase) {
-  if (!currentSteps) return;
-  currentSteps.querySelectorAll('.step').forEach(step => {
-    if (step.dataset.role === role) {
-      step.classList.remove('working', 'done');
-      if (phase === 'working') step.classList.add('working');
-      if (phase === 'done') step.classList.add('done');
-    }
-  });
-}
-
-function clearChat() {
-  chatMessagesEl.innerHTML = `
-    <div class="chat-empty">
-      Type what you want to get done. The AI will design your team, show you who they are, and get to work — all right here.
-    </div>`;
-  currentSteps = null;
-}
-
-// ------------------------------------------------------------
-// Team rendering (center canvas + right panel list)
-function initials(role) {
-  return role.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
-}
-
-function renderTeam(members) {
-  // Center canvas: sequential flow
-  flowContainer.innerHTML = '';
-  canvasCount.textContent = members.length ? `${members.length} employee${members.length===1?'':'s'}` : '';
-
-  if (!members.length) {
-    flowContainer.classList.add('empty');
-    const empty = document.createElement('div');
-    empty.className = 'canvas-empty';
-    empty.innerHTML = `
-      <div class="headline">No employees on this team yet</div>
-      <div class="hint">Send a message in the chat on the left. The AI will design a team and show it here as a visual flow.</div>
-    `;
-    flowContainer.appendChild(empty);
-  } else {
-    flowContainer.classList.remove('empty');
-    // Supervisor first, always — visual reinforcement that they're at
-    // the head of the org chart.
-    const sorted = [...members].sort((a, b) => (b.is_supervisor ? 1 : 0) - (a.is_supervisor ? 1 : 0));
-    sorted.forEach(m => {
-      const card = document.createElement('div');
-      card.className = 'emp-node';
-      if (m.is_supervisor) card.classList.add('is-supervisor');
-      const meta = lastRunByRole[m.role];
-      if (meta) {
-        card.classList.add('has-result');
-        if ((meta.fabricated_claims || []).length) card.classList.add('has-fabrication');
-      }
-      const top = document.createElement('div'); top.className = 'top';
-      const topLeft = document.createElement('div'); topLeft.className = 'top-left';
-      const avatar = document.createElement('div');
-      avatar.className = 'avatar'; avatar.textContent = m.is_supervisor ? '★' : initials(m.role);
-      const roleBlock = document.createElement('div');
-      const roleName = document.createElement('div');
-      roleName.className = 'role-name';
-      roleName.textContent = m.role;
-      if (m.is_supervisor) {
-        const badge = document.createElement('span');
-        badge.className = 'role-badge';
-        badge.textContent = 'Supervisor';
-        roleName.appendChild(badge);
-      }
-      const workingBadge = document.createElement('div');
-      workingBadge.className = 'working-badge'; workingBadge.textContent = '● working…';
-      const doneBadge = document.createElement('div');
-      doneBadge.className = 'done-badge'; doneBadge.textContent = '✓ done';
-      roleBlock.appendChild(roleName);
-      roleBlock.appendChild(workingBadge);
-      roleBlock.appendChild(doneBadge);
-      topLeft.appendChild(avatar); topLeft.appendChild(roleBlock);
-      // Supervisor cannot be removed — they're the org's spine
-      if (!m.is_supervisor) {
-        const delBtn = document.createElement('button');
-        delBtn.className = 'icon'; delBtn.textContent = '×'; delBtn.title = 'Remove this employee';
-        delBtn.onclick = () => removeMember(m.role);
-        top.appendChild(topLeft); top.appendChild(delBtn);
-      } else {
-        top.appendChild(topLeft);
-      }
-
-      const mandate = document.createElement('div');
-      mandate.className = 'mandate'; mandate.textContent = m.mandate;
-
-      const metadataEl = document.createElement('div');
-      metadataEl.className = 'metadata';
-      if (meta) {
-        const fabCount = (meta.fabricated_claims || []).length;
-        const fab = fabCount ? `<span class="fab-warn">⚠ ${fabCount} fabricated</span>` : `<span class="fab-ok">✓ clean</span>`;
-        metadataEl.innerHTML = `completeness ${meta.completeness_score ?? 'n/a'} · ${fab}`;
-      }
-
-      card.appendChild(top);
-      card.appendChild(mandate);
-      card.appendChild(metadataEl);
-      flowContainer.appendChild(card);
-    });
+    return {
+      root: { ...scenario.root, x: 50, y: rootY },
+      units,
+    };
   }
 
-  // Right panel: compact list — Supervisor first, no delete button
-  teamListEl.innerHTML = '';
-  teamListCount.textContent = members.length ? `${members.length}` : '';
-  teamListEmpty.style.display = members.length ? 'none' : 'block';
-  const sortedList = [...members].sort((a, b) => (b.is_supervisor ? 1 : 0) - (a.is_supervisor ? 1 : 0));
-  sortedList.forEach(m => {
-    const item = document.createElement('div');
-    item.className = 'team-list-item';
-    if (m.is_supervisor) item.classList.add('is-supervisor');
-    const avatar = document.createElement('div');
-    avatar.className = 'mini-avatar';
-    avatar.textContent = m.is_supervisor ? '★' : initials(m.role);
-    const role = document.createElement('div');
-    role.className = 'role'; role.textContent = m.role;
-    item.appendChild(avatar);
-    item.appendChild(role);
-    if (!m.is_supervisor) {
-      const del = document.createElement('button');
-      del.className = 'icon'; del.textContent = '×';
-      del.onclick = () => removeMember(m.role);
-      item.appendChild(del);
-    }
-    teamListEl.appendChild(item);
-  });
-}
-
-// ------------------------------------------------------------
-// Sessions
-async function refreshSessions() {
-  const sessions = await api('GET', '/api/sessions');
-  sessionSelector.innerHTML = '';
-  if (!sessions.length) {
-    const opt = document.createElement('option');
-    opt.value = ''; opt.textContent = '(none)';
-    sessionSelector.appendChild(opt);
-  } else {
-    sessions.forEach(s => {
-      const opt = document.createElement('option');
-      opt.value = s.session_id;
-      opt.textContent = `${s.session_id.replace('session_', '')} · ${s.member_count} member${s.member_count===1?'':'s'}`;
-      sessionSelector.appendChild(opt);
-    });
-    if (currentSessionId) sessionSelector.value = currentSessionId;
+  /** Build the DOM node for one role. Returns the element (already appended). */
+  function drawNode(role, kind) {
+    const el = document.createElement('div');
+    el.className = 'tree-node' + (kind ? ' ' + kind : '');
+    el.style.left = role.x + '%';
+    el.style.top  = role.y + '%';
+    el.innerHTML =
+      '<span class="role-dot"></span>' +
+      '<span class="role-name">' + role.role + '</span>' +
+      (role.tag ? '<span class="role-tag">· ' + role.tag + '</span>' : '');
+    $viz.appendChild(el);
+    return el;
   }
-  return sessions;
-}
 
-async function selectSession(id) {
-  currentSessionId = id;
-  lastRunByRole = {};
-  // Note: no longer clearChat() here. Chat is app-level and persists
-  // across selections; switching between Units doesn't wipe the log.
-  // The founder taps "Clear" if they want a fresh window.
-  switchTab('canvas');
-  await refreshSessions();
-  sessionSelector.value = id;
-  await loadTeam(id);
-  saveSelection();
-}
-
-async function loadTeam(sessionId) {
-  const data = await api('GET', `/api/sessions/${sessionId}/team`);
-  renderTeam(data.members);
-}
-
-async function newSession() {
-  // "+ New" = HARD RESET. Nothing from past sessions bleeds through:
-  // chat wiped, Company deselected, Unit deselected, Team hidden,
-  // saved localStorage state cleared. No server-side session gets
-  // created here — nothing is real until the founder types something.
-  clearChatHistory();       // wipes localStorage chat
-  clearChat();              // resets DOM chat area to empty state
-  currentCompanyId = null;
-  currentCompanyMeta = null;
-  currentSessionId = null;
-  currentProposal = null;
-  try { localStorage.removeItem(SELECTION_KEY); } catch (_) {}
-  companySelector.value = '';
-  companyDetailEl.style.display = 'none';
-  if (companyEmptyHint) companyEmptyHint.style.display = '';
-  // Blank the Unit dropdown so no old session is auto-selected
-  sessionSelector.innerHTML = '<option value="">(no Unit)</option>';
-  // Blank the team list
-  const teamList = $('team-list');
-  if (teamList) teamList.innerHTML = '';
-  const teamEmpty = $('team-list-empty');
-  if (teamEmpty) teamEmpty.style.display = '';
-  const teamCount = $('team-list-count');
-  if (teamCount) teamCount.textContent = '';
-  // Reset chat target badge + placeholder
-  refreshChatTargetBadge();
-  // Return to Canvas tab (empty state) — no output to show
-  switchTab('canvas');
-  const flow = $('flow-container');
-  if (flow) flow.innerHTML = '';
-  // Result body / evidence panel — clean slate
-  resultBody.classList.remove('md');
-  resultBody.innerHTML = '<div class="result-empty">No output yet — send a task to your team and it will show up here.</div>';
-  renderEvidence([]);
-}
-
-// ------------------------------------------------------------
-// Progress polling
-function applyProgressToCards(progress) {
-  const doneMap = {};
-  (progress.completed || []).forEach(c => { doneMap[c.role] = c; });
-
-  document.querySelectorAll('.emp-node').forEach(card => {
-    const role = card.querySelector('.role-name').textContent;
-    card.classList.remove('is-working', 'has-result', 'has-fabrication');
-    if (progress.current_role === role) {
-      card.classList.add('is-working');
-      updateStep(role, 'working');
-    } else if (doneMap[role]) {
-      const meta = doneMap[role];
-      lastRunByRole[role] = meta;
-      card.classList.add('has-result');
-      if ((meta.fabricated_claims || []).length) card.classList.add('has-fabrication');
-      updateStep(role, 'done');
-      const metadataEl = card.querySelector('.metadata');
-      if (metadataEl) {
-        const fabCount = (meta.fabricated_claims || []).length;
-        const fab = fabCount ? `<span class="fab-warn">⚠ ${fabCount} fabricated</span>` : `<span class="fab-ok">✓ clean</span>`;
-        metadataEl.innerHTML = `completeness ${meta.completeness_score ?? 'n/a'} · ${fab}`;
-      }
-    }
-  });
-
-  if (progress.phase === 'role_working' && progress.current_role) {
-    headerStatus.textContent = `${progress.current_role} is working…`;
-  } else if (progress.phase === 'synthesizing') {
-    headerStatus.textContent = 'Merging everyone\'s work…';
-  } else if (progress.phase === 'starting') {
-    headerStatus.textContent = 'Kicking off the team…';
-  }
-}
-
-async function pollProgress() {
-  if (!currentSessionId) return;
-  try {
-    const p = await api('GET', `/api/sessions/${currentSessionId}/progress`);
-    applyProgressToCards(p);
-    if (p.phase === 'complete' || p.phase === 'error' || p.phase === 'idle') {
-      if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
-    }
-  } catch (e) { /* silent */ }
-}
-function startProgressPolling() {
-  if (progressTimer) clearInterval(progressTimer);
-  progressTimer = setInterval(pollProgress, 2000);
-  pollProgress();
-}
-function stopProgressPolling() {
-  if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
-}
-
-function setBusy(busy, msg) {
-  document.querySelectorAll('button').forEach(b => b.disabled = busy);
-  headerEl.classList.toggle('busy', busy);
-  headerStatus.textContent = busy ? (msg || 'Working…') : '';
-}
-
-// Escalating busy label — swaps text as time passes so a long-running
-// run doesn't look frozen at "Understanding…". Any subsequent
-// setBusy(true, ...) call cancels the escalation and shows its own
-// label; setBusy(false) clears everything.
-let _busyEscalationTimer = null;
-function startBusyEscalation(steps) {
-  stopBusyEscalation();
-  let i = 0;
-  const tick = () => {
-    if (i >= steps.length) return;
-    const step = steps[i++];
-    setBusy(true, step.label);
-    _busyEscalationTimer = setTimeout(tick, step.after_ms || 6000);
-  };
-  tick();
-}
-function stopBusyEscalation() {
-  if (_busyEscalationTimer) {
-    clearTimeout(_busyEscalationTimer);
-    _busyEscalationTimer = null;
-  }
-}
-
-// Poll a background run kicked off by /api/chat until it finishes.
-// Non-blocking — chat stays usable. Escalating busy label + subtle
-// header status so the founder sees this is a live long-running job,
-// not a stuck request. Runs concurrently: multiple polls at once are
-// fine because each poll only touches its own run_id.
-const _activePolls = new Map(); // run_id -> intervalId
-function startRunPolling(runId, opts = {}) {
-  if (_activePolls.has(runId)) return; // already polling
-  const started = Date.now();
-  const intervalMs = 4000;
-  appendMessage('assistant', `Background run started (${runId}). Deliverable will pop onto the Output tab when ready.`);
-  const tick = async () => {
-    let rec;
+  /** Draw an SVG connector between (px,py) and (cx,cy) — smooth S-curve. */
+  function drawBranch(px, py, cx, cy) {
+    // Control points sit at the vertical midpoint so the curve enters
+    // and leaves each end going down — the classic org-chart connector.
+    const midY = (py + cy) / 2;
+    const path = document.createElementNS(SVGNS, 'path');
+    path.setAttribute('class', 'branch');
+    path.setAttribute('d',
+      'M ' + px + ' ' + py +
+      ' C ' + px + ' ' + midY +
+      ',   ' + cx + ' ' + midY +
+      ',   ' + cx + ' ' + cy);
+    // Set stroke-dasharray equal to the path length so the draw-in is
+    // proportional regardless of branch length.
+    $svg.appendChild(path);
     try {
-      rec = await api('GET', `/api/runs/${encodeURIComponent(runId)}`);
-    } catch (err) {
-      // Transient — keep polling. Real errors surface as failed status.
-      return;
-    }
-    if (rec.status === 'done') {
-      clearInterval(_activePolls.get(runId));
-      _activePolls.delete(runId);
-      resultBody.classList.add('md');
-      resultBody.innerHTML = renderMarkdown(rec.output || '_(empty output)_');
-      renderEvidence(rec.evidence || []);
-      fetchPendingActions();
-      switchTab('output');
-      const secs = Math.round((Date.now() - started) / 1000);
-      appendMessage('assistant', `Done in ${secs}s. Full deliverable is on the Output tab.`);
-      return;
-    }
-    if (rec.status === 'failed') {
-      clearInterval(_activePolls.get(runId));
-      _activePolls.delete(runId);
-      appendMessage('assistant', `Run failed: ${rec.error || 'unknown error'}`);
-      return;
-    }
-    // still queued or running — update a lightweight status hint in the header
-    const elapsed = Math.round((Date.now() - started) / 1000);
-    if (!_busyEscalationTimer) {
-      headerStatus.textContent = `Run in progress · ${elapsed}s`;
-    }
-  };
-  const iv = setInterval(tick, intervalMs);
-  _activePolls.set(runId, iv);
-  tick(); // fire once immediately so the first status shows fast
-}
-
-// ------------------------------------------------------------
-// The main "send a message" flow — this is what the chat does
-async function sendMessage() {
-  const text = chatInputEl.value.trim();
-  if (!text && !attachedFiles.length) return;
-
-  chatInputEl.value = '';
-  chatInputEl.style.height = 'auto';
-
-  const emptyState = chatMessagesEl.querySelector('.chat-empty');
-  if (emptyState) emptyState.remove();
-
-  // Fold attached files' extracted content into what the AI actually
-  // sees, but keep the chat bubble showing what the founder typed
-  // (plus a note of which files were attached) — the raw preview dump
-  // would be unreadable noise in the transcript.
-  let effectiveText = text;
-  if (attachedFiles.length) {
-    const blocks = attachedFiles.map(f =>
-      `[Attached file: ${f.filename}]\n---\n${f.preview}\n---`
-    ).join('\n\n');
-    effectiveText = text ? `${blocks}\n\n${text}` : blocks;
+      const len = path.getTotalLength();
+      path.style.strokeDasharray  = len;
+      path.style.strokeDashoffset = len;
+    } catch { /* getTotalLength unsupported – fallback dash values still work */ }
+    return path;
   }
-  const displayText = attachedFiles.length
-    ? `${text}${text ? '\n' : ''}📎 ${attachedFiles.map(f => f.filename).join(', ')}`
-    : text;
 
-  appendMessage('user', displayText);
-  attachedFiles = [];
-  renderAttachedFiles();
+  function clearTree() {
+    // Wipe every prior tree-node div but keep the svg element.
+    $viz.querySelectorAll('.tree-node').forEach(n => n.remove());
+    $svg.innerHTML = '';
+  }
 
-  try {
-    // Router calls can be fast (casual_chat, add_unit) or take many
-    // minutes (run_task_company cascades a whole pipeline). We don't
-    // know which until the response comes back, so escalate the busy
-    // label over time — "Understanding…" that never changes reads as
-    // "frozen" even when the backend is actively working.
-    startBusyEscalation([
-      { label: 'Understanding…', after_ms: 5000 },
-      { label: 'Model is thinking — this may take a while.', after_ms: 15000 },
-      { label: 'Still working — long reports run 30s to a few minutes.', after_ms: 30000 },
-      { label: 'Deep work in progress — do not close the tab.', after_ms: 60000 },
-      { label: 'Company-level runs can take 15–30 minutes on gpt-oss.', after_ms: 120000 },
-      { label: 'Still going. Watch the browser tab title for updates.' },
-    ]);
+  async function runScenario(s) {
+    $title.textContent = 'Vision AI · ' + s.title;
+    $toast.classList.remove('show');
+    clearTree();
 
-    // ONE endpoint above Unit + Company altitudes. Router picks the
-    // intent from the message + current selection and does the right
-    // thing. Everything below is just plumbing the side_effects back
-    // into the UI — no mode toggles, no wrong-path errors.
-    const chatRes = await api('POST', `/api/chat`, {
-      message: effectiveText,
-      current_company_id: currentCompanyId || null,
-      current_session_id: currentSessionId || null,
-      mode: chatMode,
-    });
+    await typeText($prompt, s.prompt);
+    await wait(300);
 
-    appendMessage('assistant', chatRes.reply);
+    const laid = layout(s);
 
-    const fx = chatRes.side_effects || {};
-    let refreshedCompanies = false;
-    let refreshedOrg = false;
+    // 1. Root appears first.
+    const rootEl = drawNode(laid.root, 'root');
+    await wait(60);
+    rootEl.classList.add('show');
+    await wait(280);
 
-    if (fx.company_id) {
-      // A Company was created or focused — pull the list, select it,
-      // update sidebar detail + org tree.
-      await refreshCompanies();
-      companySelector.value = fx.company_id;
-      await selectCompany(fx.company_id);
-      refreshedCompanies = true;
+    // 2. Draw branches root -> each unit, then reveal the unit at the tip.
+    const unitEls = [];
+    const unitBranches = [];
+    for (const u of laid.units) {
+      const branch = drawBranch(laid.root.x, laid.root.y, u.x, u.y);
+      unitBranches.push(branch);
+      // Trigger the draw-in in the next tick so the initial dash offset is applied first.
+      await wait(20);
+      branch.classList.add('drawn', 'active');
+      await wait(320);
+      const el = drawNode(u);
+      unitEls.push(el);
+      await wait(30);
+      el.classList.add('show');
+      await wait(100);
     }
 
-    if (fx.pending_proposal) {
-      // The CEO's proposal is already in the chat reply text —
-      // nothing extra to render on the sidebar in v1.
-      currentProposal = fx.pending_proposal.units || null;
-    }
-
-    if (fx.applied_units && fx.applied_units.length) {
-      // Fresh Units were materialized — refresh sessions, refresh the
-      // org tree, and auto-select the first new Unit so Canvas has
-      // real content (Supervisor + specialists as horizontal cards)
-      // instead of a stale placeholder.
-      await refreshSessions();
-      if (fx.company_id) await selectCompany(fx.company_id);
-      const firstUnitId = fx.applied_units[0].unit_id;
-      if (firstUnitId) {
-        await selectSession(firstUnitId);
-      }
-      switchTab('org');
-      refreshedOrg = true;
-    }
-
-    if (fx.session_id && !(fx.applied_units && fx.applied_units.length)) {
-      // The router auto-created (or focused) a Unit — load its team into
-      // Canvas so the founder sees who's on the case.
-      if (fx.session_id !== currentSessionId) {
-        await selectSession(fx.session_id);
-      } else {
-        // Same session, but team may have changed — refresh Canvas cards
-        const teamNow = await api('GET', `/api/sessions/${currentSessionId}/team`);
-        renderTeam(teamNow.members || []);
+    // 3. For each unit, draw branches to its specialists, then reveal them.
+    const specEls = [];
+    for (let i = 0; i < laid.units.length; i++) {
+      const u = laid.units[i];
+      for (const c of u.children) {
+        const branch = drawBranch(u.x, u.y, c.x, c.y);
+        await wait(15);
+        branch.classList.add('drawn');
+        await wait(160);
+        const el = drawNode(c);
+        specEls.push(el);
+        await wait(20);
+        el.classList.add('show');
       }
     }
 
-    if (fx.run_output != null) {
-      resultBody.classList.add('md');
-      resultBody.innerHTML = renderMarkdown(fx.run_output || '_(empty output)_');
-      renderEvidence(fx.evidence || []);
-      fetchPendingActions();
-      switchTab('output');
+    await wait(400);
+
+    // 4. Show units + a few specialists "working"; fade unit branches to done.
+    for (const u of unitEls) u.classList.add('working');
+    for (const b of unitBranches) { b.classList.remove('active'); b.classList.add('done'); }
+    const workers = specEls.slice(0, 3);
+    for (const w of workers) w.classList.add('working');
+    await wait(1600);
+
+    // 5. Everyone done + deliverable toast.
+    for (const u of unitEls) { u.classList.remove('working'); u.classList.add('done'); }
+    for (const w of workers)  { w.classList.remove('working'); w.classList.add('done'); }
+    await wait(200);
+    $toastText.textContent = s.deliverable;
+    $toast.classList.add('show');
+    await wait(3200);
+
+    // 6. Fade out.
+    [rootEl, ...unitEls, ...specEls].forEach(el => el.classList.remove('show'));
+    await wait(500);
+  }
+
+  (async () => {
+    let i = 0;
+    await wait(500);
+    while (true) {
+      await runScenario(scenarios[i % scenarios.length]);
+      i++;
     }
-
-    if (fx.run_id) {
-      // Background run kicked off — client polls until done, then
-      // renders the deliverable on the Output tab. Chat is free to
-      // continue in the meantime.
-      startRunPolling(fx.run_id);
-    }
-
-    if (fx.org_refreshed && !refreshedOrg) {
-      await refreshOrgTree();
-    }
-
-    // If nothing more interesting happened but a Company is now
-    // selected, keep the sidebar in sync with any Unit-count change.
-    if (fx.company_id && !fx.applied_units?.length && !fx.run_output) {
-      // (selectCompany already ran above when company_id was set)
-    }
-    refreshChatTargetBadge();
-
-    stopBusyEscalation();
-    setBusy(false);
-    return;
-  } catch (e) {
-    stopBusyEscalation();
-    appendMessage('assistant', 'Something went wrong: ' + e.message);
-    setBusy(false);
-    return;
-  } finally {
-    stopProgressPolling();
-    stopBusyEscalation();
-    setBusy(false);
-  }
-}
-
-async function addMember() {
-  const role = $('new-role').value.trim();
-  const mandate = $('new-mandate').value.trim();
-  if (!role || !mandate) { appendMessage('assistant', 'Both role and mandate are required to add an employee.'); return; }
-  if (!currentSessionId) await newSession();
-  setBusy(true, 'Adding…');
-  try {
-    const data = await api('POST', `/api/sessions/${currentSessionId}/team/members`, { role, mandate });
-    renderTeam(data.members);
-    await refreshSessions();
-    sessionSelector.value = currentSessionId;
-    $('new-role').value = '';
-    $('new-mandate').value = '';
-    appendMessage('assistant', `Added ${role} to your team.`);
-  } catch (e) {
-    appendMessage('assistant', 'Error adding: ' + e.message);
-  } finally { setBusy(false); }
-}
-
-async function removeMember(role) {
-  if (!currentSessionId) return;
-  if (!confirm(`Remove "${role}" from this team?`)) return;
-  setBusy(true, 'Removing…');
-  try {
-    const data = await api('DELETE', `/api/sessions/${currentSessionId}/team/members/${encodeURIComponent(role)}`);
-    delete lastRunByRole[role];
-    renderTeam(data.members);
-    await refreshSessions();
-    sessionSelector.value = currentSessionId;
-    appendMessage('assistant', `Removed ${role} from your team.`);
-  } catch (e) {
-    appendMessage('assistant', 'Error removing: ' + e.message);
-  } finally { setBusy(false); }
-}
-
-function switchTab(name) {
-  document.querySelectorAll('.tab').forEach(t => {
-    t.classList.toggle('active', t.dataset.tab === name);
-    if (t.dataset.tab === name) t.classList.remove('has-new');
-  });
-  $('tab-canvas').classList.toggle('hidden', name !== 'canvas');
-  $('tab-org').classList.toggle('hidden', name !== 'org');
-  $('tab-output').classList.toggle('hidden', name !== 'output');
-  if (name === 'org') refreshOrgTree();
-}
-
-const evidencePanel = $('evidence-panel');
-const evidenceToggle = $('evidence-toggle');
-const evidenceList = $('evidence-list');
-let evidenceOpen = false;
-
-function escapeHtml(s) {
-  return String(s ?? '').replace(/[&<>"']/g, c => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
-}
-
-const EVIDENCE_BADGE = {
-  verified: '✅',
-  flagged_unknown: '⚠️',
-  unsourced_claim: '❗',
-};
-
-// Evidence ledger — renders the structured claims list a deliverable's
-// evidence extraction produced, as visible chips + an expandable list,
-// instead of leaving verification status buried in prose. Hidden
-// entirely when there's nothing to show (e.g. the interim team-hired
-// report, or a deliverable with zero extractable claims).
-function renderEvidence(claims) {
-  claims = Array.isArray(claims) ? claims : [];
-  if (!claims.length) {
-    evidencePanel.style.display = 'none';
-    evidenceList.classList.remove('open');
-    evidenceToggle.classList.remove('open');
-    evidenceOpen = false;
-    return;
-  }
-
-  const counts = { verified: 0, flagged_unknown: 0, unsourced_claim: 0 };
-  claims.forEach(c => { if (c.status in counts) counts[c.status]++; });
-
-  evidenceToggle.innerHTML = `
-    <span>Evidence</span>
-    <span class="chip verified">✅ ${counts.verified} verified</span>
-    <span class="chip unknown">⚠️ ${counts.flagged_unknown} unknown</span>
-    ${counts.unsourced_claim ? `<span class="chip unsourced">❗ ${counts.unsourced_claim} unsourced</span>` : ''}
-    <span class="caret">▾</span>
-  `;
-
-  evidenceList.innerHTML = claims.map(c => {
-    const badge = EVIDENCE_BADGE[c.status] || '•';
-    const rowClass = c.status === 'unsourced_claim' ? ' unsourced' : '';
-    const source = c.source
-      ? `<a class="source" href="${escapeHtml(c.source)}" target="_blank" rel="noopener">${escapeHtml(c.source)}</a>`
-      : '';
-    return `<div class="evidence-row${rowClass}">
-      <span class="badge">${badge}</span>
-      <span class="text">${escapeHtml(c.text)}${source}</span>
-    </div>`;
-  }).join('');
-
-  evidencePanel.style.display = '';
-  // Default open only when there's something worth flagging immediately —
-  // an unsourced claim is the one case a user should see without an extra click.
-  evidenceOpen = counts.unsourced_claim > 0;
-  evidenceList.classList.toggle('open', evidenceOpen);
-  evidenceToggle.classList.toggle('open', evidenceOpen);
-}
-
-evidenceToggle.addEventListener('click', () => {
-  evidenceOpen = !evidenceOpen;
-  evidenceList.classList.toggle('open', evidenceOpen);
-  evidenceToggle.classList.toggle('open', evidenceOpen);
-});
-
-// Pending actions — the DOING layer's front door. When a specialist
-// calls a mutating action (send_email, post_slack, write_file), the
-// backend queues it here and returns a receipt. The founder taps
-// Approve to actually fire it. Poll every 8s; also fetch right after
-// any run.
-const pendingPanel = $('pending-actions-panel');
-const pendingList = $('pending-actions-list');
-const pendingCount = $('pa-count');
-
-function renderPendingActions(items) {
-  items = Array.isArray(items) ? items : [];
-  // Show only the last ~20 to avoid a wall of history; pending first.
-  const sorted = [...items].sort((a, b) => {
-    if (a.status === 'pending' && b.status !== 'pending') return -1;
-    if (b.status === 'pending' && a.status !== 'pending') return 1;
-    return (b.created_at || 0) - (a.created_at || 0);
-  }).slice(0, 20);
-  const pendingN = items.filter(i => i.status === 'pending').length;
-  pendingCount.textContent = pendingN;
-  if (!sorted.length) {
-    pendingPanel.style.display = 'none';
-    return;
-  }
-  pendingPanel.style.display = '';
-  pendingList.innerHTML = sorted.map(a => {
-    const status = a.status || 'pending';
-    const buttons = status === 'pending'
-      ? `<div class="pa-buttons">
-           <button class="pa-btn approve" data-id="${escapeHtml(a.id)}" data-op="approve">Approve</button>
-           <button class="pa-btn reject" data-id="${escapeHtml(a.id)}" data-op="reject">Reject</button>
-         </div>`
-      : `<span class="pa-status">${escapeHtml(status)}</span>`;
-    const detail = status === 'executed' && a.result
-      ? `<div class="pa-preview" style="color:var(--ok)">✓ ${escapeHtml(String(a.result).slice(0, 200))}</div>`
-      : status === 'failed' && a.error
-      ? `<div class="pa-preview" style="color:var(--danger)">✗ ${escapeHtml(String(a.error).slice(0, 200))}</div>`
-      : '';
-    return `<div class="pa-row ${escapeHtml(status)}">
-      <div class="pa-meta">
-        <span class="pa-action-name">${escapeHtml(a.action_name)}</span>
-        <div class="pa-preview">${escapeHtml(a.preview || '')}</div>
-        ${detail}
-      </div>
-      ${buttons}
-    </div>`;
-  }).join('');
-}
-
-async function fetchPendingActions() {
-  try {
-    const res = await fetch('/api/pending_actions');
-    if (!res.ok) return;
-    const data = await res.json();
-    renderPendingActions(data.items || []);
-  } catch (err) { /* server may be restarting — silent */ }
-}
-
-pendingList.addEventListener('click', async (e) => {
-  const btn = e.target.closest('.pa-btn');
-  if (!btn) return;
-  const id = btn.dataset.id;
-  const op = btn.dataset.op;
-  if (!id || !op) return;
-  // Disable both buttons on the row to prevent double-taps.
-  btn.parentElement.querySelectorAll('.pa-btn').forEach(b => { b.disabled = true; });
-  try {
-    const res = await fetch(`/api/pending_actions/${encodeURIComponent(id)}/${op}`, { method: 'POST' });
-    const data = await res.json().catch(() => ({}));
-    // Refetch so the row re-renders with executed/failed/rejected state.
-    fetchPendingActions();
-  } catch (err) {
-    btn.parentElement.querySelectorAll('.pa-btn').forEach(b => { b.disabled = false; });
-  }
-});
-
-$('pa-refresh').addEventListener('click', fetchPendingActions);
-setInterval(fetchPendingActions, 8000);
-fetchPendingActions();
-
-// ================================================================
-// Company / CEO / hierarchy (Phase 3a UI — the "build my org chart
-// by prompt" flow that used to be curl-only).
-// ================================================================
-
-let currentCompanyId = null;
-let currentProposal = null;       // mirrors server-side pending proposal, for reference
-let currentCompanyMeta = null;    // full Company object from /api/companies/{id}
-
-const companySelector = $('company-selector');
-const companyDetailEl = $('company-detail');
-const companyEmptyHint = $('company-empty-hint');
-const chatTargetBadge = $('chat-target-badge');
-const orgTreeEl = $('org-tree');
-
-function refreshChatTargetBadge() {
-  const inCompany = !!currentCompanyMeta;
-  chatTargetBadge.classList.toggle('company-mode', inCompany);
-  chatTargetBadge.textContent = inCompany
-    ? `CEO of ${currentCompanyMeta.name}`
-    : (currentSessionId ? 'Unit' : 'No target');
-  chatInputEl.placeholder = inCompany
-    ? "Tell the CEO what to build or run. One yes hires the team."
-    : 'Type anything — build me a company, run market research, add a specialist…';
-}
-
-async function refreshCompanies() {
-  try {
-    const data = await api('GET', '/api/companies');
-    const companies = data.companies || [];
-    const prev = currentCompanyId;
-    companySelector.innerHTML = '<option value="">(no Company yet)</option>' +
-      companies.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
-    if (prev && companies.some(c => c.id === prev)) {
-      companySelector.value = prev;
-    }
-  } catch (e) {
-    console.error('refreshCompanies failed', e);
-  }
-}
-
-async function selectCompany(id) {
-  currentCompanyId = id || null;
-  currentProposal = null;
-  if (!id) {
-    companyDetailEl.style.display = 'none';
-    if (companyEmptyHint) companyEmptyHint.style.display = '';
-    currentCompanyMeta = null;
-    refreshChatTargetBadge();
-    refreshOrgTree();
-    saveSelection();
-    return;
-  }
-  try {
-    const meta = await api('GET', `/api/companies/${encodeURIComponent(id)}`);
-    currentCompanyMeta = meta;
-    $('company-purpose-display').textContent = meta.purpose || '(no purpose set)';
-    $('company-unit-count').textContent = `· ${(meta.unit_ids || []).length} Unit${(meta.unit_ids || []).length === 1 ? '' : 's'}`;
-    companyDetailEl.style.display = '';
-    if (companyEmptyHint) companyEmptyHint.style.display = 'none';
-    refreshChatTargetBadge();
-    refreshOrgTree();
-    saveSelection();
-  } catch (e) {
-    appendMessage('assistant', 'Could not load Company: ' + e.message);
-  }
-}
-
-async function refreshOrgTree() {
-  if (!currentCompanyId || !currentCompanyMeta) {
-    orgTreeEl.innerHTML = `<div class="org-empty"><h3>No Company selected</h3>Create a Company in the right sidebar, describe what you're building, and the CEO will propose an org chart. Once applied, every CEO / Supervisor / specialist shows up here.</div>`;
-    return;
-  }
-  const co = currentCompanyMeta;
-  let ceo = null;
-  if (co.ceo_employee_id) {
-    try { ceo = await api('GET', `/api/employees/${encodeURIComponent(co.ceo_employee_id)}`); } catch (e) {}
-  }
-  const unitEntries = await Promise.all((co.unit_ids || []).map(async (uid) => {
-    try {
-      const t = await api('GET', `/api/sessions/${encodeURIComponent(uid)}/team`);
-      return { unit_id: uid, members: t.members || [] };
-    } catch (e) {
-      return { unit_id: uid, members: [] };
-    }
-  }));
-
-  const ceoHtml = ceo
-    ? `<div class="org-node ceo">
-         <div class="role"><span class="ceo-badge">★ CEO</span> ${escapeHtml(ceo.role || 'CEO')}</div>
-         <div class="mandate">${escapeHtml(ceo.mandate || '')}</div>
-       </div>
-       <div class="org-tree-connector"></div>`
-    : '';
-
-  const unitsHtml = unitEntries.length
-    ? `<div class="org-units-row">
-         ${unitEntries.map(u => renderOrgUnit(u)).join('')}
-       </div>`
-    : `<div class="org-empty" style="padding:20px;">No Units yet. Use the "Design hierarchy" box in the right sidebar to have the CEO propose one.</div>`;
-
-  orgTreeEl.innerHTML = `
-    <div style="font-size:16px;font-weight:600;color:var(--text);">${escapeHtml(co.name)}</div>
-    ${co.purpose ? `<div style="max-width:600px;text-align:center;font-size:12.5px;color:var(--text-muted);line-height:1.5;">${escapeHtml(co.purpose)}</div>` : ''}
-    ${ceoHtml}
-    ${unitsHtml}
-  `;
-}
-
-function renderOrgUnit(u) {
-  const supervisor = u.members.find(m => m.is_supervisor);
-  const specialists = u.members.filter(m => !m.is_supervisor);
-  // Derive a Unit label — we don't have a dedicated name field on the
-  // Unit row in the team endpoint, so use the supervisor role stripped
-  // of the trailing " Supervisor" suffix if present.
-  let unitName = 'Unit';
-  if (supervisor) {
-    unitName = supervisor.role.replace(/\s+Supervisor$/i, '').trim() || supervisor.role;
-  }
-  return `<div class="org-unit-column">
-    <div class="org-unit-card">
-      <div class="unit-title">${escapeHtml(unitName)}</div>
-      <div class="unit-purpose">${escapeHtml(supervisor?.mandate || '')}</div>
-      <div class="unit-members">
-        ${supervisor ? `<div class="org-member supervisor"><span class="role-name">★ ${escapeHtml(supervisor.role)}</span></div>` : ''}
-        ${specialists.map(s => `<div class="org-member"><span class="role-name">${escapeHtml(s.role)}</span></div>`).join('')}
-      </div>
-    </div>
-  </div>`;
-}
-
-// ---- Event wiring ------------------------------------------------
-// Everything creation-shaped goes through the chat now — the only
-// interactive control left in this section is the Company selector
-// (for switching between companies you've already created).
-
-companySelector.addEventListener('change', (e) => selectCompany(e.target.value));
-
-// Plan / Work mode toggle. Plan = the AI only drafts a plan (no
-// specialists run, no actions fire). Work = the AI does the tasks.
-// Persisted so a reload keeps the founder's chosen mode.
-const MODE_KEY = 'vision_ai_mode_v1';
-let chatMode = (() => {
-  try { const m = localStorage.getItem(MODE_KEY); return m === 'plan' ? 'plan' : 'work'; }
-  catch (_) { return 'work'; }
-})();
-const modePlanBtn = $('mode-plan-btn');
-const modeWorkBtn = $('mode-work-btn');
-function applyModeUI() {
-  if (modePlanBtn) modePlanBtn.classList.toggle('active', chatMode === 'plan');
-  if (modeWorkBtn) modeWorkBtn.classList.toggle('active', chatMode === 'work');
-  // Nudge the input placeholder so the mode is obvious while typing.
-  if (chatMode === 'plan') {
-    chatInputEl.placeholder = 'Plan mode — describe the goal; the AI drafts a plan, no work runs.';
-  } else {
-    chatInputEl.placeholder = 'Type anything — build me a company, run market research, add a specialist…';
-  }
-}
-function setChatMode(m) {
-  chatMode = (m === 'plan') ? 'plan' : 'work';
-  try { localStorage.setItem(MODE_KEY, chatMode); } catch (_) {}
-  applyModeUI();
-}
-if (modePlanBtn) modePlanBtn.addEventListener('click', () => setChatMode('plan'));
-if (modeWorkBtn) modeWorkBtn.addEventListener('click', () => setChatMode('work'));
-applyModeUI();
-
-// ---- File upload ---------------------------------------------------
-// Founder attaches a file; it uploads immediately (not on Send), shows
-// as a chip, and its extracted text preview gets folded into the next
-// chat message so the AI actually sees the content, not just a name.
-let attachedFiles = []; // {file_id, filename, preview, download_url, stored_path}
-
-const attachBtn = $('attach-btn');
-const fileInputEl = $('file-input');
-const attachedFilesEl = $('attached-files');
-
-if (attachBtn && fileInputEl) {
-  attachBtn.addEventListener('click', () => fileInputEl.click());
-
-  fileInputEl.addEventListener('change', async () => {
-    const files = Array.from(fileInputEl.files || []);
-    fileInputEl.value = ''; // allow re-selecting the same file later
-    for (const file of files) {
-      const chip = document.createElement('span');
-      chip.className = 'file-chip uploading';
-      chip.innerHTML = `<span class="file-chip-name">Uploading ${escapeHtml(file.name)}…</span>`;
-      attachedFilesEl.style.display = '';
-      attachedFilesEl.appendChild(chip);
-      try {
-        const formData = new FormData();
-        formData.append('file', file);
-        const res = await fetch('/api/uploads', { method: 'POST', body: formData });
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body.detail || `upload failed (HTTP ${res.status})`);
-        }
-        const data = await res.json();
-        attachedFiles.push(data);
-        renderAttachedFiles();
-      } catch (err) {
-        chip.remove();
-        appendMessage('assistant', `Couldn't attach ${file.name}: ${err.message}`);
-        if (!attachedFiles.length) attachedFilesEl.style.display = 'none';
-      }
-    }
-  });
-}
-
-function renderAttachedFiles() {
-  if (!attachedFilesEl) return;
-  attachedFilesEl.innerHTML = '';
-  if (!attachedFiles.length) {
-    attachedFilesEl.style.display = 'none';
-    return;
-  }
-  attachedFilesEl.style.display = '';
-  attachedFiles.forEach((f, i) => {
-    const chip = document.createElement('span');
-    chip.className = 'file-chip';
-    chip.innerHTML = `<span class="file-chip-name" title="${escapeHtml(f.filename)}">📄 ${escapeHtml(f.filename)}</span><button type="button" class="file-chip-remove" data-i="${i}" title="Remove">×</button>`;
-    attachedFilesEl.appendChild(chip);
-  });
-}
-
-if (attachedFilesEl) {
-  attachedFilesEl.addEventListener('click', (e) => {
-    const btn = e.target.closest('.file-chip-remove');
-    if (!btn) return;
-    const i = parseInt(btn.dataset.i, 10);
-    attachedFiles.splice(i, 1);
-    renderAttachedFiles();
-  });
-}
-
-// Clear-chat button — nukes local chat log ONLY (does not touch Units,
-// Companies, Employees, or pending actions on the server).
-const clearChatBtn = $('clear-chat-btn');
-if (clearChatBtn) {
-  clearChatBtn.addEventListener('click', () => {
-    if (!confirm('Clear the entire chat history? This does NOT delete any Units, Companies, or Employees.')) return;
-    clearChatHistory();
-    clearChat();
-  });
-}
-
-// Boot: restore prior chat first, then restore selection so any
-// Company / Unit that was focused before the reload comes back.
-(async () => {
-  restoreChatHistory();
-  await refreshCompanies();
-  const sel = readSelection();
-  if (sel.company_id) {
-    // Only auto-select if the Company still exists on the server
-    const opts = Array.from(companySelector.options).map(o => o.value);
-    if (opts.includes(sel.company_id)) {
-      companySelector.value = sel.company_id;
-      await selectCompany(sel.company_id);
-    }
-  }
-  if (sel.session_id) {
-    try { await selectSession(sel.session_id); } catch (e) { /* stale session — ignore */ }
-  }
-})();
-
-function buildTeamHiredReport(members, task) {
-  // Fast, LLM-free "here's who I hired and what they'll do" summary —
-  // shown on the Output tab right after specialists are created so the
-  // user has something concrete to look at before the actual run
-  // finishes. Gets overwritten with the real deliverable when the run
-  // completes.
-  const supervisor = members.find(m => m.is_supervisor);
-  const specialists = members.filter(m => !m.is_supervisor);
-  const divider = '━'.repeat(56);
-  let out = '';
-  out += divider + '\n';
-  out += '  YOUR TEAM IS ON IT\n';
-  out += divider + '\n\n';
-  if (task) {
-    out += 'TASK\n';
-    const trimmed = task.length > 220 ? task.slice(0, 220) + '…' : task;
-    out += trimmed + '\n\n';
-  }
-  if (supervisor) {
-    out += '★ ' + supervisor.role + '\n';
-    out += 'Every task comes to them first. They design the delegation plan, ';
-    out += 'keep the specialists coordinated, and deliver the merged result ';
-    out += 'back to you in one voice.\n';
-  }
-  if (specialists.length) {
-    out += '\nSPECIALISTS (' + specialists.length + ')\n';
-    specialists.forEach((m, i) => {
-      out += '\n' + (i + 1) + '. ' + m.role + '\n';
-      out += '   ' + m.mandate.replace(/\n/g, '\n   ') + '\n';
-    });
-  }
-  out += '\n' + divider + '\n\n';
-  out += 'Working on it now. Watch the Canvas tab to see each specialist\n';
-  out += 'in progress — the full deliverable will replace this report here\n';
-  out += 'when the team finishes (usually a few minutes).\n';
-  return out;
-}
-
-// ------------------------------------------------------------
-// Chat input handlers
-chatInputEl.addEventListener('input', () => {
-  chatInputEl.style.height = 'auto';
-  chatInputEl.style.height = Math.min(140, chatInputEl.scrollHeight) + 'px';
-});
-chatInputEl.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
-  }
-});
-
-// ------------------------------------------------------------
-// Connectors — MCP servers the team can call as tools
-
-async function refreshConnectors() {
-  try {
-    const data = await api('GET', '/api/connectors');
-    const conns = data.connections || [];
-    const tools = data.tools || [];
-    const listEl = $('connectors-list');
-    const hintEl = $('connectors-hint');
-    listEl.innerHTML = '';
-    if (!conns.length) {
-      hintEl.textContent = 'Give your team access to real tools (Notion, Slack, GitHub…) via MCP. Nothing connected yet.';
-      hintEl.style.display = 'block';
-      listEl.style.display = 'none';
-    } else {
-      hintEl.style.display = 'none';
-      listEl.style.display = 'block';
-      // Tool counts per connection
-      const toolCountByConn = {};
-      tools.forEach(t => {
-        toolCountByConn[t.connection] = (toolCountByConn[t.connection] || 0) + 1;
-      });
-      conns.forEach(c => {
-        const item = document.createElement('div');
-        item.className = 'connector-item' + (c.enabled ? '' : ' disabled');
-        const count = toolCountByConn[c.name] || 0;
-        item.innerHTML = `
-          <div class="name">${c.name}</div>
-          <div class="tool-count">${count} tool${count===1?'':'s'}</div>
-        `;
-        const del = document.createElement('button');
-        del.className = 'icon';
-        del.textContent = '×';
-        del.title = 'Remove connector';
-        del.onclick = () => removeConnector(c.name);
-        item.appendChild(del);
-        listEl.appendChild(item);
-      });
-    }
-  } catch (e) {
-    // Silently ignore — connectors are optional
-    console.warn('Failed to refresh connectors:', e);
-  }
-}
-
-async function addConnector() {
-  const name = $('conn-name').value.trim();
-  const command = $('conn-command').value.trim();
-  const argsRaw = $('conn-args').value.trim();
-  const envRaw = $('conn-env').value.trim();
-  if (!name || !command) {
-    appendMessage('assistant', 'Connector needs at least a name and a command.');
-    return;
-  }
-  const args = argsRaw ? argsRaw.split(/\s+/) : [];
-  // Parse ENV_VAR=value ENV_VAR2=value pairs
-  const env = {};
-  if (envRaw) {
-    envRaw.split(/\s+/).forEach(pair => {
-      const eq = pair.indexOf('=');
-      if (eq > 0) env[pair.slice(0, eq)] = pair.slice(eq + 1);
-    });
-  }
-  try {
-    await api('POST', '/api/connectors', {
-      name, transport: 'stdio', command, args, env, enabled: true,
-    });
-    $('conn-name').value = '';
-    $('conn-command').value = '';
-    $('conn-args').value = '';
-    $('conn-env').value = '';
-    $('connectors-form').style.display = 'none';
-    $('connectors-toggle').textContent = '▾';
-    appendMessage('assistant', `Connected ${name}. Fetching its tools now — the team will use them automatically.`);
-    await refreshConnectors();
-  } catch (e) {
-    appendMessage('assistant', 'Connect failed: ' + e.message);
-  }
-}
-
-async function removeConnector(name) {
-  if (!confirm(`Disconnect "${name}"? Its tools will no longer be available to your team.`)) return;
-  try {
-    await api('DELETE', `/api/connectors/${encodeURIComponent(name)}`);
-    appendMessage('assistant', `Disconnected ${name}.`);
-    await refreshConnectors();
-  } catch (e) {
-    appendMessage('assistant', 'Disconnect failed: ' + e.message);
-  }
-}
-
-function toggleConnectorsForm() {
-  const form = $('connectors-form');
-  const btn = $('connectors-toggle');
-  const show = form.style.display === 'none';
-  form.style.display = show ? 'block' : 'none';
-  btn.textContent = show ? '▴' : '▾';
-}
-
-// ------------------------------------------------------------
-// Wire the rest
-$('send-btn').onclick = sendMessage;
-$('new-session-btn').onclick = newSession;
-$('add-btn').onclick = addMember;
-$('connectors-toggle').onclick = toggleConnectorsForm;
-$('conn-add-btn').onclick = addConnector;
-sessionSelector.onchange = () => { if (sessionSelector.value) selectSession(sessionSelector.value); };
-document.querySelectorAll('.tab').forEach(t => { t.onclick = () => switchTab(t.dataset.tab); });
-
-(async function init() {
-  const sessions = await refreshSessions();
-  if (sessions.length) {
-    await selectSession(sessions[0].session_id);
-  } else {
-    await newSession();
-  }
-  await refreshConnectors();
-})();
+  })();
 </script>
 </body>
 </html>

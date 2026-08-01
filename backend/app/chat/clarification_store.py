@@ -15,9 +15,16 @@ import threading
 from typing import Any, Dict, List, Optional
 
 
+_MAX_PRIOR_QA = 8  # Keep the last N (Q, A) pairs per key across turns.
+
+
 class ClarificationStore:
     def __init__(self) -> None:
         self._data: Dict[str, Dict[str, Any]] = {}
+        # Cross-turn memory: prior (Q, A) pairs that survive after
+        # dispatch, plus the last user prompt. Feeds the clarifier so
+        # answers from turn N are still known on turn N+1.
+        self._memory: Dict[str, Dict[str, Any]] = {}
         self._lock = threading.Lock()
 
     @staticmethod
@@ -26,6 +33,49 @@ class ClarificationStore:
         session_id: Optional[str] = None,
     ) -> str:
         return company_id or session_id or "root"
+
+    # ----- cross-turn memory (persists after dispatch) -----
+
+    def record_qa(
+        self,
+        key: str,
+        questions: List[str],
+        answers: List[str],
+    ) -> None:
+        """After a clarification cycle finishes and we hand off to the
+        run, keep the (Q, A) pairs so the next task in the same session
+        sees them as already-answered context."""
+        with self._lock:
+            mem = self._memory.setdefault(key, {"prior_qa": [], "last_user_prompt": ""})
+            for i, q in enumerate(questions):
+                a = answers[i] if i < len(answers) else ""
+                if q and a:
+                    mem["prior_qa"].append({"q": q, "a": a})
+            # Bound the buffer.
+            if len(mem["prior_qa"]) > _MAX_PRIOR_QA:
+                mem["prior_qa"] = mem["prior_qa"][-_MAX_PRIOR_QA:]
+
+    def record_prompt(self, key: str, prompt: str) -> None:
+        """Remember the founder's latest raw prompt on this key so
+        the clarifier can spot 'this / that / the plan' references."""
+        with self._lock:
+            mem = self._memory.setdefault(key, {"prior_qa": [], "last_user_prompt": ""})
+            mem["last_user_prompt"] = (prompt or "").strip()[:1000]
+
+    def get_memory(self, key: str) -> Dict[str, Any]:
+        with self._lock:
+            mem = self._memory.get(key)
+            if not mem:
+                return {"prior_qa": [], "last_user_prompt": ""}
+            return {
+                "prior_qa": [dict(p) for p in mem["prior_qa"]],
+                "last_user_prompt": mem.get("last_user_prompt", ""),
+            }
+
+    def clear_memory(self, key: str) -> None:
+        """Called on '+ New' hard reset so a fresh chat starts clean."""
+        with self._lock:
+            self._memory.pop(key, None)
 
     def set(
         self,

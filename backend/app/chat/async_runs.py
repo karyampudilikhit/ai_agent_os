@@ -98,6 +98,49 @@ class RunStore:
     def set_failed(self, run_id: str, error: str) -> None:
         self._set(run_id, status="failed", finished_at=time.time(), error=error)
 
+    def list_recent_done(
+        self,
+        *,
+        session_id: Optional[str] = None,
+        company_id: Optional[str] = None,
+        limit: int = 2,
+    ) -> List[Dict[str, Any]]:
+        """Return the most recent finished runs (task + output) for the
+        given scope, newest first. The clarifier uses this so 'give me
+        a script for THIS video idea' resolves to whatever the last
+        run produced instead of a literal keyword-match interpretation.
+        """
+        with self._lock:
+            all_done = [
+                dict(r) for r in self._runs.values() if r.get("status") == "done"
+            ]
+        all_done.sort(key=lambda r: r.get("finished_at") or 0, reverse=True)
+
+        scoped = []
+        for r in all_done:
+            # Match if EITHER scope hits: same session or same company.
+            # (A Unit run inside a Company carries both ids.)
+            sess_hit = (
+                session_id is not None and r.get("session_id") == session_id
+            )
+            co_hit = (
+                company_id is not None and r.get("company_id") == company_id
+            )
+            if sess_hit or co_hit:
+                scoped.append(r)
+
+        if scoped:
+            return scoped[:limit]
+
+        # FALLBACK — single-user MVP. If nothing matched the requested
+        # scope (auto-created Unit the frontend never echoed back, a
+        # Company/Unit id mismatch, a run tagged before this fix), still
+        # return the most recent finished work. "Forgetting the thing it
+        # just produced" is a far worse failure than occasionally
+        # surfacing a deliverable from an adjacent scope. Revisit when
+        # this stops being single-tenant.
+        return all_done[:limit]
+
 
 _store: Optional[RunStore] = None
 
