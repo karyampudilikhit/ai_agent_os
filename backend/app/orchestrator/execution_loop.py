@@ -26,9 +26,17 @@ What this deliberately does NOT change:
     returns a "[queued for founder approval]" receipt; the loop treats
     that receipt as an observation and moves on. It never blocks
     waiting for a tap, and never fires an unapproved action.
-  - browser_task stays out of the loop (planner_excluded). It can block
-    for minutes waiting on a human login, which would stall every other
-    step; it keeps its own explicit-dispatch path in dynamic_employee.
+  - browser_task (the SYNCHRONOUS, founder-present entry point) stays
+    out of the loop (planner_excluded) — it can block for minutes
+    waiting on a human login, which would stall every other step; it
+    keeps its own explicit-dispatch path in dynamic_employee. The loop
+    CAN reach browser automation, just through the non-blocking pair
+    browser_task_async (returns at once, runs the real flow on a
+    background thread) + browser_task_status (poll for progress) — see
+    browser_task.py's module docstring. browser_task_status is marked
+    `pollable` on its ActionSpec, which exempts it from the repeat-call
+    guard below: calling it again with the SAME session_token while
+    waiting is the correct next step, not a stuck loop.
 
 Bounds, because an unbounded agent loop is how you burn an LLM quota
 in one task: MAX_STEPS, a wall-clock deadline, a per-observation
@@ -85,6 +93,9 @@ Rules:
 - If a tool result says something is "queued for founder approval",
   that action has NOT happened yet. That is expected and correct —
   treat it as done-for-now and move on. Never re-queue the same action.
+- If a tool result tells you to poll it again (e.g. browser_task_status),
+  calling it again with the same arguments is correct and expected —
+  that is not a repeated mistake, it's checking on background progress.
 - When you have everything needed to write the deliverable, or no
   remaining tool would help, return the DONE action. Do not keep
   calling tools just to look busy.
@@ -172,6 +183,12 @@ class AgenticExecutor:
 
         tools_block = self._render_tools(tools)
         known_names = {t["qualified_name"] for t in tools}
+        # Tools marked pollable (browser_task_status) are MEANT to be
+        # called again with identical arguments while something else
+        # finishes in the background — exempt them from the repeat-call
+        # guard below, which exists to stop a model stuck calling the
+        # same thing hoping for a different answer, not to stop a poll.
+        pollable_names = {t["qualified_name"] for t in tools if t.get("pollable")}
         deadline = time.monotonic() + self.deadline_seconds
 
         steps: List[Dict[str, str]] = []   # rendered transcript entries
@@ -224,11 +241,12 @@ class AgenticExecutor:
                 args = {}
 
             fingerprint = (action, json.dumps(args, sort_keys=True)[:400])
-            if fingerprint in seen_calls:
-                logger.info("[%s] agentic loop repeated an identical call, stopping", role)
-                steps.append({"note": f"(stopped: repeated the same {action} call — no new information)"})
-                break
-            seen_calls.add(fingerprint)
+            if action not in pollable_names:
+                if fingerprint in seen_calls:
+                    logger.info("[%s] agentic loop repeated an identical call, stopping", role)
+                    steps.append({"note": f"(stopped: repeated the same {action} call — no new information)"})
+                    break
+                seen_calls.add(fingerprint)
 
             logger.info("[%s] agentic step %d: %s(%s)", role, step_i + 1, action, json.dumps(args)[:120])
             result = self._execute(action, args)

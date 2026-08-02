@@ -32,6 +32,25 @@ because the founder decided on two things that shape this design:
       SAME live browser session by token and clicks the identified
       submit control. THIS is the irreversible step.
 
+Two more ActionSpecs (added when the agentic loop in execution_loop.py
+needed a way to act on a URL discovered MID-task, without blocking on a
+founder login it can't be sure is happening — see Open Decision #4 in
+past HANDOFF.md): browser_task and browser_task_async/browser_task_status
+share the same underlying flow (factored into _run_browser_flow) but
+differ in when they return control to the caller:
+  action.browser_task_async(url, goal) — planner-invokable, NOT
+      planner_excluded. Opens the session and returns AT ONCE, running
+      the actual login-wait/fill/queue-submit flow on a background
+      thread instead of the calling thread. This is the one the
+      agentic loop calls.
+  action.browser_task_status(session_token) — planner-invokable,
+      pollable=True (exempt from the loop's identical-repeat-call
+      guard). Reads BrowserSession.status/last_message, set by
+      _run_browser_flow as it progresses.
+browser_task itself (the synchronous, founder-present entry point used
+by dynamic_employee's pre-flight dispatch) is UNCHANGED — it still
+blocks and still returns the final outcome directly, exactly as before.
+
 Why THIS needs new infrastructure instead of the standard mutating-
 action path (see action_registry.py): a standard mutating ActionSpec's
 `handler(args)` only ever runs once, at execute_now() time, replaying
@@ -60,6 +79,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from typing import Any, Dict, List, Optional
 
@@ -309,45 +329,38 @@ def _resolve_button_locator(page, hint: str):
 # ----------------------------------------------------------------
 # action.browser_task — the ONE tool a specialist can call.
 # ----------------------------------------------------------------
-def _browser_task_handler(args: Dict[str, Any]) -> str:
-    url = str(args.get("url") or "").strip()
-    goal = str(args.get("goal") or "").strip()
-    if not url:
-        return "(browser_task failed: no url given)"
-    if not url.startswith(("http://", "https://")):
-        url = "https://" + url
-    if not goal:
-        return "(browser_task failed: no goal given — what should be filled in?)"
-
-    mgr = get_manager()
-    mgr.sweep_idle()
-
-    try:
-        session = mgr.create(url)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("browser_task: failed to open session at %s: %s", url[:80], exc)
-        return f"(browser_task failed: could not open a browser session — {exc})"
-
-    queue = get_queue()
-
+def _run_browser_flow(mgr, queue, session, url: str, goal: str) -> str:
+    """The actual login-wait -> fill -> queue-submit flow, on an already-
+    open session. Shared by BOTH entry points:
+      - action.browser_task (sync) calls this directly and returns
+        whatever it returns — unchanged behavior for the existing
+        founder-present pre-flight dispatch (dynamic_employee.py).
+      - action.browser_task_async calls this from a background thread
+        so the caller (the agentic loop) never blocks on it; progress
+        is readable via session.set_status() instead of the return value.
+    `session.set_status(...)` calls below are read by
+    action.browser_task_status — harmless no-op work for the sync path,
+    which ignores them and just uses the return value as always.
+    """
     try:
         snapshot = _snapshot_page(session.page)
         if _looks_like_login_page(snapshot):
+            login_msg = (
+                f"A browser window is open at {url} and needs a login. "
+                f"Just log in in that window — the AI detects it automatically "
+                f"and keeps going on its own. (Approve only if it doesn't "
+                f"continue after you're in; Reject to abandon the task.)"
+            )
+            session.set_status("awaiting_login", login_msg)
             record = queue.enqueue(
                 action_name="browser_login_wait",
                 arguments={"session_token": session.token},
-                preview=(
-                    f"A browser window is open at {url} and needs a login. "
-                    f"Just log in in that window — the AI detects it automatically "
-                    f"and keeps going on its own. (Approve only if it doesn't "
-                    f"continue after you're in; Reject to abandon the task.)"
-                ),
+                preview=login_msg,
             )
             logger.info("[browser_task] waiting for founder login (pending_id=%s)", record["id"])
             outcome = _wait_for_login(queue, record["id"], session)
             if outcome == "timed_out":
-                mgr.close(session.token)
-                return (
+                msg = (
                     "BROWSER TASK STOPPED — NOT A CREDENTIALS PROBLEM. Do not ask the "
                     "founder for a password or API token; this system never uses or "
                     "stores either. What actually happened: a real, visible browser "
@@ -361,24 +374,32 @@ def _browser_task_handler(args: Dict[str, Any]) -> str:
                     "yourself, then approve there to continue. Nothing was filled or "
                     f"submitted. (pending_id={record['id']})"
                 )
-            if outcome == "rejected":
+                session.set_status("timed_out", msg)
                 mgr.close(session.token)
-                return (
+                return msg
+            if outcome == "rejected":
+                msg = (
                     "BROWSER TASK ABANDONED — the founder rejected the login-wait "
                     "prompt, so this browser task was intentionally stopped. Nothing "
                     f"was filled or submitted. (pending_id={record['id']})"
                 )
+                session.set_status("rejected", msg)
+                mgr.close(session.token)
+                return msg
             # Re-snapshot — the page after login is a different DOM.
             snapshot = _snapshot_page(session.page)
 
+        session.set_status("filling", f"Logged in / no login needed — filling out the form at {url}.")
         mapped = _map_goal_to_fills(goal, snapshot)
         fills = mapped["fills"]
         if not fills:
-            mgr.close(session.token)
-            return (
+            msg = (
                 "(browser_task: could not find any fields on this page matching "
                 "the goal — nothing was filled. Double-check the URL and goal wording.)"
             )
+            session.set_status("failed", msg)
+            mgr.close(session.token)
+            return msg
 
         filled_summary: List[str] = []
         skipped_summary: List[str] = []
@@ -402,12 +423,14 @@ def _browser_task_handler(args: Dict[str, Any]) -> str:
 
         submit_loc = _resolve_button_locator(session.page, mapped.get("submit_label") or "")
         if submit_loc is None:
-            mgr.close(session.token)
-            return (
+            msg = (
                 f"(browser_task: filled {len(filled_summary)} field(s) but could not "
                 f"identify the submit button — nothing will be submitted. Filled: "
                 f"{'; '.join(filled_summary) or '(none)'})"
             )
+            session.set_status("failed", msg)
+            mgr.close(session.token)
+            return msg
 
         preview_lines = [
             f"About to submit the form at {snapshot.get('url', url)}:",
@@ -429,18 +452,111 @@ def _browser_task_handler(args: Dict[str, Any]) -> str:
             preview=preview,
         )
         logger.info("[browser_task] form filled, awaiting submit approval (pending_id=%s)", submit_record["id"])
-        return (
+        result = (
             f"[queued for founder approval — pending_id={submit_record['id']}]\n"
             f"{preview}\n"
             f"This will NOT submit until the founder approves it in the Pending Actions panel."
         )
+        session.set_status("awaiting_submit", result)
+        return result
     except Exception as exc:  # noqa: BLE001
         logger.warning("browser_task failed: %s", exc)
+        msg = f"(browser_task failed: {exc})"
+        try:
+            session.set_status("failed", msg)
+        except Exception:  # noqa: BLE001
+            pass
         try:
             mgr.close(session.token)
         except Exception:  # noqa: BLE001
             pass
-        return f"(browser_task failed: {exc})"
+        return msg
+
+
+def _validate_and_open(args: Dict[str, Any]):
+    """Shared arg-parsing + session-open step for both entry points.
+    Returns (url, goal, mgr, queue, session, error). `error` is a ready-
+    to-return string when something failed before a session even opened
+    (in which case session is None); otherwise error is None."""
+    url = str(args.get("url") or "").strip()
+    goal = str(args.get("goal") or "").strip()
+    if not url:
+        return None, None, None, None, None, "(browser_task failed: no url given)"
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    if not goal:
+        return None, None, None, None, None, "(browser_task failed: no goal given — what should be filled in?)"
+
+    mgr = get_manager()
+    mgr.sweep_idle()
+    try:
+        session = mgr.create(url)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("browser_task: failed to open session at %s: %s", url[:80], exc)
+        return None, None, None, None, None, f"(browser_task failed: could not open a browser session — {exc})"
+    return url, goal, mgr, get_queue(), session, None
+
+
+def _browser_task_handler(args: Dict[str, Any]) -> str:
+    """Synchronous entry point — unchanged behavior. Runs the FULL flow
+    inline, including any login-wait block. This is what
+    dynamic_employee.py's pre-flight dispatch calls, where the founder is
+    expected to be present right after sending the task — blocking here
+    is deliberate, not a bug (see should_browser_automate's docstring)."""
+    url, goal, mgr, queue, session, error = _validate_and_open(args)
+    if error:
+        return error
+    return _run_browser_flow(mgr, queue, session, url, goal)
+
+
+def _browser_task_async_handler(args: Dict[str, Any]) -> str:
+    """Non-blocking entry point for the agentic loop (execution_loop.py).
+    Unlike action.browser_task, this returns the instant the browser
+    window opens — the potentially-minutes-long login-wait runs on a
+    background thread instead of the calling thread, so a mid-task
+    discovery ("here's an application URL, go fill it out") never
+    stalls the loop's other steps or blows its wall-clock deadline.
+    Progress is checked via action.browser_task_status(session_token).
+    """
+    url, goal, mgr, queue, session, error = _validate_and_open(args)
+    if error:
+        return error
+
+    thread = threading.Thread(
+        target=_run_browser_flow,
+        args=(mgr, queue, session, url, goal),
+        daemon=True,
+        name=f"browser-task-{session.token}",
+    )
+    thread.start()
+    return (
+        f"[browser_task_async started — session_token={session.token}]\n"
+        f"Opened a real browser window at {url} and started working toward: "
+        f"{goal[:150]}\n"
+        f"This runs in the background — it does NOT block you from doing "
+        f"other steps. Call action.browser_task_status(session_token="
+        f"{session.token!r}) whenever you want to check progress (it's fine "
+        f"to check more than once — this is a poll, not a repeat mistake). "
+        f"If it needs a founder login, that shows up as a 'browser_login_wait' "
+        f"item in the founder's Pending Actions panel; nothing else is "
+        f"required from you until the status changes."
+    )
+
+
+def _browser_task_status_handler(args: Dict[str, Any]) -> str:
+    token = str(args.get("session_token") or "").strip()
+    if not token:
+        return "(browser_task_status failed: no session_token given)"
+    session = get_manager().get(token)
+    if not session:
+        return (
+            "(no such browser session — it has already finished, failed, or "
+            "timed out and was closed. If you were waiting on it, that means "
+            "it's done: look for the outcome in your own earlier observations, "
+            "or start a new action.browser_task_async if the task still needs doing.)"
+        )
+    status, message = session.get_status()
+    return f"[browser session status: {status}]\n{message or '(no detail yet)'}"
 
 
 def _wait_for_login(queue, pending_id: str, session) -> str:
@@ -548,6 +664,55 @@ BROWSER_TASK_SPEC = ActionSpec(
     preview=_browser_task_preview,
     mutating=False,  # runs inline — the safe part (login-wait, fill) needs no pre-approval
     planner_excluded=True,  # explicit dispatch only, see dynamic_employee.should_browser_automate
+)
+
+
+BROWSER_TASK_ASYNC_SPEC = ActionSpec(
+    name="browser_task_async",
+    description=(
+        "Same as browser_task (open a real browser, log in if needed, fill "
+        "a form, pause for approval before submitting) but returns IMMEDIATELY "
+        "instead of waiting for the founder to log in — use this one, not "
+        "browser_task, when you discover a URL mid-task and want to keep "
+        "working on other steps while it runs. Check progress with "
+        "browser_task_status."
+    ),
+    parameters=[
+        {"name": "url", "type": "string", "description": "The page to open.", "required": True},
+        {
+            "name": "goal",
+            "type": "string",
+            "description": (
+                "What to fill in and with what values — be concrete "
+                "(e.g. 'fill the contact form: name=Jane Doe, "
+                "email=jane@acme.com, message=...'). "
+            ),
+            "required": True,
+        },
+    ],
+    handler=_browser_task_async_handler,
+    preview=_browser_task_preview,
+    mutating=False,  # runs inline — kicks off a background thread and returns at once
+    planner_excluded=False,  # this IS the loop-safe variant — the whole point is to be callable here
+)
+
+
+BROWSER_TASK_STATUS_SPEC = ActionSpec(
+    name="browser_task_status",
+    description=(
+        "Check progress on a browser_task_async session — is it still "
+        "waiting for a founder login, filling the form, queued for submit "
+        "approval, or finished/failed. Safe to call more than once while "
+        "waiting; it does not repeat any action, only reports current state."
+    ),
+    parameters=[
+        {"name": "session_token", "type": "string", "description": "The token returned by browser_task_async.", "required": True},
+    ],
+    handler=_browser_task_status_handler,
+    preview=lambda args: "Check browser task status",
+    mutating=False,
+    planner_excluded=False,
+    pollable=True,  # exempt from the agentic loop's identical-repeat-call guard
 )
 
 

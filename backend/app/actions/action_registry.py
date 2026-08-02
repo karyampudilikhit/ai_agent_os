@@ -61,6 +61,14 @@ class ActionSpec:
     # in routes._maybe_generate_document, which works off the
     # specialist's ALREADY-WRITTEN, properly-reasoned deliverable text.
     planner_excluded: bool = False
+    # True for tools meant to be called repeatedly with the SAME
+    # arguments while something else finishes in the background (e.g.
+    # browser_task_status polling a session token). The agentic loop's
+    # repeat-call guard (execution_loop.py) exists to stop a model stuck
+    # calling the same thing forever expecting a different answer — but
+    # for a poll, an identical call is the correct next step, not a
+    # stuck loop. See execution_loop.py's `pollable_names` handling.
+    pollable: bool = False
 
     def qualified_name(self) -> str:
         return f"{CONNECTION_NAMESPACE}.{self.name}"
@@ -113,6 +121,7 @@ class ActionRegistry:
                         "properties": properties,
                         "required": required,
                     },
+                    "pollable": spec.pollable,
                 }
             )
         return out
@@ -224,5 +233,7 @@ def _load_builtins(registry: ActionRegistry) -> None:
     registry.register(create_xlsx.SPEC)
     registry.register(create_github_repo.SPEC)
     registry.register(browser_task.BROWSER_TASK_SPEC)
+    registry.register(browser_task.BROWSER_TASK_ASYNC_SPEC)
+    registry.register(browser_task.BROWSER_TASK_STATUS_SPEC)
     registry.register(browser_task.BROWSER_LOGIN_WAIT_SPEC)
     registry.register(browser_task.BROWSER_SUBMIT_SPEC)

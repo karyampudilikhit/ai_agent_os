@@ -76,9 +76,28 @@ class BrowserSession:
     created_at: float = field(default_factory=time.time)
     last_touched_at: float = field(default_factory=time.time)
     login_event: threading.Event = field(default_factory=threading.Event)
+    # Status tracking for the ASYNC entry point (action.browser_task_async
+    # / browser_task_status) — the loop's caller isn't blocked on this
+    # session, so it needs somewhere to check "what's happening now"
+    # instead of a return value. The sync action.browser_task path
+    # (dynamic_employee's pre-flight dispatch) doesn't read these; it
+    # still gets its answer as a normal return value, unchanged.
+    status: str = "opening"
+    last_message: str = ""
+    _status_lock: threading.Lock = field(default_factory=threading.Lock)
 
     def touch(self) -> None:
         self.last_touched_at = time.time()
+
+    def set_status(self, status: str, message: str) -> None:
+        with self._status_lock:
+            self.status = status
+            self.last_message = message
+        self.touch()
+
+    def get_status(self) -> tuple[str, str]:
+        with self._status_lock:
+            return self.status, self.last_message
 
 
 class BrowserSessionManager:
@@ -114,6 +133,7 @@ class BrowserSessionManager:
         session = BrowserSession(
             token=token, playwright=pw, browser=None, context=context, page=page,
         )
+        session.set_status("opening", f"Opened a browser window at {url}.")
         with self._lock:
             self._sessions[token] = session
         logger.info("Browser session %s opened at %s", token, url[:80])
