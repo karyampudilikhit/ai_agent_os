@@ -59,3 +59,13 @@ backend/app/employees/data/registry/
 # Sandboxed workspace where the AI writes files via action.write_file.
 # Contents are user work product, not source.
 workspace/
+
+# Browser automation profile — holds REAL login cookies/session state for
+# whatever sites the founder logged into (GitHub etc). Never commit.
+browser_profile/
+
+# OAuth access tokens (live credentials — can create/delete repos)
+.oauth_tokens.json
+
+# Pending approval queue (may embed action arguments incl. secrets)
+.pending_actions.json

@@ -19,7 +19,9 @@ from typing import Optional
 
 from backend.app.employees.employee import Employee
 from backend.app.employees.memory_store import EmployeeMemoryStore
+from backend.app.orchestrator.execution_loop import AgenticExecutor
 from backend.app.orchestrator.pipeline_controller import Pipeline
+from backend.app.tools.browser_automation import DeepResearchTool, distinct_domain_urls
 from backend.app.tools.http_tool_store import get_store as get_http_tool_store
 from backend.app.tools.mcp_client import get_registry as get_mcp_registry
 from backend.app.tools.mcp_planner import MCPPlanner
@@ -34,6 +36,52 @@ logger = logging.getLogger(__name__)
 _web_search = TavilySearchTool()
 _web_fetch = WebFetchTool()
 _reddit = RedditReader()
+_deep_research = DeepResearchTool()
+
+# Competitor/comparison-shaped tasks get a deep multi-page site crawl
+# instead of a flat single-page fetch — a subset of web_search's
+# broader _TRIGGER_WORDS, narrowed to the cases where reading just the
+# homepage (or a search snippet) genuinely isn't enough: pricing pages,
+# product pages, and "who are they" all live on different URLs. Same
+# over-trigger philosophy as the rest of this file — a wasted deep
+# crawl just costs some wall-clock time, a missed one means a shallow
+# competitor report.
+_DEEP_RESEARCH_TRIGGER = (
+    "competitor", "competitors", "competitive analysis",
+    "compare", "vs.", " vs ", "versus", "rival", "rivals",
+)
+
+
+def should_deep_research(text: str) -> bool:
+    if not text:
+        return False
+    lowered = text.lower()
+    return any(t in lowered for t in _DEEP_RESEARCH_TRIGGER)
+
+
+# Interactive browser automation (Phase 2) — login/fill/submit — is
+# explicitly dispatched rather than folded into the generic MCPPlanner
+# pre-flight (step 4 below). Reason: unlike every other pre-flight tool,
+# action.browser_task can BLOCK for up to 10 minutes waiting on the
+# founder to log in in a real browser window. Letting the generic
+# planner auto-pick this tool the way it picks send_email or read_file
+# would risk it firing — and blocking the whole run — on a task that
+# only loosely resembles form-filling. Requiring BOTH an explicit
+# action verb AND a URL mentioned in the task (checked via extract_urls,
+# not just a trigger word) keeps this deliberate: there has to be
+# somewhere concrete to go, not just words that sound action-y.
+_BROWSER_AUTOMATE_TRIGGER = (
+    "apply to", "apply for", "submit the application", "submit an application",
+    "sign up for", "sign up at", "register on", "register at",
+    "fill out the form", "fill in the form", "submit this form", "submit the form",
+)
+
+
+def should_browser_automate(text: str) -> bool:
+    if not text:
+        return False
+    lowered = text.lower()
+    return any(t in lowered for t in _BROWSER_AUTOMATE_TRIGGER)
 
 
 class DynamicEmployee(Employee):
@@ -189,13 +237,33 @@ real one).{web_block}{teammates_block}{history_block}"""
         max_refinements: Optional[int] = None,
         teammates_context: Optional[str] = None,
         task_brief: Optional[str] = None,
+        original_task: Optional[str] = None,
     ):
         """Same as Employee.run_task, but threads the (optional)
         teammates_context through build_objective. Overriding here (not
         on the base) keeps the base class truly role-agnostic — a v1
         collaboration coordinator can pass richer context without
         touching Employee.
+
+        `original_task`: the founder's UNREWRITTEN top-level prompt, if
+        this specialist is running a Supervisor- or CEO-composed
+        sub_task rather than the founder's raw wording. Delegation
+        rewriting is lossy by design (a Supervisor paraphrases "do a
+        competitor analysis on linear.app" into "Research Linear's
+        pricing tiers…") — but URLs, company names, and trigger words
+        the pre-flight heuristics below key off often live only in the
+        founder's original phrasing. Every pre-flight check below scans
+        BOTH `task` and `original_task` (when provided) so a Supervisor's
+        paraphrase can never silently disable web-fetch, Tavily search,
+        or deep browser research that the founder's own wording would
+        have triggered.
         """
+        # The combined text pre-flight heuristics scan — task first (the
+        # actual sub-task, most relevant), original_task appended so
+        # anything only present in the founder's raw wording still
+        # counts. Deliberately NOT deduped/normalized — heuristics here
+        # are substring checks, redundancy is harmless.
+        heuristic_text = task if not original_task else f"{task}\n{original_task}"
         # Real-work step. Three ways an employee can now touch the real
         # world before it writes anything:
         #   1. URLs literally in the task text -> fetch each one, read
@@ -209,14 +277,108 @@ real one).{web_block}{teammates_block}{history_block}"""
         web_context_parts: list[str] = []
         used_web = False
 
-        # (1) URLs in the task itself
-        mentioned = extract_urls(task)
-        if mentioned:
+        # (1) URLs in the task itself. If this looks like a competitor/
+        #     comparison task, deep-crawl each mentioned URL (multiple
+        #     JS-rendered pages: pricing, product, about) instead of a
+        #     flat single-page fetch — skips the flat fetch entirely so
+        #     the same homepage text doesn't get injected twice.
+        #
+        #     `deep_wanted` (URL case) scans heuristic_text — an explicit
+        #     URL is unambiguous evidence worth deep-reading regardless
+        #     of which delegation layer mentioned it.
+        #
+        #     `deep_wanted_for_search` (used below in step 3) scans ONLY
+        #     `task` — the specialist's OWN sub-task, not the inherited
+        #     original_task. Found via a real bug: in a 4-Unit CEO run
+        #     where the founder's top-level prompt said "competitor
+        #     analysis", a downstream "Data Curator" specialist whose
+        #     actual job was "clean, normalize, and verify the combined
+        #     data" (zero web-research need) inherited the trigger word
+        #     from the founder's prompt via heuristic_text, ran a Tavily
+        #     search on ITS OWN unrelated sub-task text, and deep-crawled
+        #     3 completely irrelevant sites (generic data-cleaning
+        #     methodology blogs) — wasted ~15s and polluted its context.
+        #     A URL is a concrete, unambiguous target regardless of
+        #     which layer names it; a bare trigger WORD inherited from
+        #     an ancestor prompt is not — it says nothing about whether
+        #     THIS specialist's own task is actually competitor-shaped.
+        mentioned = extract_urls(heuristic_text)
+        deep_wanted = _deep_research.enabled and should_deep_research(heuristic_text)
+        deep_wanted_for_search = _deep_research.enabled and should_deep_research(task)
+        deep_site_pages: dict = {}
+
+        if mentioned and deep_wanted:
+            deep_site_pages = _deep_research.research_multiple(mentioned)
+            block = _deep_research.format_for_prompt(deep_site_pages)
+            if block:
+                web_context_parts.append(block)
+                used_web = True
+                logger.info("[%s] deep-crawled %d mentioned site(s)", self.role, len(mentioned))
+        elif mentioned:
             pages = _web_fetch.fetch_multiple(mentioned)
             if pages:
                 web_context_parts.append(_web_fetch.format_for_prompt(pages))
                 used_web = True
                 logger.info("[%s] fetched %d URL(s) mentioned in task", self.role, len(pages))
+
+        # (1.5) Interactive browser automation (Phase 2 — login/fill/
+        #       submit). Explicit dispatch, not the generic MCPPlanner
+        #       pre-flight — see should_browser_automate's docstring for
+        #       why. Requires BOTH an explicit action verb ("apply to",
+        #       "sign up for", ...) AND a URL actually mentioned in the
+        #       task — there has to be somewhere concrete to go. Runs
+        #       the FULL flow inline (login-wait can block for minutes;
+        #       that's expected here, not a bug — the founder is meant
+        #       to be present) and its receipt (queued for approval, or
+        #       a failure reason) gets folded into web_context so the
+        #       specialist's deliverable accurately reflects that the
+        #       submission is PENDING, not already done.
+        #
+        #       goal=heuristic_text, NOT bare `task` — found via a real
+        #       failure: the Supervisor's delegated sub_task said "fill
+        #       in the fields with the exact values provided" without
+        #       actually repeating any values (it assumed the specialist
+        #       could see the founder's original prompt, which
+        #       browser_task's single field-mapping LLM call never
+        #       does). heuristic_text carries the founder's original
+        #       value-bearing wording alongside the paraphrase, so the
+        #       actual name/email/company/etc. survive the rewrite.
+        if mentioned and should_browser_automate(heuristic_text):
+            try:
+                from backend.app.actions.action_registry import get_registry as _get_actions_for_browser
+                browser_result = _get_actions_for_browser().call(
+                    "action.browser_task", {"url": mentioned[0], "goal": heuristic_text},
+                )
+                # The hard rule below exists because of a real failure: a
+                # specialist, given a terse timeout message, CONFABULATED
+                # a story that credentials were needed and asked the
+                # founder to hand over a GitHub password to be "stored"
+                # — a fabrication that also happened to be dangerous
+                # advice. This tool NEVER touches or wants a password/
+                # token; it works by opening a real browser the founder
+                # logs into themselves. Stated explicitly, twice
+                # (browser_task's own return text is equally explicit)
+                # because one layer wasn't enough to stop it happening once.
+                web_context_parts.append(
+                    "REAL BROWSER AUTOMATION RESULT\n"
+                    "(You started this action before writing anything. It reflects "
+                    "the ACTUAL current state — if it says something is queued for "
+                    "approval, it has NOT happened yet. Say so plainly, don't imply "
+                    "it's done.)\n\n"
+                    "HARD RULE: this tool never uses, needs, or wants a password, "
+                    "API key, or access token — it works by opening a real browser "
+                    "window that the FOUNDER logs into themselves. If the result "
+                    "below mentions a timeout or a login wait, that means the "
+                    "browser window opened correctly and was waiting for the founder "
+                    "to log in and approve it — NOT that credentials are missing. "
+                    "Never ask the founder to provide or store a password/token for "
+                    "this. Report only what the result below actually says.\n\n"
+                    f"=== action.browser_task(url={mentioned[0]!r}) ===\n{browser_result}\n"
+                )
+                used_web = True
+                logger.info("[%s] browser_task dispatched for %s", self.role, mentioned[0])
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[%s] browser_task dispatch failed: %s", self.role, exc)
 
         # (2) Tavily search — but ONLY when the task genuinely needs
         #     external/current data. Two-stage gate:
@@ -230,7 +392,7 @@ real one).{web_block}{teammates_block}{history_block}"""
         #     already knows (the Node.js-LTS fabrication the benchmark
         #     caught).
         search_results = []
-        if _web_search.enabled and should_search(task) and self._needs_external_lookup(task):
+        if _web_search.enabled and should_search(heuristic_text) and self._needs_external_lookup(heuristic_text):
             try:
                 search_results = _web_search.search(task, max_results=5)
                 if search_results:
@@ -241,8 +403,42 @@ real one).{web_block}{teammates_block}{history_block}"""
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Tavily search failed: %s", exc)
 
-        # (3) Deep-read: fetch top 2 Tavily URLs as full pages
-        if search_results:
+        # (3) Deep-read Tavily results. Competitor/comparison tasks that
+        #     didn't already deep-crawl mentioned URLs (no URLs were
+        #     given — just company names, e.g. "compare us to Notion
+        #     and Linear") get up to 3 distinct-domain search results
+        #     deep-crawled instead of a flat 2-page fetch. Everything
+        #     else keeps the original flat behavior.
+        #
+        #     Gated on deep_wanted_for_search (task-only), NOT the wider
+        #     deep_wanted — see the comment on deep_wanted_for_search
+        #     above. This step launches a NEW search off `task` and
+        #     crawls whatever comes back; if `task` alone doesn't look
+        #     competitor-shaped, inheriting the trigger from an ancestor
+        #     prompt would search+crawl on THIS specialist's unrelated
+        #     wording and pull in irrelevant sites.
+        # "Handled already" means step 1 actually read pages, not just
+        # attempted them — a dead mentioned-URL crawl leaves deep_site_pages
+        # as {url: []}, which is falsy-content but truthy-dict, so check
+        # the values, not just dict presence.
+        deep_already_handled = any(deep_site_pages.values())
+
+        if search_results and deep_wanted_for_search and not deep_already_handled:
+            candidate_urls = distinct_domain_urls(
+                [r["url"] for r in search_results if r.get("url")]
+            )
+            if candidate_urls:
+                deep_site_pages = _deep_research.research_multiple(candidate_urls)
+                block = _deep_research.format_for_prompt(deep_site_pages)
+                if block:
+                    web_context_parts.append(block)
+                    used_web = True
+                    logger.info(
+                        "[%s] deep-crawled %d competitor site(s) from search",
+                        self.role, len(candidate_urls),
+                    )
+                deep_already_handled = any(deep_site_pages.values())
+        elif search_results and not deep_already_handled:
             deep_urls = [r["url"] for r in search_results[:2] if r.get("url")]
             # Skip URLs we already fetched under (1)
             deep_urls = [u for u in deep_urls if u not in mentioned]
@@ -257,9 +453,9 @@ real one).{web_block}{teammates_block}{history_block}"""
         #       task language ("what are people saying", "community
         #       sentiment"). Needs REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET;
         #       silently disabled without them. Read-only; quiet on failure.
-        if _reddit.enabled and should_read_reddit(task):
+        if _reddit.enabled and should_read_reddit(heuristic_text):
             try:
-                reddit_block = _reddit.read_for_task(task)
+                reddit_block = _reddit.read_for_task(heuristic_text)
                 if reddit_block:
                     web_context_parts.append(reddit_block)
                     used_web = True
@@ -267,29 +463,47 @@ real one).{web_block}{teammates_block}{history_block}"""
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Reddit read failed: %s", exc)
 
-        # (4) Tool pre-flight: any external tools the user has connected
-        #     — MCP servers (Notion, Slack, filesystem, etc.) AND custom
-        #     HTTP tools (user's own APIs) — get their tools considered
-        #     by one cheap LLM classification call. The planner picks
-        #     which are useful for THIS task, executes them, and returns
-        #     the outputs as source data.
+        # (4) Multi-step tool use — the specialist ACTUALLY DOING WORK.
+        #     Every external tool the founder has available (MCP servers,
+        #     their custom HTTP tools, built-in actions like send_email /
+        #     create_github_repo / write_file) goes into a real
+        #     THINK -> ACT -> OBSERVE loop: call one tool, SEE the result,
+        #     decide the next call based on it, repeat until done.
+        #
+        #     This replaced MCPPlanner's single-shot pre-flight, which
+        #     picked up to 4 tools BLIND (before seeing any result) and
+        #     fired them flat. That could never handle work whose shape
+        #     is discovered mid-task — "find 10 investors then draft an
+        #     email to each", "check their pricing page and IF there's an
+        #     enterprise tier, write the comparison" — or retry a failed
+        #     call differently. MCPPlanner is kept in the tree for now
+        #     as the documented fallback if the loop ever needs to be
+        #     switched off; nothing calls it from here anymore.
+        #
+        #     The loop only GATHERS and ACTS. The specialist still writes
+        #     the deliverable below, and the critique/verification pass
+        #     still runs over that shipped text — so the no-fabrication
+        #     guarantee is unchanged. Approval gating is unchanged too:
+        #     a mutating action enqueues and returns a receipt, which the
+        #     loop reads as an observation and moves past. It never waits
+        #     for a tap and never fires an unapproved action.
         has_mcp = bool(get_mcp_registry().list_all_tools())
         has_http = bool(get_http_tool_store().enabled())
-        # Built-in action tools (send_email, post_slack, write_file,
-        # read_file) are always present — including them means the
-        # planner runs even for founders who haven't connected any MCP
-        # or custom HTTP tool yet.
+        # Built-in action tools are always present — so the loop runs
+        # even for founders who haven't connected anything themselves.
         from backend.app.actions.action_registry import get_registry as _get_actions
         has_actions = bool(_get_actions().known_names())
         if has_mcp or has_http or has_actions:
             try:
-                planner_context = MCPPlanner(self.pipeline.adapter).plan_and_execute(task)
-                if planner_context:
-                    web_context_parts.append(planner_context)
+                loop_context = AgenticExecutor(self.pipeline.adapter).run(
+                    task=task, role=self.role,
+                )
+                if loop_context:
+                    web_context_parts.append(loop_context)
                     used_web = True
-                    logger.info("[%s] external tool results injected", self.role)
+                    logger.info("[%s] multi-step tool work injected", self.role)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("Tool planning failed: %s", exc)
+                logger.warning("Agentic tool loop failed: %s", exc)
 
         web_context = "\n\n".join(web_context_parts) if web_context_parts else None
         if task_brief:

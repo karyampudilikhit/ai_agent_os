@@ -163,6 +163,122 @@ class HierarchyDesigner:
             return [self._fallback_unit(description)]
         return cleaned
 
+    # Auto-Company-on-first-task. Used only when a founder's very first
+    # message in a fresh chat is a task with NO Company selected — see
+    # routes.py's _dispatch_run. Differs from design() in the one way
+    # that matters: design() assumes the founder already described
+    # their company ("build me a due-diligence firm"); here there is no
+    # such description, only a task ("do a competitor analysis on
+    # Notion"). The LLM has to infer BOTH the underlying business this
+    # task implies AND the org that would serve it — design() alone
+    # would build a company literally about the task's surface text
+    # (an "email-writing company" for a "write me a fundraising email"
+    # task), not the founder's actual business.
+    TASK_INFERENCE_PROMPT = """A founder's FIRST message in a brand-new workspace was a
+task, not a company description. No Company exists yet — you are
+inferring one from what they asked for, then designing its org chart,
+in one shot.
+
+THE FOUNDER'S TASK:
+"{task}"
+
+Infer the kind of company/business this task implies, then design an
+org that could handle this task AND the ongoing work a company like
+that would need — not a company whose sole purpose is this one task.
+
+STRICT RULES:
+- "name": 2-4 words, a plausible company name (not "The [Task] Company").
+- "purpose": one sentence — what this company does, inferred from the task.
+- Then the same Unit-design rules as always: {min_units}-{max_units}
+  Units that DIRECTLY serve this inferred business (not a generic
+  Product/Engineering/Design/Marketing/Ops default), each with
+  {min_specialists}-{max_specialists} specialists as real job titles
+  for that industry.
+- If the task is genuinely too generic to infer a business from (e.g.
+  "write a poem"), default to a lean, general-purpose org — do not
+  force an implausible industry.
+- Order Units from most immediately useful (i.e. able to actually do
+  the founder's task right now) to least.
+
+Return JSON only, this exact shape:
+{{"name": "...", "purpose": "...",
+  "units": [
+    {{"name": "...", "purpose": "...",
+      "specialists": [{{"role": "...", "mandate": "..."}}]}}
+  ]}}
+
+JSON only."""
+
+    def design_from_task(self, task: str) -> Dict[str, Any]:
+        """Returns {name, purpose, units:[...]}. Falls back to a generic
+        single-Unit org (name inferred lightly, purpose generic) if the
+        LLM call fails — the founder still gets SOMETHING that can
+        actually run their task, never a bare Supervisor with no
+        specialists."""
+        task = (task or "").strip()
+        if not task:
+            return self._fallback_company(task)
+
+        try:
+            response = self.adapter.chat_completion(
+                self.TASK_INFERENCE_PROMPT.format(
+                    task=task[:1500],
+                    min_units=MIN_UNITS,
+                    max_units=MAX_UNITS,
+                    min_specialists=MIN_SPECIALISTS_PER_UNIT,
+                    max_specialists=MAX_SPECIALISTS_PER_UNIT,
+                ),
+                temperature=0.3,
+                max_tokens=self.max_tokens,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("design_from_task call failed: %s", exc)
+            return self._fallback_company(task)
+
+        data = self._extract_json(response) or {}
+        name = str(data.get("name") or "").strip()
+        purpose = str(data.get("purpose") or "").strip()
+        units_raw = data.get("units")
+        if not name or not isinstance(units_raw, list) or not units_raw:
+            logger.warning("design_from_task response unparseable, using fallback")
+            return self._fallback_company(task)
+
+        cleaned: List[Dict[str, Any]] = []
+        for u in units_raw[:MAX_UNITS]:
+            if not isinstance(u, dict):
+                continue
+            u_name = str(u.get("name", "")).strip()
+            u_purpose = str(u.get("purpose", "")).strip()
+            if not u_name or not u_purpose:
+                continue
+            specs_raw = u.get("specialists") or []
+            specialists: List[Dict[str, str]] = []
+            if isinstance(specs_raw, list):
+                for s in specs_raw[:MAX_SPECIALISTS_PER_UNIT]:
+                    if not isinstance(s, dict):
+                        continue
+                    role = str(s.get("role", "")).strip()
+                    mandate = str(s.get("mandate", "")).strip()
+                    if role and mandate:
+                        specialists.append({"role": role, "mandate": mandate})
+            if not specialists:
+                specialists = [{
+                    "role": "Generalist",
+                    "mandate": f"Handle work assigned to the {u_name} until a specialist joins.",
+                }]
+            cleaned.append({"name": u_name, "purpose": u_purpose, "specialists": specialists})
+
+        if not cleaned:
+            return self._fallback_company(task)
+        return {"name": name, "purpose": purpose, "units": cleaned}
+
+    def _fallback_company(self, task: str) -> Dict[str, Any]:
+        return {
+            "name": "New Venture",
+            "purpose": "Auto-created to handle the founder's first task — reshape by chatting with the CEO.",
+            "units": [self._fallback_unit(task)],
+        }
+
     def design_one_unit(
         self,
         description: str,

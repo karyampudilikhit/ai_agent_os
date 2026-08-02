@@ -183,6 +183,7 @@ class EmployeeCoordinator:
         on_role_working=None,
         on_role_done=None,
         on_synthesizing=None,
+        founder_task: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Supervisor-led execution.
 
@@ -197,7 +198,20 @@ class EmployeeCoordinator:
 
         Falls back gracefully at each stage: if planning fails, every
         specialist gets the raw prompt; if synthesis fails, raw concat.
+
+        `founder_task`: the TRUE top-level founder prompt, before ANY
+        rewriting. Only needed when `prompt` here is itself already a
+        rewrite (the Company path passes a CEO-composed Unit brief as
+        `prompt`, not the founder's original wording). Defaults to
+        `prompt` — the common case where this function's caller passes
+        the founder's raw task directly, so no explicit value is needed.
+        Threaded to every specialist as `original_task` so a Supervisor's
+        paraphrase (which frequently drops URLs and keywords the pre-
+        flight heuristics key off) can't silently disable web-fetch,
+        Tavily search, or deep browser research the founder's own
+        wording would have triggered.
         """
+        effective_founder_task = founder_task or prompt
         if supervisor is None:
             raise ValueError("run_with_supervisor requires a supervisor")
 
@@ -260,6 +274,7 @@ class EmployeeCoordinator:
                 sub_task,
                 teammates_context=teammates_context,
                 task_brief=task_brief,
+                original_task=effective_founder_task,
             )
             # Track under the specialist's role name for progress/UI
             result["role"] = role

@@ -32,6 +32,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from backend.app.api.oauth_routes import router as oauth_router
 from backend.app.api.routes import router
 
 app = FastAPI(title="Vision AI — Idea Validation (MVP slice)")
@@ -47,4 +48,7 @@ app.add_middleware(
 )
 
 app.include_router(router, prefix="/api")
+# OAuth connect flow ("Connect GitHub" etc). Separate router so the
+# provider config + token handling stay out of the main routes module.
+app.include_router(oauth_router, prefix="/api")
 app.mount("/", StaticFiles(directory="frontend_mvp", html=True), name="frontend")

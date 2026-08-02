@@ -45,6 +45,29 @@ INITIAL_MAX = 5
 TOTAL_MAX = 7   # Hard cap — even the LLM can't go past this
 
 
+# What the system can already do for itself. Without this, the clarifier
+# reasons from GENERAL knowledge ("creating a GitHub repo needs auth ->
+# ask for credentials") and asks the founder for a password on every
+# single browser/integration task. That happened repeatedly in real use:
+# the founder types "create a repo", and instead of doing it, the AI
+# demands GitHub login details it neither needs nor is allowed to hold.
+SYSTEM_CAPABILITIES = """WHAT YOU CAN ALREADY DO WITHOUT ASKING (never ask the founder to
+enable, authorize, or provide access for any of this):
+- Log into websites: a REAL browser window opens on the founder's own
+  screen and THEY log in themselves. You never see, need, or store a
+  password. Never ask for login details, credentials, or to be "added
+  as a collaborator".
+- Integrations (email, Slack, GitHub, and any connected tool) are
+  already authenticated server-side via configuration the founder set
+  up once. Never ask for an API key, access token, or PAT.
+- Browse and read any public web page, including multi-page research.
+- Create real files (.pptx, .docx, .xlsx) and write to the workspace.
+- Take real actions — every irreversible one pauses for the founder's
+  approval automatically, so you never need to ask "may I proceed?".
+If a task needs auth you don't have, the system surfaces that at
+execution time. It is NOT your job to pre-collect credentials."""
+
+
 INITIAL_PROMPT = """You are a senior consultant about to work on a task for a founder.
 Before you touch it, decide whether you need clarification. Great work
 starts by asking the FEWEST possible high-leverage questions.
@@ -54,6 +77,8 @@ FOUNDER'S TASK (just came in):
 
 CONTEXT YOU ALREADY KNOW (do NOT ask about anything already answered here):
 {context_block}
+
+{capabilities}
 
 Rules:
 - Ask AT MOST {initial_max} questions. Aim for 0-2, not 5.
@@ -91,6 +116,8 @@ ORIGINAL TASK:
 
 CONTEXT YOU ALREADY KNOW (treat as answered — never re-ask):
 {context_block}
+
+{capabilities}
 
 Q&A THIS CYCLE (in order):
 {qa_block}
@@ -191,6 +218,7 @@ class Clarifier:
                     task=task[:2000],
                     initial_max=INITIAL_MAX,
                     context_block=context_block,
+                    capabilities=SYSTEM_CAPABILITIES,
                 ),
                 temperature=0.2,
                 max_tokens=500,
@@ -201,6 +229,7 @@ class Clarifier:
         parsed = self._parse(raw, cap=INITIAL_MAX)
         # Two-stage scrub: entities the deliverable already resolves,
         # then anything redundant with the wider context.
+        parsed["questions"] = _drop_credential_requests(parsed["questions"])
         parsed["questions"] = _drop_resolved_reference(
             parsed["questions"], task, context,
         )
@@ -234,6 +263,7 @@ class Clarifier:
                     task=(original_task or "")[:2000],
                     qa_block=qa_block[:6000],
                     context_block=context_block,
+                    capabilities=SYSTEM_CAPABILITIES,
                     asked_so_far=asked,
                     total_max=TOTAL_MAX,
                     remaining=remaining,
@@ -248,6 +278,7 @@ class Clarifier:
         # Strip questions that duplicate prior Q&A this cycle OR the
         # context block. This is where the LLM most often stumbles.
         prior_texts = list(questions_asked) + list(answers)
+        parsed["questions"] = _drop_credential_requests(parsed["questions"])
         parsed["questions"] = _drop_resolved_reference(
             parsed["questions"], original_task, context,
         )
@@ -427,6 +458,38 @@ _IDENTIFY_RE = re.compile(
     r"list\s+the\b|name\s+the\b|identify\b)",
     re.IGNORECASE,
 )
+
+
+# Questions asking the founder to hand over credentials or grant
+# access. The system NEVER needs these — website logins happen in a
+# real browser the founder drives themselves, and integrations are
+# authenticated server-side from config. Asking anyway is worse than
+# useless: it stalls the task AND coaches the founder into pasting
+# secrets into a chat box, which is exactly the habit this product
+# should not build. Prompt guidance alone didn't hold (the model kept
+# reasoning "repo creation needs auth" from general knowledge), so
+# this filter is the reliable half of the fix.
+_CREDENTIAL_ASK_RE = re.compile(
+    r"\b("
+    r"password|credential|api[- ]?key|access[- ]?token|auth token|"
+    r"personal access token|\bpat\b|secret key|"
+    r"login (details|info|information)|log[- ]?in (details|credentials)|"
+    r"add (us|me) as a (collaborator|member)|"
+    r"(grant|provide|share|give) (us|me|the ai)?\s*(the )?(necessary )?"
+    r"(access|permission|authorization)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _drop_credential_requests(questions: List[str]) -> List[str]:
+    kept: List[str] = []
+    for q in questions:
+        if _CREDENTIAL_ASK_RE.search(q or ""):
+            logger.info("Clarifier drop credential-request question: %r", q)
+            continue
+        kept.append(q)
+    return kept
 
 
 def _drop_resolved_reference(

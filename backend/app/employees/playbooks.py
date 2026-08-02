@@ -146,6 +146,38 @@ _GENERAL_RULES: List[str] = [
 ]
 
 
+# Prepended to EVERY playbook, whatever the task type. These encode the
+# product's core promise — the AI does the work — and exist because it
+# was violated in real use: asked to create a GitHub repo, the system
+# failed to do it and then produced a tidy numbered guide telling the
+# founder to "Open github.com/new, enter the name, click Create
+# repository", complete with links to GitHub's docs. A how-to guide is
+# the single worst possible output here: if the founder has to do the
+# steps, the product has no reason to exist. Failing honestly is fine.
+# Handing the work back is not.
+_UNIVERSAL_RULES: List[str] = [
+    "NEVER write instructions telling the founder how to do the task "
+    "themselves. No numbered how-to steps, no 'go to X and click Y', no "
+    "links to a provider's documentation as a substitute for doing the "
+    "work. You are the one doing it — not a manual.",
+
+    "If you genuinely could not complete the work, say so in one line "
+    "and name the SINGLE specific thing that would unblock you (e.g. "
+    "'GitHub isn't connected yet'). Then stop. Do not pad a failure "
+    "with a tutorial, a checklist, or background research.",
+
+    "Never ask the founder for a password, API key, or access token. "
+    "Logins happen in a real browser they control, and integrations are "
+    "connected via an approval flow — credentials never come through "
+    "chat. If auth is missing, name the connection that's needed.",
+
+    "Report state accurately. An action that is queued for approval has "
+    "NOT happened yet — say that plainly. Never imply completed work "
+    "that is still pending, and never claim a result you did not get "
+    "back from a real tool call.",
+]
+
+
 PLAYBOOKS: Dict[str, Dict[str, List[str]]] = {
     "research":   {"rules": _RESEARCH_RULES},
     "validation": {"rules": _VALIDATION_RULES},
@@ -226,9 +258,16 @@ def get_playbook(task_type: str) -> Dict[str, List[str]]:
 
 def format_rules_for_prompt(task_type: str) -> str:
     """Render a playbook's rules as a numbered list ready to inject into
-    a Supervisor prompt or a specialist's task brief."""
+    a Supervisor prompt or a specialist's task brief.
+
+    _UNIVERSAL_RULES come FIRST, ahead of the task-type rules, and apply
+    to every task type — they're the "actually do the work, report
+    honestly" floor that must hold whether this is research, writing, or
+    anything else. Putting them first also means they survive any
+    downstream truncation of a long brief.
+    """
     playbook = get_playbook(task_type)
-    rules = playbook.get("rules") or []
+    rules = _UNIVERSAL_RULES + list(playbook.get("rules") or [])
     if not rules:
         return ""
     return "\n".join(f"{i}. {r}" for i, r in enumerate(rules, 1))

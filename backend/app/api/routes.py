@@ -1000,6 +1000,13 @@ def run_task_on_company(
             prompt=enriched_prompt,
             supervisor=supervisor_employee,
             specialists=specialists,
+            # The founder's TRUE original Company-level prompt — not the
+            # CEO's per-Unit sub_task (enriched_prompt above), which may
+            # have paraphrased away any URLs or trigger words. Lets each
+            # specialist's pre-flight heuristics (web-fetch, deep
+            # research, Tavily) still fire on what the founder actually
+            # typed, even after two layers of delegation rewriting.
+            founder_task=req.task,
         )
 
     try:
@@ -1916,9 +1923,66 @@ def _dispatch_run(
 
     side_effects = UniversalChatSideEffects()
     plan_store = get_plan_store()
+    auto_company_reply_prefix = ""
 
     if intent == "run_task_company" and not current_company:
         intent = "run_task_unit"
+
+    # Auto-Company-on-first-task. A brand-new founder's very first
+    # message landing on a bare Supervisor-only Unit used to mean the
+    # Supervisor ran the task SOLO — often narrating a hypothetical
+    # delegation instead of actually doing anything. That's the exact
+    # failure "Vision AI does the actual work" exists to prevent,
+    # happening at the single worst moment: first impression. Fix:
+    # when truly nothing is selected (no session, no Company), infer a
+    # right-sized Company from the task itself and materialize it, then
+    # fall through to the real run_task_company dispatch below so the
+    # task is genuinely delegated to a team, not run solo.
+    #
+    # Scoped to "nothing at all selected" — a founder who already has a
+    # standalone Unit (session_id set, no Company) made that choice
+    # deliberately earlier in the session; this doesn't touch that path.
+    if intent == "run_task_unit" and not current_session_id and not current_company:
+        try:
+            auto_pipeline = _build_pipeline()
+            designer = HierarchyDesigner(model_adapter=auto_pipeline.adapter)
+            proposed = designer.design_from_task(task)
+
+            new_company = get_company_store().create(
+                name=proposed["name"], purpose=proposed.get("purpose"),
+            )
+            new_company = _ensure_ceo(new_company)
+
+            applied_req = HierarchyApplyRequest(
+                units=[
+                    HierarchyUnitSpec(
+                        name=u["name"],
+                        purpose=u.get("purpose", ""),
+                        specialists=[
+                            TeamMemberSpec(role=s.get("role", ""), mandate=s.get("mandate", ""))
+                            for s in u.get("specialists", [])
+                        ],
+                    )
+                    for u in proposed["units"]
+                    if u.get("name")
+                ]
+            )
+            apply_result = apply_company_hierarchy(new_company["id"], applied_req)
+
+            current_company = new_company
+            intent = "run_task_company"
+            n_units = len(apply_result.units)
+            n_specialists = sum(u.specialist_count for u in apply_result.units)
+            auto_company_reply_prefix = (
+                f"First task in a new workspace, so I built you a team first — "
+                f"**{new_company['name']}**, {n_units} Unit{'s' if n_units != 1 else ''}, "
+                f"{n_specialists} specialist{'s' if n_specialists != 1 else ''}. "
+                f"Check the Org tab to see (and reshape) it.\n\n"
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Fail open to the old bare-Supervisor path rather than
+            # blocking the founder's first task on an org-design bug.
+            print(f"[warn] auto-Company-on-first-task failed, falling back: {exc}")
 
     if intent == "run_task_company":
         company_id = current_company["id"]
@@ -1951,9 +2015,12 @@ def _dispatch_run(
         submit_run(run_id, _company_work)
         side_effects.run_id = run_id
         side_effects.company_id = company_id
+        if auto_company_reply_prefix:
+            side_effects.org_refreshed = True
         return UniversalChatResponse(
             intent=intent,
             reply=(
+                auto_company_reply_prefix +
                 "CEO is on it — planning, delegating across Units, and "
                 "synthesizing. Company-level runs take a few minutes on "
                 "gpt-oss; the deliverable will pop onto the Output tab as "

@@ -864,6 +864,21 @@
   .pa-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
   .pa-row.executed .pa-action-name { color: var(--ok); }
   .pa-row.rejected .pa-action-name { color: var(--danger); }
+  /* Time-sensitive items (a real browser window is open right now,
+     waiting on the founder) — found via a real session where a
+     browser_login_wait item sat unnoticed in this panel for 10 minutes
+     until it timed out. A plain uniform-styled row was too easy to
+     miss mid-conversation; this makes it visually impossible to. */
+  .pa-row.urgent {
+    background: rgba(217, 119, 6, 0.08);
+    border-left: 3px solid var(--warn, #d97706);
+    animation: pa-urgent-pulse 2s ease-in-out infinite;
+  }
+  .pa-row.urgent .pa-action-name { color: var(--warn, #d97706); }
+  @keyframes pa-urgent-pulse {
+    0%, 100% { background: rgba(217, 119, 6, 0.08); }
+    50%      { background: rgba(217, 119, 6, 0.18); }
+  }
   .pa-row .pa-status {
     font-size: 11px;
     color: var(--text-muted);
@@ -2657,6 +2672,18 @@ const pendingPanel = $('pending-actions-panel');
 const pendingList = $('pending-actions-list');
 const pendingCount = $('pa-count');
 
+// Action types where a REAL browser window is open right now, actively
+// waiting on the founder — found via a real session where a
+// browser_login_wait item sat unnoticed for the full 10-minute timeout
+// because nothing distinguished it from an ordinary "approve this
+// email" item. These get the urgent pulsing style + a plain-English
+// name instead of the raw action_name.
+const URGENT_ACTION_NAMES = new Set(['browser_login_wait', 'browser_submit']);
+const ACTION_DISPLAY_NAMES = {
+  browser_login_wait: '⏳ Log in now — browser window is open',
+  browser_submit: '⏳ Review before it submits',
+};
+
 function renderPendingActions(items) {
   items = Array.isArray(items) ? items : [];
   // Show only the last ~20 to avoid a wall of history; pending first.
@@ -2674,6 +2701,8 @@ function renderPendingActions(items) {
   pendingPanel.style.display = '';
   pendingList.innerHTML = sorted.map(a => {
     const status = a.status || 'pending';
+    const isUrgent = status === 'pending' && URGENT_ACTION_NAMES.has(a.action_name);
+    const displayName = ACTION_DISPLAY_NAMES[a.action_name] || a.action_name;
     const buttons = status === 'pending'
       ? `<div class="pa-buttons">
            <button class="pa-btn approve" data-id="${escapeHtml(a.id)}" data-op="approve">Approve</button>
@@ -2685,9 +2714,9 @@ function renderPendingActions(items) {
       : status === 'failed' && a.error
       ? `<div class="pa-preview" style="color:var(--danger)">✗ ${escapeHtml(String(a.error).slice(0, 200))}</div>`
       : '';
-    return `<div class="pa-row ${escapeHtml(status)}">
+    return `<div class="pa-row ${escapeHtml(status)}${isUrgent ? ' urgent' : ''}">
       <div class="pa-meta">
-        <span class="pa-action-name">${escapeHtml(a.action_name)}</span>
+        <span class="pa-action-name">${escapeHtml(displayName)}</span>
         <div class="pa-preview">${escapeHtml(a.preview || '')}</div>
         ${detail}
       </div>

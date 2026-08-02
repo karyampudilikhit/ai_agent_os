@@ -11,6 +11,11 @@ uvicorn>=0.34
 python-dotenv>=1.0
 # Web fetch connector — read-only page extraction
 beautifulsoup4>=4.12
+# Deep browser research — JS-rendered multi-page site crawling for
+# competitor/company analysis (backend/app/tools/browser_automation.py).
+# After installing, also run ONE TIME: playwright install chromium
+# (downloads the headless browser binary, ~300MB, not a pip package).
+playwright>=1.40
 # MCP client layer (Days 3-4 of connectors sequence)
 mcp>=1.0
 # Document generation (create_pptx/docx/xlsx action tools) + reading
