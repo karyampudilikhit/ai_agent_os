@@ -90,6 +90,8 @@ from backend.app.tools.browser_session_manager import (
     LOGIN_POLL_INTERVAL_SECONDS,
     LOGIN_WAIT_TIMEOUT_SECONDS,
     get_manager,
+    snapshot_page as _snapshot_page,
+    looks_like_login_page as _looks_like_login_page,
 )
 
 logger = logging.getLogger(__name__)
@@ -128,68 +130,12 @@ def _get_adapter():
 
 # ----------------------------------------------------------------
 # DOM inspection — walk the live page for fillable fields + buttons.
+# Moved to browser_session_manager.py (imported at the top of this file
+# as _snapshot_page / _looks_like_login_page) because session creation
+# itself now needs login-detection for the headless-with-safety-upgrade
+# decision — see that module's create(prefer_headless=...) and its own
+# docstring.
 # ----------------------------------------------------------------
-_SNAPSHOT_JS = r"""
-() => {
-  const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
-  const labelFor = (el) => {
-    if (el.id) {
-      const lbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-      if (lbl) return clean(lbl.innerText);
-    }
-    const wrap = el.closest('label');
-    if (wrap) return clean(wrap.innerText);
-    if (el.getAttribute('aria-label')) return clean(el.getAttribute('aria-label'));
-    if (el.placeholder) return clean(el.placeholder);
-    if (el.name) return clean(el.name);
-    return '';
-  };
-  const fields = [];
-  document.querySelectorAll('input, textarea, select').forEach((el) => {
-    const type = (el.type || 'text').toLowerCase();
-    if (['hidden', 'submit', 'button', 'image', 'reset'].includes(type)) return;
-    if (el.disabled) return;
-    const rect = el.getBoundingClientRect();
-    if (rect.width === 0 && rect.height === 0) return;  // invisible field
-    let options = undefined;
-    if (el.tagName.toLowerCase() === 'select') {
-      options = Array.from(el.options).map(o => clean(o.textContent)).filter(Boolean);
-    }
-    fields.push({
-      kind: el.tagName.toLowerCase(),
-      type,
-      label: labelFor(el),
-      name: el.name || '',
-      id: el.id || '',
-      placeholder: el.placeholder || '',
-      currentValue: el.value || '',
-      options,
-    });
-  });
-
-  const buttons = [];
-  document.querySelectorAll('button, input[type="submit"], input[type="button"]').forEach((el) => {
-    const rect = el.getBoundingClientRect();
-    if (rect.width === 0 && rect.height === 0) return;
-    const text = clean(el.innerText || el.value || el.getAttribute('aria-label') || '');
-    if (!text) return;
-    buttons.push({ text, type: (el.type || '').toLowerCase() });
-  });
-
-  return { fields, buttons, url: window.location.href, title: document.title };
-}
-"""
-
-
-def _snapshot_page(page) -> Dict[str, Any]:
-    return page.evaluate(_SNAPSHOT_JS)
-
-
-def _looks_like_login_page(snapshot: Dict[str, Any]) -> bool:
-    """Heuristic: a password-type field present. Covers the large
-    majority of real login pages without needing an LLM call just to
-    answer 'is this a login page'."""
-    return any(f.get("type") == "password" for f in snapshot.get("fields") or [])
 
 
 # ----------------------------------------------------------------
@@ -794,6 +740,253 @@ BROWSER_TASK_STATUS_SPEC = ActionSpec(
     planner_excluded=False,
     pollable=True,  # exempt from the agentic loop's identical-repeat-call guard
     capability="web.form.status",
+)
+
+
+# ----------------------------------------------------------------
+# Atomic capabilities — navigate/extract/click as individually callable
+# planner tools, distinct from the goal-driven fill+submit flow above.
+# For exploratory, multi-step web work discovered mid-task ("here's a
+# link, open it, read it, maybe click through") where the all-in-one
+# browser_task_async (map a goal onto a form and queue a submit) is the
+# wrong shape. browser_navigate opens headless by default — see
+# BrowserSessionManager.create()'s prefer_headless docstring for the
+# unconditional upgrade-to-headed-on-login-detection guarantee.
+#
+# Known gap (documented, not fixed here): a session opened by
+# browser_navigate cannot be handed to browser_task_async to finish a
+# fill+submit — browser_task_async's _validate_and_open always opens a
+# FRESH session. If a caller navigates somewhere, decides it needs to
+# log in and fill a form, it has to start over with browser_task_async
+# rather than continuing the same session. Reusing an existing token
+# across these tools is real future work, tracked in
+# [[vision-ai-browser-automation-priority]].
+# ----------------------------------------------------------------
+_MAX_EXTRACT_CHARS = 4000
+_EXTRACT_TEXT_JS = "() => document.body ? document.body.innerText : ''"
+
+_LIKELY_IRREVERSIBLE_CLICK_WORDS = (
+    "submit", "buy now", "buy", "purchase", "pay", "confirm order",
+    "place order", "checkout", "delete", "remove", "send payment",
+    "confirm purchase", "complete order",
+)
+
+
+def _looks_irreversible(target: str) -> bool:
+    lowered = target.lower()
+    return any(w in lowered for w in _LIKELY_IRREVERSIBLE_CLICK_WORDS)
+
+
+def _resolve_clickable_locator(page, hint: str):
+    """Broader than _resolve_button_locator — also tries links, since
+    browser_click is meant for general page-to-page navigation (search
+    results, "next page", nav menus), not just form buttons."""
+    hint = (hint or "").strip()
+    if not hint:
+        return None
+    strategies = [
+        lambda: page.get_by_role("link", name=hint, exact=False),
+        lambda: page.get_by_role("button", name=hint, exact=False),
+        lambda: page.get_by_text(hint, exact=False),
+        lambda: page.locator(f'a:has-text("{hint}")'),
+        lambda: page.locator(f'button:has-text("{hint}")'),
+    ]
+    for strat in strategies:
+        try:
+            loc = strat()
+            if loc is not None and loc.count() >= 1:
+                return loc.first
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
+def _browser_navigate_handler(args: Dict[str, Any]) -> str:
+    url = str(args.get("url") or "").strip()
+    if not url:
+        return "(browser_navigate failed: no url given)"
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+
+    mgr = get_manager()
+    mgr.sweep_idle()
+    try:
+        session = mgr.create(url, prefer_headless=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("browser_navigate: failed to open %s: %s", url[:80], exc)
+        return (
+            f"(browser_navigate failed: could not open a browser session — "
+            f"{_classify_open_error(exc)})"
+        )
+
+    try:
+        snapshot = _snapshot_page(session.page)
+    except Exception as exc:  # noqa: BLE001
+        mgr.close(session.token)
+        return f"(browser_navigate failed: could not read the page — {exc})"
+
+    if _looks_like_login_page(snapshot):
+        # create() already upgraded this session to a VISIBLE window —
+        # the founder just hasn't logged in yet. This tool doesn't run
+        # the login-wait dance itself (that's browser_task_async's job);
+        # it reports the situation plainly rather than half-implementing
+        # login-wait a second time.
+        session.set_status("needs_login", f"{url} needs a login.")
+        return (
+            f"[browser session: session_token={session.token}]\n"
+            f"Opened {url} in a VISIBLE window — it needs a login. "
+            f"browser_navigate doesn't wait for logins itself. If this task "
+            f"needs to log in and fill something out, use "
+            f"action.browser_task_async(url, goal) instead, which handles "
+            f"the whole login-wait -> fill -> submit-approval flow."
+        )
+
+    session.set_status("navigated", f"On {snapshot.get('url', url)} — {snapshot.get('title', '')}")
+    return (
+        f"[browser session: session_token={session.token}]\n"
+        f"Now on: \"{snapshot.get('title', '')}\" ({snapshot.get('url', url)})\n"
+        f"Fillable fields:\n{_fields_block(snapshot.get('fields') or [])}\n"
+        f"Clickable buttons:\n{_buttons_block(snapshot.get('buttons') or [])}\n"
+        f"Use action.browser_extract(session_token) to read the page's text, "
+        f"or action.browser_click(session_token, target) to click a link/"
+        f"button by its visible text."
+    )
+
+
+def _browser_extract_handler(args: Dict[str, Any]) -> str:
+    token = str(args.get("session_token") or "").strip()
+    if not token:
+        return "(browser_extract failed: no session_token given)"
+    session = get_manager().get(token)
+    if not session:
+        return (
+            "(no such browser session — it may have finished, failed, timed "
+            "out, or was never opened via browser_navigate)"
+        )
+    try:
+        text = (session.page.evaluate(_EXTRACT_TEXT_JS) or "").strip()
+        page_url = session.page.url
+    except Exception as exc:  # noqa: BLE001
+        return f"(browser_extract failed: {exc})"
+    truncated = text[:_MAX_EXTRACT_CHARS]
+    suffix = "\n[…truncated…]" if len(text) > _MAX_EXTRACT_CHARS else ""
+    return f"[page text — {page_url}]\n{truncated}{suffix}"
+
+
+def _browser_click_handler(args: Dict[str, Any]) -> str:
+    token = str(args.get("session_token") or "").strip()
+    target = str(args.get("target") or "").strip()
+    if not token:
+        return "(browser_click failed: no session_token given)"
+    if not target:
+        return "(browser_click failed: no target given — what should be clicked?)"
+    if _looks_irreversible(target):
+        return (
+            f"(browser_click refused: {target!r} looks like a final/"
+            f"irreversible action (submit, purchase, delete, ...). "
+            f"browser_click is for navigation only — use "
+            f"action.browser_task_async with a goal instead, which routes "
+            f"anything irreversible through the founder's approval queue.)"
+        )
+
+    session = get_manager().get(token)
+    if not session:
+        return (
+            "(no such browser session — it may have finished, failed, timed "
+            "out, or was never opened via browser_navigate)"
+        )
+
+    try:
+        _try_dismiss_consent_banner(session.page)
+        loc = _resolve_clickable_locator(session.page, target)
+        if loc is None:
+            return _with_screenshot(
+                session, "click_target_not_found",
+                f'(browser_click: could not find anything matching "{target}" to click)',
+            )
+        loc.click()
+        session.page.wait_for_timeout(1200)
+        snapshot = _snapshot_page(session.page)
+    except Exception as exc:  # noqa: BLE001
+        return _with_screenshot(session, "click_failed", f"(browser_click failed: {exc})")
+
+    if _looks_like_login_page(snapshot):
+        session.set_status("needs_login", f"Clicking {target!r} landed on a login page.")
+        return (
+            f"[browser session: session_token={token}]\n"
+            f"Clicked {target!r} — landed on a page that needs a login. "
+            f"browser_click doesn't wait for logins; use "
+            f"action.browser_task_async(url, goal) if this needs to be "
+            f"logged into and filled out."
+        )
+
+    session.set_status("navigated", f"Clicked {target!r} -> {snapshot.get('url', '')}")
+    return (
+        f"[browser session: session_token={token}]\n"
+        f"Clicked {target!r}. Now on: \"{snapshot.get('title', '')}\" "
+        f"({snapshot.get('url', '')})\n"
+        f"Fillable fields:\n{_fields_block(snapshot.get('fields') or [])}\n"
+        f"Clickable buttons:\n{_buttons_block(snapshot.get('buttons') or [])}"
+    )
+
+
+BROWSER_NAVIGATE_SPEC = ActionSpec(
+    name="browser_navigate",
+    description=(
+        "Open a URL in a browser — headless (no visible window) unless the "
+        "page needs a login, in which case it automatically upgrades to a "
+        "visible window so the founder can log in. Returns the page's "
+        "fields/buttons and a session_token for browser_extract/"
+        "browser_click. For exploratory multi-step browsing — reading a "
+        "page, following links — not for filling out and submitting a "
+        "form (use browser_task_async for that)."
+    ),
+    parameters=[
+        {"name": "url", "type": "string", "description": "The page to open.", "required": True},
+    ],
+    handler=_browser_navigate_handler,
+    preview=lambda args: f"Navigate to {args.get('url')}",
+    mutating=False,
+    planner_excluded=False,
+    capability="web.page.navigate",
+)
+
+
+BROWSER_EXTRACT_SPEC = ActionSpec(
+    name="browser_extract",
+    description=(
+        "Read the visible text of the current page in an open browser "
+        "session (opened by browser_navigate or reached via browser_click)."
+    ),
+    parameters=[
+        {"name": "session_token", "type": "string", "description": "Token from browser_navigate or browser_click.", "required": True},
+    ],
+    handler=_browser_extract_handler,
+    preview=lambda args: "Read page text",
+    mutating=False,
+    planner_excluded=False,
+    capability="web.page.extract",
+)
+
+
+BROWSER_CLICK_SPEC = ActionSpec(
+    name="browser_click",
+    description=(
+        "Click a link or button by its visible text in an open browser "
+        "session, then report the resulting page. NAVIGATION ONLY — "
+        "refuses targets that look like a final/irreversible action "
+        "(submit, buy, pay, delete, ...); use browser_task_async for "
+        "anything that needs founder approval before firing."
+    ),
+    parameters=[
+        {"name": "session_token", "type": "string", "description": "Token from browser_navigate.", "required": True},
+        {"name": "target", "type": "string", "description": "Visible text of the link/button to click.", "required": True},
+    ],
+    handler=_browser_click_handler,
+    preview=lambda args: f"Click {args.get('target')!r}",
+    mutating=False,
+    planner_excluded=False,
+    capability="web.page.click",
 )
 
 

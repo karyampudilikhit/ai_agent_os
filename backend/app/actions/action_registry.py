@@ -248,5 +248,8 @@ def _load_builtins(registry: ActionRegistry) -> None:
     registry.register(browser_task.BROWSER_TASK_SPEC)
     registry.register(browser_task.BROWSER_TASK_ASYNC_SPEC)
     registry.register(browser_task.BROWSER_TASK_STATUS_SPEC)
+    registry.register(browser_task.BROWSER_NAVIGATE_SPEC)
+    registry.register(browser_task.BROWSER_EXTRACT_SPEC)
+    registry.register(browser_task.BROWSER_CLICK_SPEC)
     registry.register(browser_task.BROWSER_LOGIN_WAIT_SPEC)
     registry.register(browser_task.BROWSER_SUBMIT_SPEC)

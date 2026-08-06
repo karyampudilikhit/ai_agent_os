@@ -36,7 +36,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from backend.app.actions.live_session_manager import LiveSessionManager, new_token
 
@@ -72,6 +72,76 @@ def _profile_dir() -> str:
     d = under_data("browser_profile")
     os.makedirs(d, exist_ok=True)
     return str(d)
+
+
+# ----------------------------------------------------------------
+# DOM inspection — walk the live page for fillable fields + buttons.
+# Lives here (not in browser_task.py, which originally defined these)
+# because create()'s headless-with-safety-upgrade decision below needs
+# login-detection at session-open time, before any task-flow code runs.
+# browser_task.py imports these back as _snapshot_page/_looks_like_login_page.
+# ----------------------------------------------------------------
+_SNAPSHOT_JS = r"""
+() => {
+  const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const labelFor = (el) => {
+    if (el.id) {
+      const lbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+      if (lbl) return clean(lbl.innerText);
+    }
+    const wrap = el.closest('label');
+    if (wrap) return clean(wrap.innerText);
+    if (el.getAttribute('aria-label')) return clean(el.getAttribute('aria-label'));
+    if (el.placeholder) return clean(el.placeholder);
+    if (el.name) return clean(el.name);
+    return '';
+  };
+  const fields = [];
+  document.querySelectorAll('input, textarea, select').forEach((el) => {
+    const type = (el.type || 'text').toLowerCase();
+    if (['hidden', 'submit', 'button', 'image', 'reset'].includes(type)) return;
+    if (el.disabled) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) return;  // invisible field
+    let options = undefined;
+    if (el.tagName.toLowerCase() === 'select') {
+      options = Array.from(el.options).map(o => clean(o.textContent)).filter(Boolean);
+    }
+    fields.push({
+      kind: el.tagName.toLowerCase(),
+      type,
+      label: labelFor(el),
+      name: el.name || '',
+      id: el.id || '',
+      placeholder: el.placeholder || '',
+      currentValue: el.value || '',
+      options,
+    });
+  });
+
+  const buttons = [];
+  document.querySelectorAll('button, input[type="submit"], input[type="button"]').forEach((el) => {
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) return;
+    const text = clean(el.innerText || el.value || el.getAttribute('aria-label') || '');
+    if (!text) return;
+    buttons.push({ text, type: (el.type || '').toLowerCase() });
+  });
+
+  return { fields, buttons, url: window.location.href, title: document.title };
+}
+"""
+
+
+def snapshot_page(page) -> Dict[str, Any]:
+    return page.evaluate(_SNAPSHOT_JS)
+
+
+def looks_like_login_page(snapshot: Dict[str, Any]) -> bool:
+    """Heuristic: a password-type field present. Covers the large
+    majority of real login pages without needing an LLM call just to
+    answer 'is this a login page'."""
+    return any(f.get("type") == "password" for f in snapshot.get("fields") or [])
 
 
 @dataclass
@@ -125,11 +195,24 @@ class BrowserSessionManager:
             closer=_close_browser_session,
         )
 
-    def create(self, url: str) -> BrowserSession:
-        """Launch a REAL, VISIBLE (headed) browser window navigated to
-        `url`. Visible on purpose — this is how "you log in once, it
-        persists" actually works: the founder interacts with a normal
-        browser window on their own screen.
+    def create(self, url: str, prefer_headless: bool = False) -> BrowserSession:
+        """Open a session at `url`. Two modes:
+
+        prefer_headless=False (default, unchanged behavior) — a REAL,
+        VISIBLE window. This is how "you log in once, it persists"
+        actually works: the founder interacts with a normal browser
+        window on their own screen. Use this whenever the task might
+        need a login (action.browser_task / browser_task_async both do).
+
+        prefer_headless=True — tries an invisible window first (faster,
+        no window popping up for a task that's just reading a page).
+        SAFETY GATE, not a best-effort: the moment the first snapshot of
+        that page looks like a login page, this closes the headless
+        session and re-opens the SAME url headed instead, before
+        anything else happens. A headless window can never satisfy "the
+        founder logs in themselves" — there is nothing to weaken here,
+        the upgrade is unconditional. Used by action.browser_navigate,
+        which doesn't know in advance whether a login is needed.
 
         Uses a PERSISTENT context (a real on-disk profile) launched from
         the founder's actual installed Chrome where available, with
@@ -142,9 +225,36 @@ class BrowserSessionManager:
             already logged into once opens ALREADY authenticated — the
             login-wait pause simply doesn't fire the second time.
         """
+        session = self._open(url, headless=prefer_headless)
+        if prefer_headless:
+            try:
+                if looks_like_login_page(snapshot_page(session.page)):
+                    logger.info(
+                        "Headless session at %s needs a login — upgrading to a "
+                        "visible window (unconditional, not best-effort)", url[:80],
+                    )
+                    self.close(session.token)
+                    session = self._open(url, headless=False)
+            except Exception as exc:  # noqa: BLE001
+                # Can't confirm the page's shape (mid-navigation, JS error,
+                # etc.) — err toward the SAFE side and upgrade to headed
+                # rather than risk silently staying headless on a login page.
+                logger.info(
+                    "Headless login-check failed (%s) — upgrading to a visible "
+                    "window to be safe", exc,
+                )
+                self.close(session.token)
+                session = self._open(url, headless=False)
+        return session
+
+    def _open(self, url: str, headless: bool) -> BrowserSession:
+        """The actual Playwright launch — factored out from create() so
+        the headless-upgrade DECISION logic above can be exercised in
+        tests by monkeypatching this one method, without needing a real
+        browser."""
         from playwright.sync_api import sync_playwright
         pw = sync_playwright().start()
-        context = self._launch_persistent_context(pw)
+        context = self._launch_persistent_context(pw, headless=headless)
         # A persistent context opens with one blank page already present.
         page = context.pages[0] if context.pages else context.new_page()
         page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -155,22 +265,25 @@ class BrowserSessionManager:
         )
         session.set_status("opening", f"Opened a browser window at {url}.")
         self._live.register(token, session)
-        logger.info("Browser session %s opened at %s", token, url[:80])
+        logger.info(
+            "Browser session %s opened at %s (headless=%s)", token, url[:80], headless,
+        )
         return session
 
-    def _launch_persistent_context(self, pw):
+    def _launch_persistent_context(self, pw, headless: bool = False):
         """Try the founder's real Chrome first (best at not looking
         automated); fall back to Playwright's bundled Chromium if Chrome
         isn't installed. Both use the same persistent profile + stealth
         args. Single-user MVP caveat: one persistent profile can be held
-        by one context at a time, so genuinely concurrent browser tasks
-        would contend — not a concern for a single founder driving one
-        task at a time."""
+        by one context at a time (headless or headed — same profile
+        either way), so genuinely concurrent browser tasks would
+        contend — not a concern for a single founder driving one task
+        at a time."""
         profile = _profile_dir()
         try:
             return pw.chromium.launch_persistent_context(
                 profile,
-                headless=False,
+                headless=headless,
                 channel="chrome",
                 args=_STEALTH_ARGS,
                 no_viewport=True,
@@ -183,7 +296,7 @@ class BrowserSessionManager:
             )
             return pw.chromium.launch_persistent_context(
                 profile,
-                headless=False,
+                headless=headless,
                 args=_STEALTH_ARGS,
                 no_viewport=True,
             )
