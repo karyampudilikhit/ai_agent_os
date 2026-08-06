@@ -28,6 +28,27 @@ _FIXTURES_DIR = Path(__file__).parent / "test_fixtures"
 _FIXTURES_PORT = 8899
 
 
+@pytest.fixture(autouse=True)
+def _close_browser_sessions_between_tests():
+    """Close any browser session a test left open.
+
+    The interactive browser tests share ONE on-disk Chrome profile, and a
+    persistent profile can only be held by one context at a time. So a
+    single test that fails partway through — leaving its session open —
+    used to cascade: every later test died with "profile is already in
+    use by another instance of Chromium", which reads like a bug in the
+    code under test rather than leftover state from the previous test.
+    """
+    yield
+    try:
+        from backend.app.tools.browser_session_manager import get_manager
+        mgr = get_manager()
+        for token in list(mgr._live._resources.keys()):
+            mgr.close(token)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _test_fixtures_http_server():
     """Serves test_fixtures/*.html on 127.0.0.1:8899 for the whole test

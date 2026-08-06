@@ -35,12 +35,71 @@ import logging
 import os
 import threading
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from backend.app.actions.live_session_manager import LiveSessionManager, new_token
 
 logger = logging.getLogger(__name__)
+
+# ----------------------------------------------------------------
+# The single Playwright thread.
+#
+# Playwright's SYNC api may only have ONE running instance per thread,
+# and every object it hands back (Page, Locator) belongs to the thread
+# that created it. Our sessions are deliberately long-lived — they must
+# survive across separate HTTP requests so the founder can log in and
+# approve — which means we never call playwright.stop() between calls.
+#
+# Those two facts collided and produced a real production bug: the
+# second browser call in a run raised
+#     "It looks like you are using Playwright Sync API inside the
+#      asyncio loop. Please use the Async API instead."
+# The message is misleading — it has nothing to do with uvicorn's event
+# loop. Reproduced in isolation with no web server involved at all: any
+# second sync_playwright().start() in a thread that already has a live
+# one fails exactly this way. Because the first session is still open by
+# design, every browser call after the first in a run was failing.
+#
+# Fix, both halves needed:
+#   1. ONE shared Playwright instance per manager (see _playwright()),
+#      started once and never stopped while the process lives. Closing a
+#      session closes its CONTEXT, not the shared instance.
+#   2. All Playwright work pinned to this one dedicated thread, so
+#      instance and objects are always touched from where they were made.
+#
+# Single worker is also correct for a second reason already documented on
+# _launch_persistent_context: one on-disk profile can only be held by one
+# context at a time, so browser work has to serialize regardless.
+# ----------------------------------------------------------------
+_BROWSER_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="playwright")
+
+# Ceiling on how long a caller will wait for the browser thread. Needed
+# because serializing onto one worker means a browser_task_async that's
+# parked in a 10-minute founder-login wait would otherwise block every
+# later browser call indefinitely — and the agentic loop calling one of
+# those would hang past its own deadline. On timeout the caller gets a
+# clear message; the queued work is NOT cancelled and still runs.
+BROWSER_OP_TIMEOUT_SECONDS = 180.0
+
+
+def run_on_browser_thread(fn: Callable, *args, timeout: Optional[float] = BROWSER_OP_TIMEOUT_SECONDS, **kwargs):
+    """Run `fn` on the dedicated Playwright thread and WAIT for its
+    result, re-raising anything it raised. Use for any code path that
+    touches a Page/Locator/BrowserContext. Raises
+    concurrent.futures.TimeoutError if the thread is still busy after
+    `timeout` — callers should turn that into a readable message rather
+    than let it surface as a stack trace."""
+    return _BROWSER_EXECUTOR.submit(fn, *args, **kwargs).result(timeout=timeout)
+
+
+def submit_to_browser_thread(fn: Callable, *args, **kwargs) -> Future:
+    """Queue `fn` on the Playwright thread WITHOUT waiting — for the
+    non-blocking browser_task_async path, whose whole point is returning
+    before a possibly-minutes-long founder login completes. Work queues
+    behind anything already running, which is the intended serialization."""
+    return _BROWSER_EXECUTOR.submit(fn, *args, **kwargs)
 
 SESSION_IDLE_TIMEOUT_SECONDS = 15 * 60  # abandoned session gets closed
 LOGIN_WAIT_TIMEOUT_SECONDS = 10 * 60    # how long we'll wait for a human to log in
@@ -179,13 +238,19 @@ class BrowserSession:
 
 
 def _close_browser_session(session: "BrowserSession") -> None:
+    """Close one session's CONTEXT only.
+
+    Deliberately does NOT call playwright.stop(): the Playwright instance
+    is shared by every session (see the module docstring above and
+    BrowserSessionManager._playwright). Stopping it here — which this
+    function used to do — is what made the next session's start() fail.
+    """
     session.context.close()
     # Persistent contexts have no separate Browser object
     # (session.browser is None); guard for the non-persistent case in
     # case this ever changes back.
     if session.browser is not None:
         session.browser.close()
-    session.playwright.stop()
 
 
 class BrowserSessionManager:
@@ -194,6 +259,21 @@ class BrowserSessionManager:
             idle_timeout_seconds=SESSION_IDLE_TIMEOUT_SECONDS,
             closer=_close_browser_session,
         )
+        # The one shared Playwright instance, started lazily on first use
+        # and kept for the life of the process. See module docstring.
+        self._pw: Any = None
+
+    def _playwright(self):
+        """The single shared Playwright instance. MUST be called from the
+        browser thread (everything reaching it goes through
+        run_on_browser_thread / submit_to_browser_thread), which is why no
+        lock is needed here — that executor has exactly one worker, so
+        these calls are already serialized."""
+        if self._pw is None:
+            from playwright.sync_api import sync_playwright
+            self._pw = sync_playwright().start()
+            logger.info("Started the shared Playwright instance")
+        return self._pw
 
     def create(self, url: str, prefer_headless: bool = False) -> BrowserSession:
         """Open a session at `url`. Two modes:
@@ -252,8 +332,7 @@ class BrowserSessionManager:
         the headless-upgrade DECISION logic above can be exercised in
         tests by monkeypatching this one method, without needing a real
         browser."""
-        from playwright.sync_api import sync_playwright
-        pw = sync_playwright().start()
+        pw = self._playwright()
         context = self._launch_persistent_context(pw, headless=headless)
         # A persistent context opens with one blank page already present.
         page = context.pages[0] if context.pages else context.new_page()

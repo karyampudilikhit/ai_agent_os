@@ -79,9 +79,9 @@ import json
 import logging
 import os
 import re
-import threading
 import time
 import uuid
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any, Dict, List, Optional
 
 from backend.app.actions.action_registry import ActionSpec
@@ -90,6 +90,8 @@ from backend.app.tools.browser_session_manager import (
     LOGIN_POLL_INTERVAL_SECONDS,
     LOGIN_WAIT_TIMEOUT_SECONDS,
     get_manager,
+    run_on_browser_thread,
+    submit_to_browser_thread,
     snapshot_page as _snapshot_page,
     looks_like_login_page as _looks_like_login_page,
 )
@@ -521,38 +523,56 @@ def _validate_and_open(args: Dict[str, Any]):
     return url, goal, mgr, get_queue(), session, None
 
 
+def _on_browser_thread(fn, args: Dict[str, Any], label: str) -> str:
+    """Marshal one handler onto the shared Playwright thread, turning a
+    busy-thread timeout into a readable observation instead of a stack
+    trace. See browser_session_manager's BROWSER_OP_TIMEOUT_SECONDS."""
+    try:
+        return run_on_browser_thread(fn, args)
+    except FuturesTimeoutError:
+        return (
+            f"({label}: the browser is busy with another task that hasn't "
+            f"finished — most likely one waiting on a founder login. Check "
+            f"the Pending Actions panel, or try again once it's resolved.)"
+        )
+
+
 def _browser_task_handler(args: Dict[str, Any]) -> str:
     """Synchronous entry point — unchanged behavior. Runs the FULL flow
     inline, including any login-wait block. This is what
     dynamic_employee.py's pre-flight dispatch calls, where the founder is
     expected to be present right after sending the task — blocking here
-    is deliberate, not a bug (see should_browser_automate's docstring)."""
-    url, goal, mgr, queue, session, error = _validate_and_open(args)
-    if error:
-        return error
-    return _run_browser_flow(mgr, queue, session, url, goal)
+    is deliberate, not a bug (see should_browser_automate's docstring).
+
+    Everything Playwright-touching runs on the shared browser thread (see
+    browser_session_manager's module docstring); this call still blocks
+    until it finishes, so the caller sees no behavior change."""
+    def _impl() -> str:
+        url, goal, mgr, queue, session, error = _validate_and_open(args)
+        if error:
+            return error
+        return _run_browser_flow(mgr, queue, session, url, goal)
+
+    return run_on_browser_thread(_impl)
 
 
 def _browser_task_async_handler(args: Dict[str, Any]) -> str:
     """Non-blocking entry point for the agentic loop (execution_loop.py).
     Unlike action.browser_task, this returns the instant the browser
-    window opens — the potentially-minutes-long login-wait runs on a
-    background thread instead of the calling thread, so a mid-task
+    window opens — the potentially-minutes-long login-wait runs on the
+    shared browser thread instead of the calling thread, so a mid-task
     discovery ("here's an application URL, go fill it out") never
     stalls the loop's other steps or blows its wall-clock deadline.
     Progress is checked via action.browser_task_status(session_token).
     """
-    url, goal, mgr, queue, session, error = _validate_and_open(args)
+    # Open the session and WAIT (fast) so we have a real token to hand
+    # back, then queue the long part without waiting. Both land on the
+    # same single-worker browser thread, so the flow simply runs next.
+    url, goal, mgr, queue, session, error = run_on_browser_thread(_validate_and_open, args)
     if error:
         return error
 
-    thread = threading.Thread(
-        target=_run_browser_flow,
-        args=(mgr, queue, session, url, goal),
-        daemon=True,
-        name=f"browser-task-{session.token}",
-    )
-    thread.start()
+    submit_to_browser_thread(_run_browser_flow, mgr, queue, session, url, goal)
     return (
         f"[browser_task_async started — session_token={session.token}]\n"
         f"Opened a real browser window at {url} and started working toward: "
@@ -802,6 +822,10 @@ def _resolve_clickable_locator(page, hint: str):
 
 
 def _browser_navigate_handler(args: Dict[str, Any]) -> str:
+    return _on_browser_thread(_browser_navigate_impl, args, "browser_navigate")
+
+
+def _browser_navigate_impl(args: Dict[str, Any]) -> str:
     url = str(args.get("url") or "").strip()
     if not url:
         return "(browser_navigate failed: no url given)"
@@ -854,6 +878,10 @@ def _browser_navigate_handler(args: Dict[str, Any]) -> str:
 
 
 def _browser_extract_handler(args: Dict[str, Any]) -> str:
+    return _on_browser_thread(_browser_extract_impl, args, "browser_extract")
+
+
+def _browser_extract_impl(args: Dict[str, Any]) -> str:
     token = str(args.get("session_token") or "").strip()
     if not token:
         return "(browser_extract failed: no session_token given)"
@@ -874,6 +902,10 @@ def _browser_extract_handler(args: Dict[str, Any]) -> str:
 
 
 def _browser_click_handler(args: Dict[str, Any]) -> str:
+    return _on_browser_thread(_browser_click_impl, args, "browser_click")
+
+
+def _browser_click_impl(args: Dict[str, Any]) -> str:
     token = str(args.get("session_token") or "").strip()
     target = str(args.get("target") or "").strip()
     if not token:
@@ -1018,6 +1050,10 @@ BROWSER_LOGIN_WAIT_SPEC = ActionSpec(
 # browser_submit — internal, the actual irreversible click.
 # ----------------------------------------------------------------
 def _browser_submit_handler(args: Dict[str, Any]) -> str:
+    return _on_browser_thread(_browser_submit_impl, args, "browser_submit")
+
+
+def _browser_submit_impl(args: Dict[str, Any]) -> str:
     token = str(args.get("session_token") or "")
     submit_label = str(args.get("submit_label") or "")
     session = get_manager().get(token)

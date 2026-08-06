@@ -30,6 +30,11 @@ def _isolated_queue(name: str):
     import tempfile
 
     path = Path(tempfile.gettempdir()) / f"test_pending_{name}.json"
+    # Delete first — ApprovalQueue LOADS an existing file, so without this
+    # every run appends to the last one's leftovers and the "exactly one
+    # pending item" assertions below start failing on the second run.
+    # (Latent until the flow actually got far enough to enqueue anything.)
+    path.unlink(missing_ok=True)
     queue = ApprovalQueue(path=path)
     aq_mod._queue = queue
     return queue
@@ -113,8 +118,21 @@ def test_full_fill_pause_approve_submit_loop() -> None:
 
     session = get_manager().get(token)
     assert session is not None, "session should stay alive until approval"
-    assert session.page.locator("#full_name").input_value() == "Test Founder"
-    assert session.page.locator("#result").inner_text() == "", "must NOT be submitted yet"
+    # Playwright objects belong to the thread that created them, and all
+    # browser work now runs on one dedicated thread (see
+    # browser_session_manager's module docstring — that pinning is what
+    # fixed the "every browser call after the first in a run fails" bug).
+    # A test poking session.page straight from the pytest main thread is
+    # therefore a cross-thread violation and dies with a greenlet error;
+    # marshal it the same way production code now does.
+    from backend.app.tools.browser_session_manager import run_on_browser_thread
+
+    assert run_on_browser_thread(
+        lambda: session.page.locator("#full_name").input_value()
+    ) == "Test Founder"
+    assert run_on_browser_thread(
+        lambda: session.page.locator("#result").inner_text()
+    ) == "", "must NOT be submitted yet"
 
     queue.set_status(record["id"], "approved")
     submit_result = browser_task._browser_submit_handler(record["arguments"])
