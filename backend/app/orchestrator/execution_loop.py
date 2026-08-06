@@ -192,6 +192,7 @@ class AgenticExecutor:
 
         steps: List[Dict[str, str]] = []   # rendered transcript entries
         seen_calls: set = set()            # (qname, args-json) repeat guard
+        repeat_counts: Dict[Any, int] = {}  # how often each call has been repeated
         acted = False
 
         for step_i in range(self.max_steps):
@@ -242,9 +243,34 @@ class AgenticExecutor:
             fingerprint = (action, json.dumps(args, sort_keys=True)[:400])
             if action not in pollable_names:
                 if fingerprint in seen_calls:
-                    logger.info("[%s] agentic loop repeated an identical call, stopping", role)
-                    steps.append({"note": f"(stopped: repeated the same {action} call — no new information)"})
-                    break
+                    # A repeat used to abort the entire run on the FIRST
+                    # occurrence. That was too blunt: on a real
+                    # stock-gainers task the model clicked a search
+                    # result, repeated the click, and the whole loop
+                    # broke at step 3 — one browser_extract away from
+                    # having the data on screen. The founder got a
+                    # delegation plan instead of a report.
+                    #
+                    # A duplicate call is usually a recoverable fumble,
+                    # not a wedged model, so tell it what happened and
+                    # let it correct course. Only a SECOND repeat of the
+                    # same call is treated as genuinely stuck.
+                    repeat_counts[fingerprint] = repeat_counts.get(fingerprint, 0) + 1
+                    if repeat_counts[fingerprint] >= 2:
+                        logger.info("[%s] agentic loop repeated the same call twice, stopping", role)
+                        steps.append({"note": f"(stopped: repeated the same {action} call — no new information)"})
+                        break
+                    logger.info("[%s] agentic loop repeated a call; nudging instead of stopping", role)
+                    steps.append({
+                        "thought": thought,
+                        "call": f"{action}({json.dumps(args, ensure_ascii=False)[:300]})",
+                        "result": (
+                            f"(you already made this exact {action} call — its result is "
+                            f"above. Do NOT repeat it. Either use what it already returned, "
+                            f"call a DIFFERENT tool, change the arguments, or return DONE.)"
+                        ),
+                    })
+                    continue
                 seen_calls.add(fingerprint)
 
             logger.info("[%s] agentic step %d: %s(%s)", role, step_i + 1, action, json.dumps(args)[:120])

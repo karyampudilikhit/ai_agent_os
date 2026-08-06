@@ -33,6 +33,34 @@ logger = logging.getLogger(__name__)
 
 TEAMMATE_SUMMARY_CHARS = 2000  # bound how much of each teammate's work is quoted forward
 
+# Injected ahead of the Supervisor's mandate when it has no specialists,
+# to cancel the mandate's standing "you plan, you don't do the work"
+# instruction for that one call. See the comment at its use site in
+# run_with_supervisor for the real failure this fixes.
+_SOLO_SUPERVISOR_BRIEF = (
+    "YOU ARE WORKING ALONE ON THIS TASK. There are no specialists on "
+    "this Unit — nobody exists to delegate to, and nothing you assign "
+    "will ever be picked up. For THIS task, ignore the part of your "
+    "mandate that says you only plan and synthesize: you are the one "
+    "doing the work, start to finish.\n\n"
+    "This means:\n"
+    "- DO NOT write a delegation plan, a team roster, a table of roles "
+    "and responsibilities, a timeline, or 'Day 1 / Day 2' steps. Every "
+    "one of those is a description of work instead of the work.\n"
+    "- DO NOT invent colleagues ('the Research Analyst will...'). There "
+    "is no Research Analyst. There is you.\n"
+    "- USE YOUR TOOLS to get the real information yourself — browse to "
+    "a real source and read it, search, call an API. You have them; a "
+    "plan to use them later is not a deliverable.\n"
+    "- DELIVER THE ACTUAL ANSWER the founder asked for, with real, "
+    "specific values you actually retrieved (real names, real numbers, "
+    "real dates), each traceable to the source you got it from.\n"
+    "- If a source is blocked or you genuinely cannot get the data, say "
+    "so in one line, state plainly what you DID manage to find, and "
+    "name the single thing that blocked you. A short honest partial "
+    "answer beats a polished plan every time."
+)
+
 
 class EmployeeCoordinator:
     """MVP coordinator: parallel-then-merged with a synthesis pass."""
@@ -220,12 +248,23 @@ class EmployeeCoordinator:
         # is a safety net — the frontend is supposed to auto-hire
         # specialists before it gets here — but crashes there
         # shouldn't silently produce empty output.
+        #
+        # It also needs _SOLO_SUPERVISOR_BRIEF below. The Supervisor's
+        # standing mandate says "you do NOT do specialist work — you plan
+        # and synthesize", which is right when it has a team and
+        # catastrophic when it doesn't. Observed twice on a real "report
+        # stocks up >30%" task: alone on the Unit, it obediently produced
+        # a delegation plan — a roster of five specialists who do not
+        # exist, plus a Day 1-4 timeline — and zero actual stock data,
+        # despite having working browser tools and having already pulled
+        # a page of search results. It was following its mandate
+        # correctly; the mandate was simply wrong for this case.
         if not specialists:
             logger.info("No specialists on Unit; Supervisor handling task solo")
             if on_role_working:
                 try: on_role_working(supervisor.role)
                 except Exception: pass  # noqa: BLE001
-            result = supervisor.run_task(prompt)
+            result = supervisor.run_task(prompt, task_brief=_SOLO_SUPERVISOR_BRIEF)
             if on_role_done:
                 try: on_role_done(supervisor.role, self._team_entry(result))
                 except Exception: pass  # noqa: BLE001
