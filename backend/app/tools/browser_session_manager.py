@@ -20,6 +20,13 @@ Session lifecycle:
     created (visible window opens) -> founder logs in if needed
         -> fields filled -> awaiting founder's submit approval
         -> submitted & closed | rejected (swept later) | idle-timeout (swept)
+
+The token bookkeeping (the dict, the lock, idle-sweeping) below used to
+be hand-rolled here. It's now LiveSessionManager (backend/app/actions/
+live_session_manager.py) — this class kept its exact public shape
+(create/get/close/sweep_idle unchanged), just delegates that mechanism
+instead of owning it, so browser_task.py needed zero changes. See that
+module's docstring for why this was worth generalizing.
 """
 
 from __future__ import annotations
@@ -28,9 +35,10 @@ import logging
 import os
 import threading
 import time
-import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
+
+from backend.app.actions.live_session_manager import LiveSessionManager, new_token
 
 logger = logging.getLogger(__name__)
 
@@ -100,10 +108,22 @@ class BrowserSession:
             return self.status, self.last_message
 
 
+def _close_browser_session(session: "BrowserSession") -> None:
+    session.context.close()
+    # Persistent contexts have no separate Browser object
+    # (session.browser is None); guard for the non-persistent case in
+    # case this ever changes back.
+    if session.browser is not None:
+        session.browser.close()
+    session.playwright.stop()
+
+
 class BrowserSessionManager:
     def __init__(self) -> None:
-        self._sessions: Dict[str, BrowserSession] = {}
-        self._lock = threading.Lock()
+        self._live: LiveSessionManager[BrowserSession] = LiveSessionManager(
+            idle_timeout_seconds=SESSION_IDLE_TIMEOUT_SECONDS,
+            closer=_close_browser_session,
+        )
 
     def create(self, url: str) -> BrowserSession:
         """Launch a REAL, VISIBLE (headed) browser window navigated to
@@ -129,13 +149,12 @@ class BrowserSessionManager:
         page = context.pages[0] if context.pages else context.new_page()
         page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
-        token = f"bsess_{uuid.uuid4().hex[:12]}"
+        token = new_token("bsess")
         session = BrowserSession(
             token=token, playwright=pw, browser=None, context=context, page=page,
         )
         session.set_status("opening", f"Opened a browser window at {url}.")
-        with self._lock:
-            self._sessions[token] = session
+        self._live.register(token, session)
         logger.info("Browser session %s opened at %s", token, url[:80])
         return session
 
@@ -170,28 +189,11 @@ class BrowserSessionManager:
             )
 
     def get(self, token: str) -> Optional[BrowserSession]:
-        with self._lock:
-            session = self._sessions.get(token)
-        if session:
-            session.touch()
-        return session
+        return self._live.get(token)
 
     def close(self, token: str) -> None:
-        with self._lock:
-            session = self._sessions.pop(token, None)
-        if not session:
-            return
-        try:
-            session.context.close()
-            # Persistent contexts have no separate Browser object
-            # (session.browser is None); guard for the non-persistent
-            # case in case this ever changes back.
-            if session.browser is not None:
-                session.browser.close()
-            session.playwright.stop()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Error closing browser session %s: %s", token, exc)
-        logger.info("Browser session %s closed", token)
+        if self._live.close(token):
+            logger.info("Browser session %s closed", token)
 
     def sweep_idle(self) -> int:
         """Close any session idle past SESSION_IDLE_TIMEOUT_SECONDS.
@@ -201,13 +203,7 @@ class BrowserSessionManager:
         leaking a live Chromium process forever (a rejected browser_submit
         doesn't run any handler today, so this sweep is the only cleanup
         path for that case — see browser_task.py's module docstring)."""
-        cutoff = time.time() - SESSION_IDLE_TIMEOUT_SECONDS
-        with self._lock:
-            stale = [t for t, s in self._sessions.items() if s.last_touched_at < cutoff]
-        for token in stale:
-            logger.info("Sweeping idle browser session %s", token)
-            self.close(token)
-        return len(stale)
+        return self._live.sweep_idle()
 
 
 _manager: Optional[BrowserSessionManager] = None
