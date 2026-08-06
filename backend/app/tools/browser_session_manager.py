@@ -84,6 +84,13 @@ _BROWSER_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="playwr
 BROWSER_OP_TIMEOUT_SECONDS = 180.0
 
 
+def is_browser_thread() -> bool:
+    """True when the caller is ALREADY the Playwright worker. Needed
+    because the executor has a single worker: code running on it that
+    submits more work and waits would deadlock against itself."""
+    return threading.current_thread().name.startswith("playwright")
+
+
 def run_on_browser_thread(fn: Callable, *args, timeout: Optional[float] = BROWSER_OP_TIMEOUT_SECONDS, **kwargs):
     """Run `fn` on the dedicated Playwright thread and WAIT for its
     result, re-raising anything it raised. Use for any code path that
@@ -91,6 +98,8 @@ def run_on_browser_thread(fn: Callable, *args, timeout: Optional[float] = BROWSE
     concurrent.futures.TimeoutError if the thread is still busy after
     `timeout` — callers should turn that into a readable message rather
     than let it surface as a stack trace."""
+    if is_browser_thread():
+        return fn(*args, **kwargs)
     return _BROWSER_EXECUTOR.submit(fn, *args, **kwargs).result(timeout=timeout)
 
 
@@ -244,13 +253,25 @@ def _close_browser_session(session: "BrowserSession") -> None:
     is shared by every session (see the module docstring above and
     BrowserSessionManager._playwright). Stopping it here — which this
     function used to do — is what made the next session's start() fail.
+
+    Marshalled onto the browser thread, because closing touches the
+    BrowserContext and that object belongs to the thread that made it.
+    Without this, close() called from a request/test thread died with
+    "Cannot switch to a different thread", the context never actually
+    closed, and Chrome processes piled up holding the shared on-disk
+    profile — which then made every later browser launch fail with
+    "profile is already in use". That was the real source of the stray
+    chrome.exe processes and the flaky browser tests.
     """
-    session.context.close()
-    # Persistent contexts have no separate Browser object
-    # (session.browser is None); guard for the non-persistent case in
-    # case this ever changes back.
-    if session.browser is not None:
-        session.browser.close()
+    def _do_close() -> None:
+        session.context.close()
+        # Persistent contexts have no separate Browser object
+        # (session.browser is None); guard for the non-persistent case in
+        # case this ever changes back.
+        if session.browser is not None:
+            session.browser.close()
+
+    run_on_browser_thread(_do_close)
 
 
 class BrowserSessionManager:

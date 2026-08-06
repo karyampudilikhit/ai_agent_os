@@ -782,8 +782,73 @@ BROWSER_TASK_STATUS_SPEC = ActionSpec(
 # across these tools is real future work, tracked in
 # [[vision-ai-browser-automation-priority]].
 # ----------------------------------------------------------------
-_MAX_EXTRACT_CHARS = 4000
+_MAX_EXTRACT_CHARS = 8000
 _EXTRACT_TEXT_JS = "() => document.body ? document.body.innerText : ''"
+
+# Tables get their own, larger budget: on a data page the table IS the
+# payload, and clipping it is what produces a confidently wrong answer.
+_MAX_TABLE_CHARS = 14000
+
+# Structured table extraction.
+#
+# Why this exists, from a real failure: asked for stocks up >30%, a run
+# read a screener page with plain innerText and then parsed the columns
+# by eye. Two rows had an EMPTY market-cap cell. innerText renders an
+# empty cell as nothing at all, so the columns silently misaligned — the
+# model dropped the single biggest gainer on the page (Mrugesh Trading,
+# +902.71%, the #1 row) and attached a market-cap number to United
+# Foodbrands that does not appear anywhere on the source. It then
+# described its own output as "taken verbatim".
+#
+# Reading real <th>/<td> nodes fixes that class of bug at the root: cell
+# COUNT and POSITION survive, and an empty cell stays an empty cell
+# instead of vanishing. The renderer marks blanks explicitly so a model
+# cannot quietly slide the next column into the gap.
+_EXTRACT_TABLES_JS = r"""
+() => {
+  const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const out = [];
+  document.querySelectorAll('table').forEach((tbl, idx) => {
+    const rows = [];
+    tbl.querySelectorAll('tr').forEach((tr) => {
+      const cells = Array.from(tr.querySelectorAll('th, td')).map(
+        (c) => clean(c.innerText)
+      );
+      if (cells.length) rows.push(cells);
+    });
+    // A "table" of one row is almost always layout markup, not data.
+    if (rows.length >= 2) out.push({ index: idx, rows: rows });
+  });
+  return out;
+}
+"""
+
+
+def _render_tables(tables: List[Dict[str, Any]], limit: int) -> str:
+    """Pipe-delimit every row so column boundaries are unambiguous, and
+    name empty cells rather than leaving a gap — the gap is exactly what
+    the model misread last time."""
+    chunks: List[str] = []
+    for t in tables:
+        rows = t.get("rows") or []
+        width = max((len(r) for r in rows), default=0)
+        lines = [f"--- table {t.get('index')} ({len(rows)} rows x {width} cols) ---"]
+        for r in rows:
+            # Pad short rows so a row with fewer cells can't look like a
+            # complete one; mark blanks so they're impossible to skip.
+            padded = list(r) + [""] * (width - len(r))
+            lines.append(" | ".join(c if c else "(blank)" for c in padded))
+        chunks.append("\n".join(lines))
+    text = "\n\n".join(chunks)
+    if len(text) > limit:
+        return (
+            text[:limit].rstrip()
+            + f"\n[…TABLE TRUNCATED at {limit} of {len(text)} chars. You are NOT "
+              f"seeing every row. Do not describe this as a complete list, and do "
+              f"not call the rows you can see 'the top N' unless the page itself "
+              f"says so — page through the site for the rest.]"
+        )
+    return text
 
 _LIKELY_IRREVERSIBLE_CLICK_WORDS = (
     "submit", "buy now", "buy", "purchase", "pay", "confirm order",
@@ -871,8 +936,10 @@ def _browser_navigate_impl(args: Dict[str, Any]) -> str:
         f"Now on: \"{snapshot.get('title', '')}\" ({snapshot.get('url', url)})\n"
         f"Fillable fields:\n{_fields_block(snapshot.get('fields') or [])}\n"
         f"Clickable buttons:\n{_buttons_block(snapshot.get('buttons') or [])}\n"
-        f"Use action.browser_extract(session_token) to read the page's text, "
-        f"or action.browser_click(session_token, target) to click a link/"
+        f"Use action.browser_extract_table(session_token) if you need DATA "
+        f"(rows, figures, tickers) — it preserves cells and blanks. Use "
+        f"action.browser_extract(session_token) for prose, or "
+        f"action.browser_click(session_token, target) to click a link/"
         f"button by its visible text."
     )
 
@@ -893,12 +960,79 @@ def _browser_extract_impl(args: Dict[str, Any]) -> str:
         )
     try:
         text = (session.page.evaluate(_EXTRACT_TEXT_JS) or "").strip()
+        table_count = len(session.page.evaluate(_EXTRACT_TABLES_JS) or [])
         page_url = session.page.url
     except Exception as exc:  # noqa: BLE001
         return f"(browser_extract failed: {exc})"
-    truncated = text[:_MAX_EXTRACT_CHARS]
-    suffix = "\n[…truncated…]" if len(text) > _MAX_EXTRACT_CHARS else ""
-    return f"[page text — {page_url}]\n{truncated}{suffix}"
+
+    # Point at the structured reader whenever the page actually has
+    # tables. Reading a data table out of flowed innerText is how a real
+    # run silently dropped the #1 row of a stock screener.
+    table_hint = (
+        f"\n[This page contains {table_count} table(s). For anything you intend to "
+        f"quote as data — rows, figures, tickers — call "
+        f"action.browser_extract_table(session_token) instead. It reads real "
+        f"cells, so blank cells and column alignment survive; the flowed text "
+        f"below does NOT preserve them.]"
+        if table_count
+        else ""
+    )
+    if len(text) > _MAX_EXTRACT_CHARS:
+        suffix = (
+            f"\n[…TEXT TRUNCATED at {_MAX_EXTRACT_CHARS} of {len(text)} chars. You "
+            f"are NOT seeing the whole page. Do not present what you can see as a "
+            f"complete list, and do not label it 'the top N' unless the page says "
+            f"so — that is a limit you hit, not an editorial choice.]"
+        )
+    else:
+        suffix = ""
+    return f"[page text — {page_url}]{table_hint}\n{text[:_MAX_EXTRACT_CHARS]}{suffix}"
+
+
+def _browser_extract_table_handler(args: Dict[str, Any]) -> str:
+    return _on_browser_thread(_browser_extract_table_impl, args, "browser_extract_table")
+
+
+def _browser_extract_table_impl(args: Dict[str, Any]) -> str:
+    token = str(args.get("session_token") or "").strip()
+    if not token:
+        return "(browser_extract_table failed: no session_token given)"
+    session = get_manager().get(token)
+    if not session:
+        return (
+            "(no such browser session — it may have finished, failed, timed "
+            "out, or was never opened via browser_navigate)"
+        )
+    try:
+        tables = session.page.evaluate(_EXTRACT_TABLES_JS) or []
+        page_url = session.page.url
+    except Exception as exc:  # noqa: BLE001
+        return f"(browser_extract_table failed: {exc})"
+
+    if not tables:
+        return (
+            f"(no data tables found on {page_url} — the page may render its rows "
+            f"with divs rather than a <table>, or may not have loaded yet. Use "
+            f"action.browser_extract to read it as text, but treat any figures "
+            f"you pull out of flowed text as unverified.)"
+        )
+
+    wanted = args.get("table_index")
+    if wanted is not None and str(wanted).strip() != "":
+        try:
+            idx = int(wanted)
+            tables = [t for t in tables if t.get("index") == idx] or tables
+        except (TypeError, ValueError):
+            pass
+
+    return (
+        f"[tables — {page_url}]\n"
+        f"(Cells are pipe-separated and empty cells are shown as (blank). Every "
+        f"row has the same number of columns. Read values by COLUMN POSITION; "
+        f"never shift a value across a (blank) to fill a gap, and never infer a "
+        f"value — a ticker, an ID — that is not printed in a cell.)\n"
+        + _render_tables(tables, _MAX_TABLE_CHARS)
+    )
 
 
 def _browser_click_handler(args: Dict[str, Any]) -> str:
@@ -998,6 +1132,28 @@ BROWSER_EXTRACT_SPEC = ActionSpec(
     mutating=False,
     planner_excluded=False,
     capability="web.page.extract",
+)
+
+
+BROWSER_EXTRACT_TABLE_SPEC = ActionSpec(
+    name="browser_extract_table",
+    description=(
+        "Read the current page's data TABLES as exact rows and columns. "
+        "ALWAYS prefer this over browser_extract when you are going to "
+        "quote figures, rows, tickers, prices or any tabular data — it "
+        "reads real table cells, so empty cells and column alignment are "
+        "preserved. browser_extract returns flowed text where an empty "
+        "cell disappears and columns silently shift."
+    ),
+    parameters=[
+        {"name": "session_token", "type": "string", "description": "Token from browser_navigate or browser_click.", "required": True},
+        {"name": "table_index", "type": "string", "description": "Optional: which table to read, if the page has several. Omit for all.", "required": False},
+    ],
+    handler=_browser_extract_table_handler,
+    preview=lambda args: "Read page tables",
+    mutating=False,
+    planner_excluded=False,
+    capability="web.page.extract_table",
 )
 
 

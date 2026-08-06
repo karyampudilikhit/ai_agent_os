@@ -206,6 +206,32 @@ _UNIVERSAL_RULES: List[str] = [
     "fetch the underlying data yourself from a real source — not to "
     "escalate, wait, or hand the gap back to the founder. Never emit an "
     "empty template or placeholder file as if it were a deliverable.",
+
+    "Only report values you actually READ. Never reconstruct, normalise "
+    "or guess an identifier — a ticker symbol, product code, ID, exact "
+    "date — from a name or from context. If the source shows a company "
+    "name but no symbol, give the name and leave the symbol out. "
+    "Inventing a plausible-looking identifier while calling your method "
+    "'verbatim' is fabrication, even when the surrounding numbers are "
+    "right.",
+
+    "Answer the question you were ACTUALLY asked. Do not silently narrow "
+    "the scope — to one country, one exchange, one time window — because "
+    "that is what the first source you found happened to cover. If you "
+    "had to narrow it, say so in one line at the top, in the founder's "
+    "terms, and say what is missing.",
+
+    "Never claim something does not exist because you failed to find it. "
+    "'No such data/list/source is available' is a strong factual claim "
+    "and it is usually wrong — say 'I could not retrieve X from Y' and "
+    "name what you actually tried. A page that was blocked, slow, or "
+    "unparseable is a tool failure, not proof of absence.",
+
+    "Deliver the whole result, not a sample. If the source has 58 rows "
+    "and the founder asked for the list, give 58 — or state the real "
+    "reason you have fewer (a page limit you hit, a truncated read), "
+    "never 'for brevity'. And if producing a file would serve them "
+    "better, WRITE it with your tools; do not offer to produce it later.",
 ]
 
 
