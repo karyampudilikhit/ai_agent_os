@@ -150,4 +150,5 @@ SPEC = ActionSpec(
     handler=_handler,
     preview=_preview,
     mutating=True,
+    capability="repo.create",
 )

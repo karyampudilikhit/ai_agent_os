@@ -52,16 +52,24 @@ import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from backend.app.actions.action_registry import CONNECTION_NAMESPACE as ACTION_NAMESPACE
 from backend.app.actions.action_registry import get_registry as get_action_registry
-from backend.app.tools.http_tool_runner import CONNECTION_NAMESPACE as HTTP_NAMESPACE
 from backend.app.tools.http_tool_runner import HTTPToolRunner
-from backend.app.tools.mcp_client import get_registry as get_mcp_registry
+from backend.app.tools.tool_registry import get_registry as get_tool_registry
 
 logger = logging.getLogger(__name__)
 
+# _http_runner / _action_registry are kept as module-level singletons
+# (not just imported inline) because a few things still reach into them
+# directly: test_execution_loop.py's test_failed_call_becomes_observation
+# monkeypatches `_action_registry.call` to force a failure, and it works
+# because this IS the same singleton object tool_registry.py's ToolRegistry
+# holds internally — mutating it here mutates it everywhere. _available_tools
+# and _execute below go through _tool_registry now (see tool_registry.py's
+# module docstring for why); these two names stay only for that shared-object
+# back-compat, not because the loop calls them directly anymore.
 _http_runner = HTTPToolRunner()
 _action_registry = get_action_registry()
+_tool_registry = get_tool_registry()
 
 MAX_STEPS = 10               # hard ceiling on THINK->ACT cycles
 DEADLINE_SECONDS = 240.0     # wall-clock budget for the whole loop
@@ -134,20 +142,13 @@ class AgenticExecutor:
         founder connected + their custom HTTP tools + built-in actions.
         for_planner=True hides tools whose arguments are a whole
         deliverable (create_pptx/docx/xlsx — those fire post-synthesis
-        from finished text) and tools that block on a human."""
+        from finished text) and tools that block on a human. Delegated
+        to ToolRegistry (tool_registry.py) so this three-way union lives
+        in exactly one place instead of being reimplemented per caller."""
         try:
-            mcp_tools = get_mcp_registry().list_all_tools()
+            return _tool_registry.list_tools(for_planner=True)
         except Exception:  # noqa: BLE001
-            mcp_tools = []
-        try:
-            http_tools = _http_runner.list_tools()
-        except Exception:  # noqa: BLE001
-            http_tools = []
-        try:
-            action_tools = _action_registry.list_tools(for_planner=True)
-        except Exception:  # noqa: BLE001
-            action_tools = []
-        return mcp_tools + http_tools + action_tools
+            return []
 
     def _render_tools(self, tools: List[Dict[str, Any]]) -> str:
         lines = []
@@ -162,14 +163,12 @@ class AgenticExecutor:
 
     def _execute(self, qname: str, args: Dict[str, Any]) -> str:
         """Route one call by namespace. Never raises — a failure is an
-        observation the model can react to, not a crashed run."""
+        observation the model can react to, not a crashed run. Delegated
+        to ToolRegistry.call(), which does this same namespace routing
+        (and normalizes MCP's raise-on-error to the same text-result
+        shape action/HTTP already use) in one place."""
         try:
-            namespace = qname.split(".", 1)[0]
-            if namespace == HTTP_NAMESPACE:
-                return _http_runner.call(qname, args)
-            if namespace == ACTION_NAMESPACE:
-                return _action_registry.call(qname, args)
-            return get_mcp_registry().call(qname, args)
+            return _tool_registry.call(qname, args)
         except Exception as exc:  # noqa: BLE001
             return f"(call failed: {exc})"
 

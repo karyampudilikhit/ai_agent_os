@@ -664,6 +664,7 @@ BROWSER_TASK_SPEC = ActionSpec(
     preview=_browser_task_preview,
     mutating=False,  # runs inline — the safe part (login-wait, fill) needs no pre-approval
     planner_excluded=True,  # explicit dispatch only, see dynamic_employee.should_browser_automate
+    capability="web.form.fill_sync",
 )
 
 
@@ -694,6 +695,7 @@ BROWSER_TASK_ASYNC_SPEC = ActionSpec(
     preview=_browser_task_preview,
     mutating=False,  # runs inline — kicks off a background thread and returns at once
     planner_excluded=False,  # this IS the loop-safe variant — the whole point is to be callable here
+    capability="web.form.fill",
 )
 
 
@@ -713,6 +715,7 @@ BROWSER_TASK_STATUS_SPEC = ActionSpec(
     mutating=False,
     planner_excluded=False,
     pollable=True,  # exempt from the agentic loop's identical-repeat-call guard
+    capability="web.form.status",
 )
 
 
@@ -736,6 +739,7 @@ BROWSER_LOGIN_WAIT_SPEC = ActionSpec(
     preview=lambda args: "Continue past login",
     mutating=True,
     planner_excluded=True,
+    capability="web.form.login_continue",
 )
 
 
@@ -775,4 +779,5 @@ BROWSER_SUBMIT_SPEC = ActionSpec(
     preview=lambda args: "Submit the form",
     mutating=True,
     planner_excluded=True,
+    capability="web.form.submit",
 )

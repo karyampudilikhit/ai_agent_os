@@ -69,6 +69,18 @@ class ActionSpec:
     # for a poll, an identical call is the correct next step, not a
     # stuck loop. See execution_loop.py's `pollable_names` handling.
     pollable: bool = False
+    # Abstract capability tag ("web.form.fill", "repo.create") — the
+    # indirection the wider architecture needs so a caller can ask the
+    # ToolRegistry (backend/app/tools/tool_registry.py) "give me
+    # whatever can do web.form.fill" instead of hardcoding this spec's
+    # `name`. Optional and unset ("") for most existing built-ins today
+    # — ToolRegistry falls back to qualified_name() when empty, so
+    # leaving it blank is safe, just less abstract. Not yet consumed by
+    # the planner prompt itself (see execution_loop.py's STEP_PROMPT,
+    # which still shows qualified_name) — that's the next step once
+    # enough tools carry a real tag to make capability-based selection
+    # worthwhile over plain listing.
+    capability: str = ""
 
     def qualified_name(self) -> str:
         return f"{CONNECTION_NAMESPACE}.{self.name}"
@@ -122,6 +134,7 @@ class ActionRegistry:
                         "required": required,
                     },
                     "pollable": spec.pollable,
+                    "capability": spec.capability or spec.qualified_name(),
                 }
             )
         return out
