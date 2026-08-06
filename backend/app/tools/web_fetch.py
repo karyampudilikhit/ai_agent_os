@@ -97,6 +97,14 @@ class WebFetchTool:
             logger.info("Fetch skipped (content-type=%s): %s", ct, url[:80])
             return None
 
+        # Record ONLY here — past the error and content-type gates, so the
+        # ledger means "we actually read this page", never "we tried to".
+        try:
+            from backend.app.tools.source_ledger import get_ledger
+            get_ledger().record_fetched(str(resp.url) or url)
+        except Exception:  # noqa: BLE001
+            pass
+
         try:
             text = self._html_to_text(resp.text)
         except Exception as exc:  # noqa: BLE001

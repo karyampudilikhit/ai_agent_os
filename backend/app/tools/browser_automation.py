@@ -178,6 +178,11 @@ class DeepResearchTool:
             resp = page.goto(url, wait_until="domcontentloaded")
             if resp is not None and resp.status >= 400:
                 return None
+            try:
+                from backend.app.tools.source_ledger import get_ledger
+                get_ledger().record_fetched(page.url or url)
+            except Exception:  # noqa: BLE001
+                pass
             # Brief, bounded wait for lazy-rendered content — long
             # enough for most React hydration, short enough that one
             # slow page can't eat the whole site's time budget.

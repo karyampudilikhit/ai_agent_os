@@ -227,6 +227,15 @@ _UNIVERSAL_RULES: List[str] = [
     "name what you actually tried. A page that was blocked, slow, or "
     "unparseable is a tool failure, not proof of absence.",
 
+    "NEVER cite a URL you did not actually open in this task. Do not "
+    "attach a source to something you already knew, and do not reach for "
+    "a plausible-looking link (a Wikipedia page, a company's About page) "
+    "to dress up an answer from memory — that is worse than no citation, "
+    "because a citation buys trust. Every URL you print is now checked "
+    "against what this system really retrieved, and invented ones are "
+    "flagged to the founder. If a fact came from your own knowledge, say "
+    "so plainly and leave it uncited.",
+
     "Deliver the whole result, not a sample. If the source has 58 rows "
     "and the founder asked for the list, give 58 — or state the real "
     "reason you have fewer (a page limit you hit, a truncated read), "

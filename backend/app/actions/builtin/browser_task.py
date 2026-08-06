@@ -1073,6 +1073,13 @@ def _browser_click_impl(args: Dict[str, Any]) -> str:
         loc.click()
         session.page.wait_for_timeout(1200)
         snapshot = _snapshot_page(session.page)
+        # A click that navigates lands on a new page — that page was
+        # genuinely retrieved, so it's citable. See source_ledger.py.
+        try:
+            from backend.app.tools.source_ledger import get_ledger
+            get_ledger().record_fetched(session.page.url)
+        except Exception:  # noqa: BLE001
+            pass
     except Exception as exc:  # noqa: BLE001
         return _with_screenshot(session, "click_failed", f"(browser_click failed: {exc})")
 

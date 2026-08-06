@@ -91,6 +91,14 @@ class TavilySearchTool:
             snippet = str(item.get("content", "")).strip()
             if title or url or snippet:
                 out.append({"title": title, "url": url, "snippet": snippet})
+                # 'seen', not 'fetched': we read the snippet a search
+                # engine returned, we did not open the page.
+                if url:
+                    try:
+                        from backend.app.tools.source_ledger import get_ledger
+                        get_ledger().record_seen(url)
+                    except Exception:  # noqa: BLE001
+                        pass
         return out
 
     def format_for_prompt(self, query: str, results: List[Dict[str, str]]) -> str:

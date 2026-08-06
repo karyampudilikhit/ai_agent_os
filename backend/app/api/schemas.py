@@ -125,7 +125,7 @@ class EvidenceClaim(BaseModel):
     a blind benchmark proved that verification left as an exercise for
     the reader gets skipped, even by other AI judges."""
     text: str
-    status: str  # "verified" | "flagged_unknown" | "unsourced_claim"
+    status: str  # "verified" | "flagged_unknown" | "unsourced_claim" | "fabricated_source"
     source: str = ""
 
 

@@ -2609,6 +2609,10 @@ const EVIDENCE_BADGE = {
   verified: '✅',
   flagged_unknown: '⚠️',
   unsourced_claim: '❗',
+  // A citation to a URL this run never opened. Ranked worse than
+  // 'unsourced' on purpose: an uncited guess looks like a guess, while a
+  // fabricated citation buys trust it hasn't earned.
+  fabricated_source: '🚫',
 };
 
 // Evidence ledger — renders the structured claims list a deliverable's
@@ -2626,7 +2630,7 @@ function renderEvidence(claims) {
     return;
   }
 
-  const counts = { verified: 0, flagged_unknown: 0, unsourced_claim: 0 };
+  const counts = { verified: 0, flagged_unknown: 0, unsourced_claim: 0, fabricated_source: 0 };
   claims.forEach(c => { if (c.status in counts) counts[c.status]++; });
 
   evidenceToggle.innerHTML = `
@@ -2634,12 +2638,13 @@ function renderEvidence(claims) {
     <span class="chip verified">✅ ${counts.verified} verified</span>
     <span class="chip unknown">⚠️ ${counts.flagged_unknown} unknown</span>
     ${counts.unsourced_claim ? `<span class="chip unsourced">❗ ${counts.unsourced_claim} unsourced</span>` : ''}
+    ${counts.fabricated_source ? `<span class="chip unsourced">🚫 ${counts.fabricated_source} fake citation</span>` : ''}
     <span class="caret">▾</span>
   `;
 
   evidenceList.innerHTML = claims.map(c => {
     const badge = EVIDENCE_BADGE[c.status] || '•';
-    const rowClass = c.status === 'unsourced_claim' ? ' unsourced' : '';
+    const rowClass = (c.status === 'unsourced_claim' || c.status === 'fabricated_source') ? ' unsourced' : '';
     const source = c.source
       ? `<a class="source" href="${escapeHtml(c.source)}" target="_blank" rel="noopener">${escapeHtml(c.source)}</a>`
       : '';
@@ -2652,7 +2657,7 @@ function renderEvidence(claims) {
   evidencePanel.style.display = '';
   // Default open only when there's something worth flagging immediately —
   // an unsourced claim is the one case a user should see without an extra click.
-  evidenceOpen = counts.unsourced_claim > 0;
+  evidenceOpen = counts.unsourced_claim > 0 || counts.fabricated_source > 0;
   evidenceList.classList.toggle('open', evidenceOpen);
   evidenceToggle.classList.toggle('open', evidenceOpen);
 }

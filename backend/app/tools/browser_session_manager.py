@@ -359,6 +359,16 @@ class BrowserSessionManager:
         page = context.pages[0] if context.pages else context.new_page()
         page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
+        # Landing on a page IS retrieving it — record the post-redirect
+        # URL so a later citation of it can be verified. See
+        # source_ledger.py for why citations are checked against the
+        # network rather than against the finished text.
+        try:
+            from backend.app.tools.source_ledger import get_ledger
+            get_ledger().record_fetched(page.url or url)
+        except Exception:  # noqa: BLE001
+            pass
+
         token = new_token("bsess")
         session = BrowserSession(
             token=token, playwright=pw, browser=None, context=context, page=page,

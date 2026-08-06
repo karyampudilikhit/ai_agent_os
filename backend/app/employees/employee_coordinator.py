@@ -81,10 +81,75 @@ class EmployeeCoordinator:
         """Never let evidence extraction break a run — on any failure,
         return an empty ledger and let the deliverable stand on its own."""
         try:
-            return self.evidence.extract(deliverable)
+            claims = self.evidence.extract(deliverable)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Evidence extraction failed: %s", exc)
-            return []
+            claims = []
+        try:
+            return self._flag_fabricated_citations(deliverable, claims)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Citation verification failed: %s", exc)
+            return claims
+
+    def _flag_fabricated_citations(
+        self, deliverable: str, claims: List[Dict[str, str]]
+    ) -> List[Dict[str, str]]:
+        """Check every cited URL against what this process actually
+        retrieved, and mark the ones that were never fetched or seen.
+
+        The LLM-based EvidenceExtractor structurally cannot catch this:
+        it only reads the finished text, and in text a fabricated URL
+        looks exactly like a real one. It rated a report "0 fabricated
+        claims" whose every business-model row cited a Wikipedia page the
+        run never opened. This pass asks the network instead — see
+        backend/app/tools/source_ledger.py.
+
+        Two things happen here:
+          1. Any extracted claim whose `source` URL is unknown to the
+             ledger is downgraded to `fabricated_source` — strictly worse
+             than `unsourced_claim`, because a fake citation actively
+             buys trust an uncited guess never gets.
+          2. URLs cited anywhere in the deliverable that the extractor
+             didn't attach to a claim get their own entries, so a fake
+             citation can't hide by not being picked up.
+        """
+        from backend.app.tools.source_ledger import get_ledger
+
+        ledger = get_ledger()
+        out: List[Dict[str, str]] = []
+        accounted: set = set()
+
+        for claim in claims:
+            source = str(claim.get("source") or "").strip()
+            if source.startswith(("http://", "https://")):
+                accounted.add(source.rstrip(".,;:!?'\")]}>"))
+                if not ledger.is_known(source):
+                    claim = {**claim, "status": "fabricated_source"}
+                    logger.warning(
+                        "Fabricated citation: %s was never fetched in this process",
+                        source[:120],
+                    )
+            out.append(claim)
+
+        # Catch fake URLs the extractor never turned into a claim.
+        from backend.app.tools.source_ledger import extract_urls, normalize_url
+
+        seen_keys = {normalize_url(u) for u in accounted}
+        for url in extract_urls(deliverable):
+            if normalize_url(url) in seen_keys:
+                continue
+            if ledger.is_known(url):
+                continue
+            logger.warning("Fabricated citation (uncited in claims): %s", url[:120])
+            out.append({
+                "text": (
+                    f"Cites {url} as a source, but this URL was never opened "
+                    f"during this run."
+                ),
+                "status": "fabricated_source",
+                "source": url,
+            })
+        return out
 
     def run(
         self,
