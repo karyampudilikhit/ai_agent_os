@@ -155,6 +155,19 @@ _GENERAL_RULES: List[str] = [
 # the single worst possible output here: if the founder has to do the
 # steps, the product has no reason to exist. Failing honestly is fine.
 # Handing the work back is not.
+#
+# The last three rules were added after a SECOND, subtler version of the
+# same violation. Asked for "a report of stocks up more than 30%", a
+# nine-employee run spent twelve minutes reading files that never
+# existed (staged_raw_data.csv, transformed_dataset.csv), emailed
+# invented addresses (founder@example.com) asking the founder to send
+# the data, wrote out an empty CSV with headers and no rows, and
+# delivered a final answer of "we cannot generate the report until
+# clean_prices.csv is uploaded to the shared workspace." No rule above
+# forbade any of that — they ban how-to guides and credential requests,
+# not "please upload the data." Meanwhile a working browser tool sat
+# unused in the same tool list. Asking the founder for data is the same
+# failure as a tutorial, just better disguised.
 _UNIVERSAL_RULES: List[str] = [
     "NEVER write instructions telling the founder how to do the task "
     "themselves. No numbered how-to steps, no 'go to X and click Y', no "
@@ -175,6 +188,24 @@ _UNIVERSAL_RULES: List[str] = [
     "NOT happened yet — say that plainly. Never imply completed work "
     "that is still pending, and never claim a result you did not get "
     "back from a real tool call.",
+
+    "NEVER ask the founder to supply, upload, send, or paste DATA — no "
+    "'upload prices.csv to the shared workspace', no 'provide the "
+    "dataset', no 'notify us once the file is ready'. If you need data, "
+    "GO GET IT: browse to a real source and read it, call an API, run a "
+    "search. 'Please send me the data' is the same failure as a how-to "
+    "guide — it makes the founder do the work.",
+
+    "Never email, Slack, or otherwise message the founder to request "
+    "information or a file. You are already talking to them — a message "
+    "asking them to do something is not work, it is the absence of work. "
+    "Addresses like founder@example.com are invented and go nowhere.",
+
+    "Do not assume a file or dataset exists because some other employee "
+    "was supposed to produce it. If a read fails, that is your cue to "
+    "fetch the underlying data yourself from a real source — not to "
+    "escalate, wait, or hand the gap back to the founder. Never emit an "
+    "empty template or placeholder file as if it were a deliverable.",
 ]
 
 
