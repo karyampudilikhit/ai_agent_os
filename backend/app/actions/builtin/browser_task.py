@@ -81,6 +81,7 @@ import os
 import re
 import threading
 import time
+import uuid
 from typing import Any, Dict, List, Optional
 
 from backend.app.actions.action_registry import ActionSpec
@@ -329,6 +330,77 @@ def _resolve_button_locator(page, hint: str):
 # ----------------------------------------------------------------
 # action.browser_task — the ONE tool a specialist can call.
 # ----------------------------------------------------------------
+# ----------------------------------------------------------------
+# Reliability helpers — screenshot-on-failure, cookie/consent banner
+# dismissal, friendlier open-failure classification. Added because "it
+# failed" with no visual and a raw exception string is not debuggable
+# at 2am when a site changed its DOM; see task tracked as "Harden
+# browser automation reliability" in [[vision-ai-browser-automation-priority]].
+# ----------------------------------------------------------------
+def _capture_failure_screenshot(session, tag: str) -> Optional[str]:
+    """Best-effort screenshot into the sandboxed workspace so a broken
+    run is debuggable instead of just a text error. Never raises — a
+    screenshot failing must never mask the REAL failure it documents."""
+    try:
+        from backend.app.actions.builtin._workspace import workspace_root
+        shots_dir = workspace_root() / "browser_failures"
+        shots_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"{tag}_{int(time.time())}_{uuid.uuid4().hex[:8]}.png"
+        session.page.screenshot(path=str(shots_dir / filename))
+        return f"workspace/browser_failures/{filename}"
+    except Exception as exc:  # noqa: BLE001
+        logger.info("browser_task: could not capture failure screenshot: %s", exc)
+        return None
+
+
+def _with_screenshot(session, tag: str, message: str) -> str:
+    """Append a screenshot path to a failure message when one could be
+    captured; otherwise return the message unchanged (never blocks on a
+    missing/failed screenshot)."""
+    path = _capture_failure_screenshot(session, tag)
+    return f"{message}\n(screenshot saved: {path})" if path else message
+
+
+_CONSENT_BUTTON_TEXTS = (
+    "accept all", "accept cookies", "i accept", "i agree", "accept",
+    "got it", "allow all", "agree",
+)
+
+
+def _try_dismiss_consent_banner(page) -> bool:
+    """Best-effort: click the first cookie/consent-banner accept button
+    found, if any. A consent overlay sitting on top of the real form is
+    a common real-world blocker for field resolution and clicking.
+    Never raises — a missed banner just means the normal flow proceeds
+    exactly as it did before this existed (a field/button not found is
+    still reported, just without this extra recovery attempt)."""
+    for text in _CONSENT_BUTTON_TEXTS:
+        try:
+            btn = page.get_by_role("button", name=text, exact=False)
+            if btn.count() >= 1:
+                btn.first.click(timeout=1500)
+                logger.info("browser_task: dismissed a likely consent/cookie banner (%r)", text)
+                return True
+        except Exception:  # noqa: BLE001
+            continue
+    return False
+
+
+def _classify_open_error(exc: Exception) -> str:
+    """Turn a raw Playwright exception into a message that tells the
+    founder/specialist something actionable, instead of a bare stack
+    string. Text-based classification (not exception-type based) since
+    Playwright raises the same generic Error class for most of these —
+    the useful signal is in the message."""
+    msg = str(exc)
+    lowered = msg.lower()
+    if "timeout" in lowered:
+        return f"the page took too long to load — it may be slow or unreachable ({msg[:150]})"
+    if any(s in lowered for s in ("err_name_not_resolved", "net::err", "getaddrinfo", "err_connection")):
+        return f"could not reach that URL — double-check it's correct and the site is up ({msg[:150]})"
+    return msg[:200]
+
+
 def _run_browser_flow(mgr, queue, session, url: str, goal: str) -> str:
     """The actual login-wait -> fill -> queue-submit flow, on an already-
     open session. Shared by BOTH entry points:
@@ -343,6 +415,7 @@ def _run_browser_flow(mgr, queue, session, url: str, goal: str) -> str:
     which ignores them and just uses the return value as always.
     """
     try:
+        _try_dismiss_consent_banner(session.page)
         snapshot = _snapshot_page(session.page)
         if _looks_like_login_page(snapshot):
             login_msg = (
@@ -386,17 +459,19 @@ def _run_browser_flow(mgr, queue, session, url: str, goal: str) -> str:
                 session.set_status("rejected", msg)
                 mgr.close(session.token)
                 return msg
-            # Re-snapshot — the page after login is a different DOM.
+            # Re-snapshot — the page after login is a different DOM. Some
+            # sites only show their cookie/consent banner post-login.
+            _try_dismiss_consent_banner(session.page)
             snapshot = _snapshot_page(session.page)
 
         session.set_status("filling", f"Logged in / no login needed — filling out the form at {url}.")
         mapped = _map_goal_to_fills(goal, snapshot)
         fills = mapped["fills"]
         if not fills:
-            msg = (
+            msg = _with_screenshot(session, "no_fields", (
                 "(browser_task: could not find any fields on this page matching "
                 "the goal — nothing was filled. Double-check the URL and goal wording.)"
-            )
+            ))
             session.set_status("failed", msg)
             mgr.close(session.token)
             return msg
@@ -423,11 +498,11 @@ def _run_browser_flow(mgr, queue, session, url: str, goal: str) -> str:
 
         submit_loc = _resolve_button_locator(session.page, mapped.get("submit_label") or "")
         if submit_loc is None:
-            msg = (
+            msg = _with_screenshot(session, "no_submit_button", (
                 f"(browser_task: filled {len(filled_summary)} field(s) but could not "
                 f"identify the submit button — nothing will be submitted. Filled: "
                 f"{'; '.join(filled_summary) or '(none)'})"
-            )
+            ))
             session.set_status("failed", msg)
             mgr.close(session.token)
             return msg
@@ -461,7 +536,7 @@ def _run_browser_flow(mgr, queue, session, url: str, goal: str) -> str:
         return result
     except Exception as exc:  # noqa: BLE001
         logger.warning("browser_task failed: %s", exc)
-        msg = f"(browser_task failed: {exc})"
+        msg = _with_screenshot(session, "unhandled_error", f"(browser_task failed: {exc})")
         try:
             session.set_status("failed", msg)
         except Exception:  # noqa: BLE001
@@ -493,7 +568,10 @@ def _validate_and_open(args: Dict[str, Any]):
         session = mgr.create(url)
     except Exception as exc:  # noqa: BLE001
         logger.warning("browser_task: failed to open session at %s: %s", url[:80], exc)
-        return None, None, None, None, None, f"(browser_task failed: could not open a browser session — {exc})"
+        return (
+            None, None, None, None, None,
+            f"(browser_task failed: could not open a browser session — {_classify_open_error(exc)})",
+        )
     return url, goal, mgr, get_queue(), session, None
 
 
@@ -755,7 +833,10 @@ def _browser_submit_handler(args: Dict[str, Any]) -> str:
     try:
         loc = _resolve_button_locator(session.page, submit_label)
         if loc is None:
-            return f'(could not re-locate the submit button "{submit_label}" — nothing was submitted)'
+            return _with_screenshot(
+                session, "submit_button_not_found",
+                f'(could not re-locate the submit button "{submit_label}" — nothing was submitted)',
+            )
         loc.click()
         session.page.wait_for_timeout(POST_SUBMIT_WAIT_MS)
         result_url = session.page.url
@@ -763,7 +844,7 @@ def _browser_submit_handler(args: Dict[str, Any]) -> str:
         return f"Submitted. Page after submit: \"{result_title}\" ({result_url})"
     except Exception as exc:  # noqa: BLE001
         logger.warning("browser_submit failed: %s", exc)
-        return f"(submit failed: {exc})"
+        return _with_screenshot(session, "submit_failed", f"(submit failed: {exc})")
     finally:
         get_manager().close(token)
 
