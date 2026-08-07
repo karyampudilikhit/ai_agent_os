@@ -112,6 +112,12 @@ JSON only."""
             return True
         if critique.get("fabricated_claims"):
             return True
+        # Mechanically-detected hand-back (see handback_detector). Not an
+        # LLM judgement — a draft that tells the founder to go upload
+        # something is never shippable regardless of how "complete" the
+        # critique scored it.
+        if critique.get("handback"):
+            return True
         return False
 
     def refine(self, objective: str, draft: str, critique: Dict[str, Any]) -> Optional[str]:
@@ -119,7 +125,13 @@ JSON only."""
         gaps = critique.get("gaps") or []
         issues = critique.get("issues") or []
         fabricated = critique.get("fabricated_claims") or []
+        handback = critique.get("handback") or []
         problems = []
+        if handback:
+            # First in the list on purpose: everything else is a quality
+            # nit next to "this draft doesn't do the work at all".
+            from backend.app.critique.handback_detector import handback_correction
+            problems.append(handback_correction(handback))
         if gaps:
             problems.append("Missing: " + "; ".join(str(g) for g in gaps))
         if issues:

@@ -30,6 +30,17 @@ from backend.app.critique.critique_agent import CritiqueEngine
 
 logger = logging.getLogger(__name__)
 
+
+def _detect_handback(text: str):
+    """Wrapper so a failure in the detector can never break a run — a
+    broken guard must degrade to 'no hand-back found', never to a crash
+    in the middle of synthesis."""
+    try:
+        from backend.app.critique.handback_detector import detect_handback
+        return detect_handback(text)
+    except Exception:  # noqa: BLE001
+        return []
+
 SINGLE_CALL_PROMPT = """{objective}
 
 Give a complete, thorough, well-organized answer in plain written prose
@@ -244,6 +255,16 @@ class Pipeline:
             critique = self.critique_engine.critique(objective, draft)
             if not critique:
                 return
+            # Mechanical hand-back check, run alongside the LLM critique.
+            # The critique agent scored a "we cannot do this until you
+            # upload a spreadsheet" draft as acceptable; this doesn't ask
+            # a model's opinion. See critique/handback_detector.py.
+            critique["handback"] = _detect_handback(draft)
+            if critique["handback"]:
+                logger.warning(
+                    "Hand-back detected in draft (%d passage(s)) — forcing refinement",
+                    len(critique["handback"]),
+                )
             manager.set_critique(critique)
 
             while attempts < max_depth and self.critique_engine.needs_refinement(
@@ -264,6 +285,9 @@ class Pipeline:
                 manager.set_synthesized_output(draft)
                 manager.set_was_refined(True)
                 logger.info("Refinement produced %d chars", len(draft))
+                # Re-check the rewrite: a refinement that reintroduces the
+                # hand-back must not be allowed to end the loop.
+                critique["handback"] = _detect_handback(draft)
 
                 # Verify against the text that will actually ship, not the
                 # draft that prompted this refinement pass.
