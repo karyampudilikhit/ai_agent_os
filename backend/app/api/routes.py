@@ -1835,6 +1835,12 @@ def _maybe_generate_document(task: str, final_output: str) -> str:
 # enough to carry the names/labels the founder will refer to next.
 CLARIFIER_SNIPPET_CHARS = 2500
 
+# Ceiling on specialists auto-hired for a first task. Deliberately small:
+# the session that prompted this saw an 11-specialist auto-built company
+# produce a "we cannot start until you upload a spreadsheet" non-answer,
+# while a single Supervisor produced the best deliverable of the day.
+AUTO_UNIT_MAX_SPECIALISTS = 3
+
 
 def _build_clarifier_context(
     *,
@@ -1928,61 +1934,67 @@ def _dispatch_run(
     if intent == "run_task_company" and not current_company:
         intent = "run_task_unit"
 
-    # Auto-Company-on-first-task. A brand-new founder's very first
-    # message landing on a bare Supervisor-only Unit used to mean the
-    # Supervisor ran the task SOLO — often narrating a hypothetical
-    # delegation instead of actually doing anything. That's the exact
-    # failure "Vision AI does the actual work" exists to prevent,
-    # happening at the single worst moment: first impression. Fix:
-    # when truly nothing is selected (no session, no Company), infer a
-    # right-sized Company from the task itself and materialize it, then
-    # fall through to the real run_task_company dispatch below so the
-    # task is genuinely delegated to a team, not run solo.
+    # Auto-team-on-first-task. When truly nothing is selected, spin up
+    # ONE Unit sized to the task and run it there.
+    #
+    # This used to invent a whole COMPANY from a single first message —
+    # a fictional name and purpose, a CEO, and 3-6 Units of specialists.
+    # Changed to one Unit on the founder's call (2026-08-07, option B of
+    # the long-open A/B/C decision), after two problems:
+    #
+    #   1. It accumulated junk. 24 companies existed by then — "Pixel
+    #      Forge Studios", "Alpha Research Labs", "Equity Insight Labs" —
+    #      including four duplicate pairs, none of which the founder
+    #      asked for or named.
+    #   2. The big teams produced WORSE work. An 11-specialist company
+    #      answered "find me 5 research papers" with "we cannot until you
+    #      upload a spreadsheet of candidate papers", while a bare
+    #      Supervisor on one Unit produced the session's best deliverable
+    #      — a real stock report with verified figures.
+    #
+    # The original justification was that a lone Supervisor narrates a
+    # hypothetical delegation instead of working. That was true, and is
+    # now fixed at the source: employee_coordinator injects
+    # _SOLO_SUPERVISOR_BRIEF whenever a Unit has no specialists, which
+    # cancels the "you only plan and synthesize" mandate. So the reason
+    # to invent an org chart no longer exists.
     #
     # Scoped to "nothing at all selected" — a founder who already has a
-    # standalone Unit (session_id set, no Company) made that choice
-    # deliberately earlier in the session; this doesn't touch that path.
+    # standalone Unit made that choice deliberately; this doesn't touch
+    # that path.
     if intent == "run_task_unit" and not current_session_id and not current_company:
         try:
             auto_pipeline = _build_pipeline()
-            designer = HierarchyDesigner(model_adapter=auto_pipeline.adapter)
-            proposed = designer.design_from_task(task)
+            new_session_id = TeamStore.new_session_id()
+            store = TeamStore(new_session_id)
+            sup = default_supervisor_spec()
+            store.add_member(sup["role"], sup["mandate"], is_supervisor=True)
 
-            new_company = get_company_store().create(
-                name=proposed["name"], purpose=proposed.get("purpose"),
-            )
-            new_company = _ensure_ceo(new_company)
+            # Specialists only where the task warrants them, and capped —
+            # the observed failure mode is too many roles coordinating,
+            # not too few doing the work.
+            spawner = EmployeeSpawner(model_adapter=auto_pipeline.adapter)
+            designed = (spawner.design_team(task) or [])[:AUTO_UNIT_MAX_SPECIALISTS]
+            for m in designed:
+                role = str(m.get("role") or "").strip()
+                if role:
+                    store.add_member(role, str(m.get("mandate") or "").strip())
 
-            applied_req = HierarchyApplyRequest(
-                units=[
-                    HierarchyUnitSpec(
-                        name=u["name"],
-                        purpose=u.get("purpose", ""),
-                        specialists=[
-                            TeamMemberSpec(role=s.get("role", ""), mandate=s.get("mandate", ""))
-                            for s in u.get("specialists", [])
-                        ],
-                    )
-                    for u in proposed["units"]
-                    if u.get("name")
-                ]
-            )
-            apply_result = apply_company_hierarchy(new_company["id"], applied_req)
-
-            current_company = new_company
-            intent = "run_task_company"
-            n_units = len(apply_result.units)
-            n_specialists = sum(u.specialist_count for u in apply_result.units)
+            current_session_id = new_session_id
+            intent = "run_task_unit"
+            n = len(designed)
             auto_company_reply_prefix = (
-                f"First task in a new workspace, so I built you a team first — "
-                f"**{new_company['name']}**, {n_units} Unit{'s' if n_units != 1 else ''}, "
-                f"{n_specialists} specialist{'s' if n_specialists != 1 else ''}. "
+                f"First task in a new workspace, so I set up a team for it — "
+                f"{n} specialist{'s' if n != 1 else ''} under a Supervisor. "
                 f"Check the Org tab to see (and reshape) it.\n\n"
+            ) if n else (
+                "First task in a new workspace — running it on a fresh Unit.\n\n"
             )
         except Exception as exc:  # noqa: BLE001
-            # Fail open to the old bare-Supervisor path rather than
-            # blocking the founder's first task on an org-design bug.
-            print(f"[warn] auto-Company-on-first-task failed, falling back: {exc}")
+            # Fail open to the bare-Supervisor path rather than blocking
+            # the founder's first task on a team-design bug. That path is
+            # genuinely fine now (see _SOLO_SUPERVISOR_BRIEF).
+            print(f"[warn] auto-team-on-first-task failed, falling back: {exc}")
 
     if intent == "run_task_company":
         company_id = current_company["id"]
