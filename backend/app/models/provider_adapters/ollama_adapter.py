@@ -46,11 +46,18 @@ class OllamaAdapter:
             headers["Authorization"] = f"Bearer {api_key}"
         self.client = httpx.Client(timeout=300.0, headers=headers)
 
-        # Test connection silently
+        # Probe the server once so a misconfigured host is visible in the
+        # logs at construction rather than surfacing later as a confusing
+        # mid-run failure. Deliberately non-fatal — the daemon may still
+        # be starting — but no longer a bare `except: pass`, which hid
+        # even KeyboardInterrupt.
         try:
             self.client.get(f"{self.base_url}/api/tags", timeout=5.0)
-        except:
-            pass  # Connection test fails silently
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger(__name__).warning(
+                "Ollama not reachable at %s (%s) — calls will fail until it is",
+                self.base_url, exc,
+            )
     
     def chat_completion(self, prompt: str, **kwargs) -> str:
         """
@@ -95,11 +102,38 @@ class OllamaAdapter:
             if response.status_code == 200:
                 response_data = response.json()
                 return response_data.get("response", "No response generated")
-            else:
-                return f"Error: {response.status_code} - {response.text}"
-                
-        except Exception as e:
-            return f"Connection error: {str(e)}. Using mock response."
+
+            # RAISE, never return the error as if it were the model's
+            # answer. Returning it — which this did — means every caller
+            # treats a backend failure as valid content, and the failure
+            # travels instead of stopping. Observed for real: a run
+            # shipped three 502 bodies as the founder's deliverable and
+            # was still marked done, and a specialist fed
+            # 'Error: 502 - {"error":"Post \"https://ollama.com...' into
+            # a web search as its query. Callers that can genuinely
+            # continue without a model already wrap this in try/except
+            # (see dynamic_employee._needs_external_lookup and
+            # _search_query_for); the ones that can't now fail loudly.
+            raise OllamaAdapterError(
+                f"Ollama returned HTTP {response.status_code}: {response.text[:300]}",
+                error_code=ErrorCode.MODEL_CALL_FAILED,
+                context={"status_code": response.status_code, "model": self.model},
+            )
+
+        except OllamaAdapterError:
+            raise
+        except httpx.TimeoutException as exc:
+            raise OllamaAdapterError(
+                f"Ollama timed out after {kwargs.get('timeout', 300.0)}s: {exc}",
+                error_code=ErrorCode.MODEL_TIMEOUT,
+                context={"model": self.model},
+            ) from exc
+        except Exception as exc:
+            raise OllamaAdapterError(
+                f"Ollama call failed: {exc}",
+                error_code=ErrorCode.MODEL_CALL_FAILED,
+                context={"model": self.model, "base_url": self.base_url},
+            ) from exc
     
     def get_model_info(self) -> Dict[str, Any]:
         """Get information about the configured model"""

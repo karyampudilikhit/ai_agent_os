@@ -91,11 +91,17 @@ def _build_adapter(model: str, use_mock: bool) -> Any:
     base_url = os.environ.get("OLLAMA_HOST", "").strip() or "http://localhost:11434"
     api_key = os.environ.get("OLLAMA_API_KEY", "").strip() or None
     adapter = OllamaAdapter(base_url=base_url, model=model, api_key=api_key)
-    probe = adapter.chat_completion("Say 'ok' and nothing else.", max_tokens=8)
-    if probe.strip().lower().startswith("connection error"):
+    # The probe now catches an EXCEPTION rather than sniffing the return
+    # value for the words "connection error". The adapter used to hand
+    # failures back as ordinary strings, which is what let a 502 body end
+    # up in a founder's deliverable; it raises now, so this fallback has
+    # to catch instead of string-match or it would never fire.
+    try:
+        adapter.chat_completion("Say 'ok' and nothing else.", max_tokens=8)
+    except Exception as exc:  # noqa: BLE001
         logging.warning(
-            "Ollama unreachable at %s (probe returned: %s...). Falling back to MockAdapter.",
-            base_url, probe[:80],
+            "Ollama unreachable at %s (%s). Falling back to MockAdapter.",
+            base_url, exc,
         )
         return MockAdapter(label=f"mock:{model}-fallback")
     return adapter

@@ -227,6 +227,14 @@ _UNIVERSAL_RULES: List[str] = [
     "name what you actually tried. A page that was blocked, slow, or "
     "unparseable is a tool failure, not proof of absence.",
 
+    "COMPUTE every number you report — use action.calculate. Do not do "
+    "arithmetic in your head. You are good at picking the right formula "
+    "and bad at evaluating it: asked for $10,000 at 8% compounded "
+    "monthly over 7 years, this system laid out the formula perfectly "
+    "and then answered $17,470.60 when the answer is $17,474.22. Nothing "
+    "in that output told the reader it was wrong. This applies to "
+    "totals, percentages, growth rates, conversions — anything numeric.",
+
     "NEVER cite a URL you did not actually open in this task. Do not "
     "attach a source to something you already knew, and do not reach for "
     "a plausible-looking link (a Wikipedia page, a company's About page) "
