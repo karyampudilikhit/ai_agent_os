@@ -588,6 +588,20 @@ real one).{web_block}{teammates_block}{history_block}"""
             "was_refined": snap.get("was_refined"),
             "counts": snap.get("counts"),
             "used_web_search": used_web,
+            # The RAW material this employee retrieved — search results,
+            # fetched pages, and the agentic loop's real tool results.
+            # Returned so the next specialist can be handed the FACTS,
+            # not just this one's prose summary of them.
+            #
+            # Discarding it was the cause of the worst failure this
+            # system has produced: a Literature Reviewer made 18 real
+            # Crossref calls and got genuine DOIs, but only its written
+            # paragraphs went downstream. The next specialist, with no
+            # access to those DOIs, searched for a "papers.txt" that
+            # never existed and then emailed a colleague who doesn't
+            # exist; the one after that quietly substituted a different
+            # topic and wrote five citations from memory.
+            "gathered_context": web_context,
         }
         self.memory.record(task, result)
         return result

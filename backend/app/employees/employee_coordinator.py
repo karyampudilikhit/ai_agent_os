@@ -31,7 +31,12 @@ from backend.app.orchestrator.synthesis import SynthesisEngine
 
 logger = logging.getLogger(__name__)
 
-TEAMMATE_SUMMARY_CHARS = 2000  # bound how much of each teammate's work is quoted forward
+TEAMMATE_SUMMARY_CHARS = 2000  # bound how much of each teammate's PROSE is quoted forward
+# Raw retrieved facts get their own, larger budget: a list of papers with
+# DOIs, or a pricing table, is dense and useless when clipped mid-row —
+# and losing it is what made downstream specialists invent data.
+TEAMMATE_FACTS_CHARS = 5000
+TOTAL_FACTS_CHARS = 12000  # ceiling across all teammates, so the prompt stays bounded
 
 # Injected ahead of the Supervisor's mandate when it has no specialists,
 # to cancel the mandate's standing "you plan, you don't do the work"
@@ -224,15 +229,43 @@ class EmployeeCoordinator:
         }
 
     def _format_prior_work(self, contributions: List[Dict[str, Any]]) -> Optional[str]:
+        """What a specialist is shown of the work already done on this run.
+
+        Forwards each teammate's written output AND the raw material they
+        retrieved (search results, fetched pages, real tool results).
+
+        The second half is the important one and used to be missing. With
+        only the prose summaries, a downstream specialist could see that
+        someone had "identified five papers" but not what they were — so
+        it went looking for a file on disk, then emailed a teammate who
+        does not exist, and the specialist after that invented citations.
+        The raw facts are what stop that: this IS the upstream handoff,
+        so the prompt says so explicitly.
+        """
         if not contributions:
             return None
         blocks = []
+        facts_budget = TOTAL_FACTS_CHARS
         for c in contributions:
             role = c.get("role") or "Teammate"
             out = (c.get("output") or "").strip()
-            if not out:
+            facts = (c.get("gathered_context") or "").strip()
+            if not out and not facts:
                 continue
-            blocks.append(f"[{role}]\n{out[:TEAMMATE_SUMMARY_CHARS]}")
+            if out:
+                blocks.append(f"[{role}] wrote:\n{out[:TEAMMATE_SUMMARY_CHARS]}")
+            # Newest contributions matter most, but they're appended in
+            # order, so spend the budget as we go and stop when it's out
+            # rather than truncating every block to uselessness.
+            if facts and facts_budget > 0:
+                slice_len = min(len(facts), TEAMMATE_FACTS_CHARS, facts_budget)
+                facts_budget -= slice_len
+                blocks.append(
+                    f"[{role}] RETRIEVED THIS SOURCE MATERIAL — these are the real "
+                    f"values from real sources. Use them directly. Do NOT look for "
+                    f"a file, and do NOT ask anyone to send them to you:\n"
+                    f"{facts[:slice_len]}"
+                )
         return "\n\n".join(blocks) if blocks else None
 
     def _raw_concat(self, contributions: List[Dict[str, Any]]) -> str:
