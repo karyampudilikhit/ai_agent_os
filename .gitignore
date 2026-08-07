@@ -69,3 +69,7 @@ browser_profile/
 
 # Pending approval queue (may embed action arguments incl. secrets)
 .pending_actions.json
+
+# Persisted run history — holds full deliverable text (founder's work
+# product, and whatever the runs pulled off the web). Never source.
+runs.json

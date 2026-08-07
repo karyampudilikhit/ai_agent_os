@@ -2236,6 +2236,26 @@ def list_unit_usage():
     return {"units": out}
 
 
+@router.get("/runs")
+def list_runs(limit: int = 50):
+    """Finished runs, newest first — backs the Output tab's history
+    picker. Returns summaries only (no output body) so listing stays
+    cheap; the client fetches /api/runs/{id} for the deliverable it
+    actually wants to reopen."""
+    out = []
+    for r in get_run_store().list_history(limit=limit):
+        out.append({
+            "id": r["id"],
+            "status": r.get("status"),
+            "task": (r.get("task") or "")[:200],
+            "intent": r.get("intent"),
+            "finished_at": r.get("finished_at"),
+            "session_id": r.get("session_id"),
+            "company_id": r.get("company_id"),
+        })
+    return {"runs": out}
+
+
 @router.get("/runs/{run_id}", response_model=RunStatusResponse)
 def get_run_status(run_id: str) -> RunStatusResponse:
     """Poll a background run kicked off by /api/chat. Client polls

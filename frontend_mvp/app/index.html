@@ -601,6 +601,28 @@
     max-width: 900px;
     margin: 0 auto;
   }
+  /* Past-output history. A new run used to overwrite the Output tab with
+     no way back to what came before — the founder reported losing every
+     earlier deliverable. */
+  .output-history { border-bottom: 1px solid var(--line); background: var(--surface-2); }
+  .output-history .oh-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 14px; font-size: 12px; font-weight: 600; color: var(--text-dim);
+  }
+  .output-history .oh-title { flex: 1; }
+  .output-history .oh-list { max-height: 170px; overflow-y: auto; padding: 0 8px 8px; }
+  .oh-item {
+    display: flex; gap: 8px; align-items: baseline;
+    padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 12.5px;
+  }
+  .oh-item:hover { background: var(--surface); }
+  .oh-item.active { background: var(--surface); font-weight: 600; }
+  .oh-item .oh-when { color: var(--text-dim); font-size: 11px; white-space: nowrap; }
+  .oh-item .oh-task {
+    flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .oh-item.failed .oh-task { color: var(--danger, #c13350); }
+
   .result-body {
     font-size: 14px;
     line-height: 1.65;
@@ -1478,6 +1500,13 @@
         <div class="evidence-toggle" id="evidence-toggle"></div>
         <div class="evidence-list" id="evidence-list"></div>
       </div>
+      <div class="output-history" id="output-history" style="display:none;">
+        <div class="oh-head">
+          <span class="oh-title">Past outputs</span>
+          <button class="pa-refresh" id="oh-refresh" type="button" title="Refresh">↻</button>
+        </div>
+        <div class="oh-list" id="oh-list"></div>
+      </div>
       <div class="result-panel">
         <div class="result-body" id="result-body">
           <div class="result-empty">No output yet — send a task to your team and it will show up here.</div>
@@ -1564,6 +1593,67 @@ const canvasCount = $('canvas-count');
 const headerEl = $('app-header');
 const headerStatus = $('header-status');
 const resultBody = $('result-body');
+
+// ---- Past outputs -------------------------------------------------
+// Every finished run stays reachable. Before this, each new run
+// overwrote the Output tab and the previous deliverable was simply gone
+// — and because the run store was memory-only, a server restart erased
+// them all. Runs now persist server-side (backend/app/chat/async_runs.py)
+// and this lists them.
+let activeRunId = null;
+
+function ohWhen(ts) {
+  if (!ts) return '';
+  const d = new Date(ts * 1000);
+  const today = new Date();
+  const sameDay = d.toDateString() === today.toDateString();
+  return sameDay
+    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+async function refreshOutputHistory() {
+  const panel = $('output-history');
+  const list = $('oh-list');
+  if (!panel || !list) return;
+  let runs = [];
+  try {
+    const data = await api('GET', '/api/runs?limit=50');
+    runs = (data && data.runs) || [];
+  } catch (e) {
+    panel.style.display = 'none';
+    return;
+  }
+  if (!runs.length) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+  list.innerHTML = runs.map(r => {
+    const cls = 'oh-item' + (r.id === activeRunId ? ' active' : '')
+      + (r.status === 'failed' ? ' failed' : '');
+    const label = escapeHtml(r.task || '(untitled task)');
+    return `<div class="${cls}" data-run-id="${escapeHtml(r.id)}" title="${label}">
+      <span class="oh-when">${ohWhen(r.finished_at)}</span>
+      <span class="oh-task">${label}</span>
+    </div>`;
+  }).join('');
+  list.querySelectorAll('.oh-item').forEach(el => {
+    el.addEventListener('click', () => openPastRun(el.dataset.runId));
+  });
+}
+
+async function openPastRun(runId) {
+  if (!runId) return;
+  try {
+    const rec = await api('GET', `/api/runs/${runId}`);
+    activeRunId = runId;
+    resultBody.classList.add('md');
+    resultBody.innerHTML = renderMarkdown(rec.output || '_(empty output)_');
+    renderEvidence(rec.evidence || []);
+    switchTab('output');
+    refreshOutputHistory();
+  } catch (e) {
+    /* a run that vanished server-side just leaves the current view alone */
+  }
+}
 
 let currentSessionId = null;
 let lastRunByRole = {};
@@ -2378,6 +2468,8 @@ function startRunPolling(runId, opts = {}) {
       _activePolls.delete(runId);
       resultBody.classList.add('md');
       resultBody.innerHTML = renderMarkdown(rec.output || '_(empty output)_');
+      activeRunId = runId;
+      refreshOutputHistory();
       renderEvidence(rec.evidence || []);
       fetchPendingActions();
       switchTab('output');
@@ -2510,6 +2602,7 @@ async function sendMessage() {
     if (fx.run_output != null) {
       resultBody.classList.add('md');
       resultBody.innerHTML = renderMarkdown(fx.run_output || '_(empty output)_');
+      refreshOutputHistory();
       renderEvidence(fx.evidence || []);
       fetchPendingActions();
       switchTab('output');
@@ -2661,6 +2754,8 @@ function renderEvidence(claims) {
   evidenceList.classList.toggle('open', evidenceOpen);
   evidenceToggle.classList.toggle('open', evidenceOpen);
 }
+
+$('oh-refresh') && $('oh-refresh').addEventListener('click', refreshOutputHistory);
 
 evidenceToggle.addEventListener('click', () => {
   evidenceOpen = !evidenceOpen;
@@ -3215,6 +3310,7 @@ document.querySelectorAll('.tab').forEach(t => { t.onclick = () => switchTab(t.d
     await newSession();
   }
   await refreshConnectors();
+  await refreshOutputHistory();
 })();
 </script>
 </body>

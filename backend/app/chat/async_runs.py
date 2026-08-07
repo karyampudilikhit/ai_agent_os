@@ -11,13 +11,16 @@ The client polls /api/runs/{run_id} for status. On done, renders the
 output + evidence and stops polling.
 
 Thread-safety: RunStore uses one lock over the dict; the ThreadPool
-handles concurrency. Single-user MVP — no per-user isolation, no
-persistence across restarts.
+handles concurrency. Single-user MVP — no per-user isolation. FINISHED
+runs are persisted to disk (see RunStore's docstring for why that
+stopped being optional).
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import threading
 import time
 import uuid
@@ -31,14 +34,94 @@ _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="async-run")
 
 VALID_STATUSES = {"queued", "running", "done", "failed"}
 
+# Enough to be real history without letting one long-lived server grow a
+# multi-megabyte JSON file it rewrites on every run.
+MAX_PERSISTED_RUNS = 200
+
+
+def _default_path() -> str:
+    from backend.app.utils.paths import under_data
+    return str(under_data("runs.json"))
+
 
 class RunStore:
-    """In-memory run lifecycle. Not persisted — a restart wipes runs
-    in flight, which is fine for MVP: the founder can re-prompt."""
+    """Run lifecycle, with FINISHED runs persisted to disk.
 
-    def __init__(self) -> None:
+    This used to be memory-only, on the reasoning that losing in-flight
+    runs to a restart was fine for an MVP. That was true of in-flight
+    runs and wrong about finished ones, because two other things read
+    this store as if it were history:
+
+      - The clarifier's "recent deliverables" feed (routes.
+        _build_clarifier_context) — how "explain the business model of
+        each" resolves against the list just produced.
+      - The Output tab, which has no other source for a past run.
+
+    So a restart didn't merely drop work in progress, it gave the
+    product amnesia. The founder hit both halves in one sitting: asked
+    to analyse "the companies you mentioned", it answered "please
+    provide the list of companies" — the list it had written two turns
+    earlier — and there was no way to scroll back to that deliverable
+    either.
+
+    Queued and running runs stay memory-only on purpose: a run cannot
+    outlive the process executing it, so persisting one would only
+    restore it as a permanently-stuck 'running' row.
+    """
+
+    def __init__(self, path: Optional[str] = None) -> None:
         self._runs: Dict[str, Dict[str, Any]] = {}
         self._lock = threading.Lock()
+        try:
+            self._path = path if path is not None else _default_path()
+        except Exception:  # noqa: BLE001
+            self._path = ""
+        self._load()
+
+    # ---- persistence ------------------------------------------------
+
+    def _load(self) -> None:
+        """Best-effort restore of finished runs. A missing or corrupt
+        file must never stop the server booting — worst case we are back
+        to the old memory-only behavior."""
+        try:
+            if not self._path or not os.path.exists(self._path):
+                return
+            with open(self._path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            runs = data.get("runs") if isinstance(data, dict) else data
+            if not isinstance(runs, list):
+                return
+            with self._lock:
+                for r in runs:
+                    if isinstance(r, dict) and r.get("id"):
+                        self._runs[str(r["id"])] = dict(r)
+            logger.info("RunStore: restored %d finished run(s)", len(self._runs))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("RunStore: could not load %s: %s", self._path, exc)
+
+    def _save(self) -> None:
+        """Write finished runs only, newest first, capped. Never raises —
+        failing to persist must not fail the run that just succeeded."""
+        try:
+            if not self._path:
+                return
+            with self._lock:
+                finished = [
+                    dict(r) for r in self._runs.values()
+                    if r.get("status") in ("done", "failed")
+                ]
+            finished.sort(key=lambda r: r.get("finished_at") or 0, reverse=True)
+            finished = finished[:MAX_PERSISTED_RUNS]
+            parent = os.path.dirname(self._path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            tmp = f"{self._path}.tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump({"runs": finished}, fh, ensure_ascii=False)
+            os.replace(tmp, self._path)  # atomic — never a half-written file
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("RunStore: could not save %s: %s", self._path, exc)
 
     def create(
         self,
@@ -94,9 +177,23 @@ class RunStore:
             output=output,
             evidence=evidence or [],
         )
+        self._save()
 
     def set_failed(self, run_id: str, error: str) -> None:
         self._set(run_id, status="failed", finished_at=time.time(), error=error)
+        self._save()
+
+    def list_history(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Finished runs, newest first — what the Output tab's history
+        picker lists. Deliberately excludes queued/running: an unfinished
+        run has nothing to show yet."""
+        with self._lock:
+            finished = [
+                dict(r) for r in self._runs.values()
+                if r.get("status") in ("done", "failed")
+            ]
+        finished.sort(key=lambda r: r.get("finished_at") or 0, reverse=True)
+        return finished[:limit]
 
     def list_recent_done(
         self,
