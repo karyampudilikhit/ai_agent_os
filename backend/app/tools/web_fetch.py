@@ -102,6 +102,10 @@ class WebFetchTool:
         try:
             from backend.app.tools.source_ledger import get_ledger
             get_ledger().record_fetched(str(resp.url) or url)
+            # Links present on a page we read were shown to this system;
+            # citing one is sourced behaviour, not fabrication.
+            from backend.app.tools.source_ledger import record_payload_sources
+            record_payload_sources(resp.text or "")
         except Exception:  # noqa: BLE001
             pass
 

@@ -169,8 +169,45 @@ class HTTPToolStore:
         if not isinstance(data, list):
             logger.warning("HTTPToolStore: %s is not a list, resetting", self._path)
             data = []
+        data = self._merge_seeds(data)
         self._cache = data
         return data
+
+    def _merge_seeds(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Add any connector shipped in connectors/seed/ that the user
+        doesn't already have.
+
+        These are ordinary tool specs living in version control rather
+        than in the user's gitignored store — the point being that a new
+        integration is CONFIG, not a Python module. Adding Crossref this
+        way instead of writing a crossref.py is the whole demonstration:
+        the same path works for Google Ads or Stripe.
+
+        Existing entries are never overwritten, so a user who edits a
+        seeded connector keeps their version; deleting one makes it come
+        back on next start, which is the intended "restore default".
+
+        Failures are non-fatal — a malformed seed is skipped and the
+        store loads normally.
+        """
+        seed_dir = Path(__file__).resolve().parents[3] / "connectors" / "seed"
+        if not seed_dir.is_dir():
+            return tools
+        existing = {t.get("name") for t in tools}
+        added = 0
+        for f in sorted(seed_dir.glob("*.json")):
+            try:
+                spec = json.loads(f.read_text(encoding="utf-8"))
+                if not isinstance(spec, dict) or spec.get("name") in existing:
+                    continue
+                tools.append(_validate_spec(spec))
+                existing.add(spec.get("name"))
+                added += 1
+            except (json.JSONDecodeError, OSError, HTTPToolStoreError) as exc:
+                logger.warning("HTTPToolStore: skipping seed %s: %s", f.name, exc)
+        if added:
+            logger.info("HTTPToolStore: seeded %d connector(s) from %s", added, seed_dir)
+        return tools
 
     def _save(self, tools: List[Dict[str, Any]]) -> None:
         try:

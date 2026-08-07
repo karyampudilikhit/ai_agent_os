@@ -231,6 +231,60 @@ real one).{web_block}{teammates_block}{history_block}"""
             return False
         return True
 
+    _SEARCH_QUERY_PROMPT = (
+        "Turn this work assignment into ONE web search query.\n\n"
+        "ASSIGNMENT:\n\"{task}\"\n\n"
+        "Rules:\n"
+        "- Output ONLY the query text. No quotes, no explanation, no label.\n"
+        "- Write what you would actually type into a search box: the "
+        "subject and its key terms.\n"
+        "- Strip instructions to yourself. \"Extract the full details for "
+        "each paper in the raw list: title, authors...\" is not a query; "
+        "the query is the SUBJECT those papers are about.\n"
+        "- Keep it under 12 words."
+    )
+
+    def _search_query_for(self, task: str) -> str:
+        """Derive a real search query from a work assignment.
+
+        Passing the raw assignment text to the search engine was a real
+        bug: a research-papers sub-task worded "Extract the full details
+        for each paper in the raw list: tit..." went to Tavily verbatim
+        and came back with slidedownloader.com, brainly.com, a YouTube
+        video and a LinkedIn post about how to write a research paper.
+        Not one scholarly source — so the employee wrote its citations
+        from memory instead, which is where the fabricated DOIs came
+        from.
+
+        Falls back to the original text on any failure: a bad query is
+        strictly better than no search.
+        """
+        try:
+            q = (self.pipeline.adapter.chat_completion(
+                self._SEARCH_QUERY_PROMPT.format(task=task[:600]),
+                temperature=0.0,
+                # Same reason _needs_external_lookup uses a large budget:
+                # this is a reasoning model and spends tokens thinking
+                # before it emits anything. At 120 it returned an empty
+                # string every time and silently fell back to the raw
+                # task text — the exact bug this method exists to fix.
+                max_tokens=600,
+                format=None,
+            ) or "").strip()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[%s] search-query rewrite failed: %s", self.role, exc)
+            return task
+        # Models like to answer with a label or wrap the query in quotes.
+        q = q.splitlines()[-1].strip() if q else ""
+        q = q.strip().strip('"').strip("'")
+        for prefix in ("query:", "search query:", "search:"):
+            if q.lower().startswith(prefix):
+                q = q[len(prefix):].strip()
+        if not q or len(q) < 3:
+            return task
+        logger.info("[%s] search query: %r", self.role, q[:80])
+        return q
+
     def run_task(
         self,
         task: str,
@@ -394,9 +448,13 @@ real one).{web_block}{teammates_block}{history_block}"""
         search_results = []
         if _web_search.enabled and should_search(heuristic_text) and self._needs_external_lookup(heuristic_text):
             try:
-                search_results = _web_search.search(task, max_results=5)
+                # Search the SUBJECT, not the assignment prose — see
+                # _search_query_for for what feeding the raw task text
+                # to a search engine actually returned.
+                search_query = self._search_query_for(task)
+                search_results = _web_search.search(search_query, max_results=5)
                 if search_results:
-                    web_context_parts.append(_web_search.format_for_prompt(task, search_results))
+                    web_context_parts.append(_web_search.format_for_prompt(search_query, search_results))
                     used_web = True
                     logger.info("[%s] Tavily returned %d result(s) for: %s",
                                 self.role, len(search_results), task[:60])

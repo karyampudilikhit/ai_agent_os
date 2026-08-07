@@ -33,7 +33,9 @@ from backend.app.tools.http_tool_store import HTTPToolStore, get_store
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TIMEOUT = 15.0
+# 15s was too tight for real public APIs — arXiv's export endpoint
+# regularly takes longer than that and was timing out on every call.
+DEFAULT_TIMEOUT = 40.0
 MAX_RESPONSE_CHARS = 6000  # matches mcp_client.MAX_TOOL_RESULT_CHARS
 CONNECTION_NAMESPACE = "custom"  # qualified name: "custom.<tool>"
 
@@ -222,4 +224,24 @@ class HTTPToolRunner:
 
         with httpx.Client() as client:
             resp = client.request(method, url, **request_kwargs)
+
+            # Feed the citation ledger: the endpoint itself was genuinely
+            # fetched, and every URL/DOI the response handed back was put
+            # in front of this system. Without the second part, a DOI
+            # returned by a lookup API would be flagged as invented the
+            # moment an employee cited it — see
+            # source_ledger.record_payload_sources.
+            #
+            # Kept INSIDE the client context deliberately: reading
+            # resp.text after the client closes raises, and the first
+            # version of this sat outside, silently recording nothing.
+            try:
+                from backend.app.tools.source_ledger import (
+                    get_ledger, record_payload_sources,
+                )
+                get_ledger().record_fetched(str(resp.url) or url)
+                record_payload_sources(resp.text or "")
+            except Exception as exc:  # noqa: BLE001
+                logger.info("ledger recording skipped for %s: %s", spec.get("name"), exc)
+
         return _format_response(spec, resp)

@@ -64,6 +64,17 @@ MAX_ENTRIES = 4000
 _URL_RE = re.compile(r"https?://[^\s<>\"'\)\]\}【】,;]+", re.IGNORECASE)
 _TRAILING_JUNK = ".,;:!?'\")]}>*_"
 
+# Bare DOIs as they appear in API payloads — Crossref returns
+# "10.2139/ssrn.2622782", not a doi.org link. Without this, a DOI handed
+# back by an authoritative lookup API would be treated as invented the
+# moment an employee cited it as https://doi.org/..., which is exactly
+# the false accusation this module is built to avoid.
+# The backslash is not cosmetic: raw JSON from Crossref escapes the
+# separator, arriving as "10.5772\/intechopen.70867". Matching only a
+# bare slash silently found zero DOIs in exactly the payloads this
+# exists to read.
+_DOI_RE = re.compile(r"\b10\.\d{4,9}\\?/[^\s\"'<>,;\)\]\}\\]+", re.IGNORECASE)
+
 
 def normalize_url(url: str) -> str:
     """Reduce a URL to a comparison key: lowercase scheme+host, no
@@ -161,3 +172,40 @@ _ledger: SourceLedger = SourceLedger()
 
 def get_ledger() -> SourceLedger:
     return _ledger
+
+
+def record_payload_sources(payload: str, limit: int = 200) -> int:
+    """Record every URL and DOI appearing INSIDE a retrieved payload as
+    'seen'. Returns how many were recorded.
+
+    Rationale: a reference this system was actually shown is not
+    fabricated, even though nobody opened it. When a lookup API answers
+    "this paper's DOI is 10.1016/j.jfineco.2015.01.010", citing that DOI
+    is sourced behaviour — flagging it would be a false accusation, and
+    false positives are the one failure mode worse than the bug this
+    ledger exists to catch.
+
+    Note this keeps the detector honest rather than weakening it: a DOI
+    or arXiv id that appeared in NO payload and NO page still gets
+    flagged. The run that invented arxiv.org/abs/2005.12345 (really a
+    computer-security paper) would still be caught, because that id was
+    never in front of the system at all.
+
+    Never raises — a bookkeeping failure must not break a tool call.
+    """
+    if not payload:
+        return 0
+    n = 0
+    try:
+        for url in extract_urls(payload)[:limit]:
+            _ledger.record_seen(url)
+            n += 1
+        for doi in _DOI_RE.findall(payload)[:limit]:
+            # Undo the JSON escaping before storing, so the key matches
+            # the plain https://doi.org/10.x/y form an employee will cite.
+            clean = doi.replace("\\/", "/").rstrip(_TRAILING_JUNK)
+            _ledger.record_seen(f"https://doi.org/{clean}")
+            n += 1
+    except Exception:  # noqa: BLE001
+        return n
+    return n
