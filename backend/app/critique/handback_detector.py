@@ -67,6 +67,27 @@ _HANDBACK_PATTERNS = [
     r"\bwe\s+(?:need|require)\s+you\s+to\s+(?:provide|upload|send|share)\b",
     r"\bto\s+be\s+(?:uploaded|provided|supplied)\s+by\s+(?:you|the founder)\b",
     r"\bforward\s+the\s+\w+\s+list\b",
+
+    # Assigning the work to staff who do not exist. This is the same
+    # failure wearing a manager's hat, and the request-shaped patterns
+    # above all missed it — a deliverable ended with "Assign a senior
+    # quant to extract formulas from papers 1-4" and "Schedule a
+    # 30-minute review meeting next week", which is a plan for someone
+    # else to do the work rather than the work.
+    #
+    # Anchored on the imperative verb plus a person-shaped object, so
+    # ordinary advice ("assign a budget", "schedule the job weekly")
+    # doesn't trip it.
+    r"\bassign\s+(?:a|an|the|one|two|\d+)\s+[\w\- ]{0,30}?"
+    r"(?:analyst|engineer|quant|developer|designer|writer|researcher|"
+    r"specialist|manager|lead|scientist|team|member|colleague|staff)\b",
+    r"\bhave\s+(?:a|an|the|your)\s+[\w\- ]{0,30}?"
+    r"(?:analyst|engineer|quant|developer|team|lead)\s+(?:review|extract|"
+    r"build|prepare|verify|check|complete)\b",
+    r"\bschedule\s+(?:a|an|the)\s+[\w\- ]{0,30}?(?:meeting|call|review|sync|"
+    r"session|workshop)\b",
+    r"\bdelegate\s+(?:this|that|it|the\s+\w+)\s+to\b",
+    r"\bwe(?:'ll| will)\s+coordinate\s+the\s+appropriate\s+specialist\b",
 ]
 
 _COMPILED = [re.compile(p, re.IGNORECASE) for p in _HANDBACK_PATTERNS]

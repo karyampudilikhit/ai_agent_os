@@ -282,6 +282,8 @@ class AgenticExecutor:
                 "result": _truncate(result, MAX_OBSERVATION_CHARS),
             })
 
+        _release_browser_sessions(role)
+
         if not acted:
             return None
         return self._wrap(steps)
@@ -320,6 +322,37 @@ class AgenticExecutor:
             + self._render_transcript(steps)
             + "\n"
         )
+
+
+def _release_browser_sessions(role: str) -> None:
+    """Close browser sessions this loop opened, once it's finished.
+
+    browser_navigate deliberately leaves its session alive so the model
+    can extract and click across several steps. Nothing closed it
+    afterwards, so each run left a real Chrome process holding the shared
+    on-disk profile until the 15-minute idle sweep — and because one
+    profile can only be held by one context at a time, the next launch
+    failed with "profile is already in use". That is what made the
+    browser tests flaky whenever a dev server had recently run a task.
+
+    Sessions parked in a founder-approval state are left alone: closing
+    one would destroy the live page a pending browser_submit still needs.
+    Never raises — cleanup must not fail a run that otherwise succeeded.
+    """
+    try:
+        from backend.app.tools.browser_session_manager import get_manager
+        mgr = get_manager()
+        for token in list(mgr._live._resources.keys()):
+            session = mgr.get(token)
+            if session is None:
+                continue
+            status, _ = session.get_status()
+            if status in ("awaiting_login", "awaiting_submit"):
+                continue  # a human still has to act on this one
+            mgr.close(token)
+            logger.info("[%s] released browser session %s", role, token)
+    except Exception as exc:  # noqa: BLE001
+        logger.info("browser session cleanup skipped: %s", exc)
 
 
 def _truncate(text: str, limit: int) -> str:

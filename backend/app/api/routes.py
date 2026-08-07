@@ -320,6 +320,13 @@ def run_task_on_team(session_id: str, req: RunTaskRequest) -> RunTaskResponse:
     )
     coordinator = EmployeeCoordinator(pipeline=pipeline)
 
+    # Same run record the async path creates, so this endpoint's work
+    # shows up in history and in the clarifier's memory.
+    sync_run_id = get_run_store().create(
+        intent="run_task_unit", session_id=session_id, task=req.task,
+    )
+    get_run_store().set_running(sync_run_id)
+
     # Progress tracking lists SPECIALISTS (the Supervisor's planning
     # and synthesis phases show up as separate phase events, not roles).
     progress_store.start_run(session_id, [e.role for e in specialists])
@@ -336,14 +343,23 @@ def run_task_on_team(session_id: str, req: RunTaskRequest) -> RunTaskResponse:
         progress_store.mark_complete(session_id)
     except Exception as exc:  # noqa: BLE001
         progress_store.mark_error(session_id, str(exc))
+        get_run_store().set_failed(sync_run_id, str(exc))
         raise HTTPException(status_code=502, detail=f"Task run failed: {exc}") from exc
+
+    final_output = result.get("final_output") or ""
+    evidence = result.get("evidence", [])
+    # Record in RunStore like the async path does. Without this, work
+    # started here never appeared in "Past outputs" and was invisible to
+    # the clarifier's recent-deliverables memory — the same work, simply
+    # forgotten because of which endpoint kicked it off.
+    get_run_store().set_done(sync_run_id, final_output, evidence)
 
     return RunTaskResponse(
         session_id=session_id,
         task=req.task,
         team=[TeamMemberSummary(**m) for m in result.get("team", [])],
-        final_output=result.get("final_output") or "",
-        evidence=[EvidenceClaim(**c) for c in result.get("evidence", [])],
+        final_output=final_output,
+        evidence=[EvidenceClaim(**c) for c in evidence],
     )
 
 

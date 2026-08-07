@@ -61,7 +61,12 @@ MAX_ENTRIES = 4000
 # Matches http(s) URLs inside prose, including the 【...】 citation
 # brackets this system's models like to emit. Trailing punctuation is
 # stripped separately since a sentence-ending period is not part of a URL.
-_URL_RE = re.compile(r"https?://[^\s<>\"'\)\]\}【】,;]+", re.IGNORECASE)
+# Parentheses are allowed INSIDE a url/DOI but stripped from the end —
+# real identifiers contain them (10.1016/0304-405X(94)90112-5), while a
+# closing paren at the very end is nearly always prose wrapping the link.
+# Excluding them outright split that DOI into two bogus entries and
+# turned one real citation into two phantom "fabricated" flags.
+_URL_RE = re.compile(r"https?://[^\s<>\"'\]\}【】,;]+", re.IGNORECASE)
 _TRAILING_JUNK = ".,;:!?'\")]}>*_"
 
 # Bare DOIs as they appear in API payloads — Crossref returns
@@ -73,7 +78,7 @@ _TRAILING_JUNK = ".,;:!?'\")]}>*_"
 # separator, arriving as "10.5772\/intechopen.70867". Matching only a
 # bare slash silently found zero DOIs in exactly the payloads this
 # exists to read.
-_DOI_RE = re.compile(r"\b10\.\d{4,9}\\?/[^\s\"'<>,;\)\]\}\\]+", re.IGNORECASE)
+_DOI_RE = re.compile(r"\b10\.\d{4,9}\\?/[^\s\"'<>,;\]\}\\]+", re.IGNORECASE)
 
 
 def normalize_url(url: str) -> str:

@@ -118,7 +118,7 @@ class EmployeeCoordinator:
              didn't attach to a claim get their own entries, so a fake
              citation can't hide by not being picked up.
         """
-        from backend.app.tools.source_ledger import get_ledger
+        from backend.app.tools.source_ledger import extract_urls, get_ledger
 
         ledger = get_ledger()
         out: List[Dict[str, str]] = []
@@ -126,9 +126,19 @@ class EmployeeCoordinator:
 
         for claim in claims:
             source = str(claim.get("source") or "").strip()
-            if source.startswith(("http://", "https://")):
-                accounted.add(source.rstrip(".,;:!?'\")]}>"))
-                if not ledger.is_known(source):
+            # A source field can hold SEVERAL urls — the extractor
+            # happily produces "https://a/pricing https://b/pricing" when
+            # a claim draws on two pages. Treating that as one opaque
+            # string made a genuine, fully-sourced Notion/Linear
+            # comparison come back with a fabricated_source flag, which
+            # is the false accusation this whole check must never make.
+            # Split first; the claim is fabricated only if EVERY url in
+            # it is unknown.
+            source_urls = extract_urls(source) if source else []
+            if source_urls:
+                for u in source_urls:
+                    accounted.add(u.rstrip(".,;:!?'\")]}>"))
+                if not any(ledger.is_known(u) for u in source_urls):
                     claim = {**claim, "status": "fabricated_source"}
                     logger.warning(
                         "Fabricated citation: %s was never fetched in this process",
@@ -137,7 +147,7 @@ class EmployeeCoordinator:
             out.append(claim)
 
         # Catch fake URLs the extractor never turned into a claim.
-        from backend.app.tools.source_ledger import extract_urls, normalize_url
+        from backend.app.tools.source_ledger import normalize_url
 
         seen_keys = {normalize_url(u) for u in accounted}
         for url in extract_urls(deliverable):
