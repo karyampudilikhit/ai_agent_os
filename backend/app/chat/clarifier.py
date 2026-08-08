@@ -176,17 +176,37 @@ def _build_context_block(context: Optional[Dict[str, Any]]) -> str:
             if q and a:
                 lines.append(f"- Q: {q}")
                 lines.append(f"  A: {a}")
-    recent = context.get("recent_deliverables") or []
-    if recent:
+    deliverables = context.get("recent_deliverables") or []
+    # Two provenances, rendered under separate headers. They are NOT
+    # interchangeable to the reader: a deliverable from this session is
+    # almost certainly what "that list" refers to, whereas a recalled
+    # one is a candidate the founder may or may not have meant. Merging
+    # them under one header invites the clarifier to resolve a pronoun
+    # against a three-week-old report.
+    recent = [r for r in deliverables if r.get("kind") != "recalled"]
+    recalled = [r for r in deliverables if r.get("kind") == "recalled"]
+
+    def _render(rows: List[Dict[str, Any]], header: str, cap: int) -> None:
+        if not rows:
+            return
         lines.append("")
-        lines.append("Recent deliverables in this session (task + snippet):")
-        for r in recent[:2]:
+        lines.append(header)
+        for r in rows[:cap]:
             task = str(r.get("task") or "").strip()[:200]
             snippet = str(r.get("snippet") or "").strip()[:800]
             if task or snippet:
                 lines.append(f"- Prior task: {task}")
                 if snippet:
                     lines.append(f"  Output snippet: {snippet}")
+
+    _render(recent, "Recent deliverables in this session (task + snippet):", 2)
+    _render(
+        recalled,
+        "Earlier work that matches this request (may be from a previous "
+        "session — if the founder is referring to one of these, use it "
+        "instead of asking them to describe it again):",
+        2,
+    )
     last_user = str(context.get("last_user_prompt") or "").strip()[:300]
     if last_user:
         lines.append("")

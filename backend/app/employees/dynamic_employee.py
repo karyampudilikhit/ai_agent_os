@@ -143,6 +143,25 @@ class DynamicEmployee(Employee):
             if context
             else ""
         )
+        # Cross-run recall. `self.memory` is scoped to THIS employee id,
+        # so it cannot see a deliverable produced by a different
+        # specialist on an earlier run — and employees are spawned per
+        # team, so that is most of the founder's history. Asked to
+        # extend a comparison table built three runs ago by a different
+        # role, an employee would otherwise rebuild it from scratch and
+        # silently contradict the earlier numbers.
+        #
+        # Only fires on a real relevance match, so this block is absent
+        # for most tasks rather than padding every prompt.
+        recalled_block = ""
+        try:
+            from backend.app.memory.memory_manager import get_memory_manager
+
+            hits = get_memory_manager().recall(task, limit=2)
+            if hits:
+                recalled_block = "\n\n" + get_memory_manager().format_for_prompt(hits)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Cross-run recall failed, continuing without: %s", exc)
         teammates_block = (
             f"\n\nWork your teammates have already contributed on this same task "
             f"— use it, do not duplicate it:\n{teammates_context}"
@@ -188,7 +207,7 @@ briefly and skip it — do not do work outside your mandate.
 Do not fabricate specific statistics, survey results, or claims that
 work has already been completed. If you don't know a real number,
 describe things qualitatively (unless the web results below give you a
-real one).{web_block}{teammates_block}{history_block}"""
+real one).{web_block}{teammates_block}{history_block}{recalled_block}"""
 
     # Cheap LLM gate deciding whether a task genuinely needs external /
     # current data before we fire Tavily. The benchmark exposed the bug

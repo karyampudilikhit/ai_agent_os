@@ -98,6 +98,7 @@ from backend.app.chat.clarifier import (
     format_questions_for_chat,
 )
 from backend.app.chat.clarification_store import get_store as get_clarification_store
+from backend.app.memory.memory_manager import get_memory_manager
 from backend.app.chat.plan_store import PlanStore, get_store as get_plan_store
 from backend.app.tools.mcp_client import get_registry as get_mcp_registry
 from backend.app.tools.mcp_store import get_store as get_mcp_store
@@ -1174,6 +1175,7 @@ def universal_chat(req: UniversalChatRequest) -> UniversalChatResponse:
             current_company=current_company,
             session_id=req.current_session_id,
             clar_key=clar_key,
+            task=updated["task"],
         )
         result = clarifier.next_step(
             original_task=updated["task"],
@@ -1284,6 +1286,7 @@ def universal_chat(req: UniversalChatRequest) -> UniversalChatResponse:
             current_company=current_company,
             session_id=req.current_session_id,
             clar_key=clar_key,
+            task=task_str,
         )
         initial = clarifier.initial_questions(task_str, context=context)
         if initial["questions"] and not initial["ready"]:
@@ -1863,10 +1866,11 @@ def _build_clarifier_context(
     current_company: Optional[Dict[str, Any]],
     session_id: Optional[str],
     clar_key: str,
+    task: str = "",
 ) -> Dict[str, Any]:
     """Assemble the context the Clarifier reads on every call.
 
-    Three feeds — each closes a specific 'why is it asking me that
+    Four feeds — each closes a specific 'why is it asking me that
     again' bug the founder reported:
       1. Company purpose  → clarifier stops re-asking who/what the
          founder builds when a Company is already loaded.
@@ -1875,6 +1879,16 @@ def _build_clarifier_context(
          resolve to whatever the last run produced.
       3. Prior Q&A memory (across turns)  → an answer given two
          turns ago about audience still counts as answered today.
+      4. RECALLED deliverables (relevance-matched, any age)  → 'add
+         Asana to that pricing table' still resolves after three
+         unrelated runs have pushed the pricing table out of feed 2.
+
+    Feeds 2 and 4 land in the same `recent_deliverables` list on
+    purpose. Three separate consumers read it — the context block, the
+    resolved-reference dropper, and the redundancy dropper — and all
+    three want the same thing from a deliverable (its text). A fourth
+    key would have meant teaching each of them about it separately, and
+    the one that got missed would be the bug.
     """
     company_purpose = ""
     if current_company:
@@ -1905,7 +1919,29 @@ def _build_clarifier_context(
         recent_deliverables.append({
             "task": str(r.get("task") or ""),
             "snippet": str(r.get("output") or "")[:CLARIFIER_SNIPPET_CHARS],
+            "kind": "recent",
         })
+
+    # Relevance recall, over ALL history rather than the recency window.
+    # Excludes whatever feed 2 already supplied so a deliverable never
+    # appears twice. Returns nothing for most tasks, which is correct —
+    # see memory_manager on why a loose match is worse than no match.
+    try:
+        recalled = get_memory_manager().recall(
+            task,
+            limit=2,
+            exclude_run_ids=[str(r.get("id") or "") for r in recent],
+        )
+        for hit in recalled:
+            recent_deliverables.append({
+                "task": hit.task,
+                "snippet": hit.snippet(),
+                "kind": "recalled",
+            })
+    except Exception as exc:  # noqa: BLE001
+        # Recall is additive. Losing it costs the founder a re-ask;
+        # letting it raise here would cost them the whole turn.
+        print(f"[clarifier] memory recall failed: {exc}")
 
     mem = get_clarification_store().get_memory(clar_key)
     return {

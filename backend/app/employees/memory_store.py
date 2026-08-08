@@ -68,19 +68,51 @@ class EmployeeMemoryStore:
         self._save()
 
     def relevant_context(self, task: str) -> str:
-        """v0: the last few entries, most recent first — no similarity
-        search yet. Swap for embedding-based recall once an employee's
-        history grows past what fits in a prompt."""
+        """Entries relevant to `task`, best match first — falling back to
+        the most recent entries when nothing matches.
+
+        This used to be recency-only ("the last 3, no similarity search
+        yet"), which made the name a lie the moment an employee had done
+        four things: asked about work from last week, it would show the
+        founder's three most recent unrelated tasks instead. Ranking is
+        now lexical (memory.retrieval), so "relevant" means it.
+
+        The recency fallback is deliberate rather than lazy. Relevance
+        returns nothing for most tasks by design, and dropping to an
+        empty block would REMOVE context the prompt has always had — a
+        regression dressed as an improvement. Falling back keeps this
+        strictly no worse than the old behaviour in every case where
+        ranking finds nothing.
+        """
         if not self._entries:
             return ""
-        recent = self._entries[-MAX_CONTEXT_ENTRIES:]
-        lines = []
-        for e in reversed(recent):
-            lines.append(
+
+        def _render(entries: List[Dict[str, Any]]) -> str:
+            return "\n".join(
                 f"- ({e['timestamp'][:10]}) Task: {e['task'][:100]}\n"
                 f"  Summary: {e['summary'][:200]}"
+                for e in entries
             )
-        return "\n".join(lines)
+
+        try:
+            from backend.app.memory import retrieval
+
+            docs = [
+                (str(i), f"{e.get('task') or ''}\n{e.get('summary') or ''}")
+                for i, e in enumerate(self._entries)
+            ]
+            hits = retrieval.rank(task, docs, limit=MAX_CONTEXT_ENTRIES)
+            if hits:
+                return _render([self._entries[int(doc_id)] for doc_id, _ in hits])
+        except Exception as exc:  # noqa: BLE001
+            # Ranking is an optimisation over the recency list below; a
+            # failure here should cost relevance, not the whole block.
+            logger.warning(
+                "Memory ranking failed for %s, falling back to recency: %s",
+                self.employee_id, exc,
+            )
+
+        return _render(list(reversed(self._entries[-MAX_CONTEXT_ENTRIES:])))
 
     def all_entries(self) -> List[Dict[str, Any]]:
         return list(self._entries)
