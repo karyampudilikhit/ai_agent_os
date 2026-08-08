@@ -16,6 +16,21 @@ WORKDIR /app
 COPY backend/requirements.txt /app/backend/requirements.txt
 RUN pip install --no-cache-dir -r backend/requirements.txt
 
+# Chromium for the browser tools. `pip install playwright` ships the
+# CLIENT only — the browser binary is a separate ~300MB download, which
+# requirements.txt itself flags as a one-time manual step. On a laptop
+# that step gets run once and forgotten about; in a container it simply
+# never happens, so every browser task in the deployed app would fail at
+# runtime with "Executable doesn't exist at /root/.cache/ms-playwright/
+# chromium-*". That is the priority feature broken on deploy while
+# passing every test locally — the class of bug that only appears in
+# front of someone else.
+#
+# --with-deps also apt-installs the shared libraries Chromium needs
+# (libnss3, libatk, libgbm and friends). python:3.12-slim carries none
+# of them, so without it the binary downloads and still won't start.
+RUN playwright install --with-deps chromium
+
 # Copy the rest of the app (config.yaml lives inside backend/app/)
 COPY backend /app/backend
 COPY frontend_mvp /app/frontend_mvp

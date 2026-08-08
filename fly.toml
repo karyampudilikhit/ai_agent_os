@@ -39,4 +39,12 @@ primary_region = "bom"
   # Free-tier shared CPU is the "smallest" tier. Bump to
   # shared-cpu-2x once you're getting real traffic.
   size = "shared-cpu-1x"
+  # NOT verified under load. A headless Chromium routinely wants
+  # 400-700MB on its own, before FastAPI and the Python runtime, so a
+  # browser task on 512mb is a plausible OOM-kill. An OOM presents as
+  # the machine restarting mid-run rather than as a browser error, so
+  # it is easy to misdiagnose as a code bug. Left at 512mb because
+  # raising it is a billing decision, not a technical one — but if
+  # browser tasks die on the deployed instance while working locally,
+  # raise this to 1gb FIRST, before debugging anything in the code.
   memory = "512mb"
