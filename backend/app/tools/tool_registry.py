@@ -120,12 +120,37 @@ class ToolRegistry:
         namespace = qualified_name.split(".", 1)[0]
         try:
             if namespace == HTTP_NAMESPACE:
-                return self._http_runner.call(qualified_name, arguments)
-            if namespace == ACTION_NAMESPACE:
-                return get_action_registry().call(qualified_name, arguments)
-            return get_mcp_registry().call(qualified_name, arguments)
+                result = self._http_runner.call(qualified_name, arguments)
+            elif namespace == ACTION_NAMESPACE:
+                result = get_action_registry().call(qualified_name, arguments)
+            else:
+                result = get_mcp_registry().call(qualified_name, arguments)
         except Exception as exc:  # noqa: BLE001
-            return f"(call failed: {exc})"
+            result = f"(call failed: {exc})"
+
+        # Every tool call in the system funnels through here, which makes
+        # it the one place a run-wide record can be kept without
+        # sprinkling bookkeeping across three subsystems. It feeds the
+        # claim checker, which compares a deliverable's stated causes
+        # against what was actually attempted — see
+        # tools/tool_call_ledger.py for the ARC run that made this
+        # necessary.
+        #
+        # Note the failure convention: these subsystems return "(call
+        # failed: ...)" as TEXT rather than raising, so success cannot be
+        # inferred from the absence of an exception.
+        try:
+            from backend.app.tools.tool_call_ledger import get_call_ledger
+            text = str(result)
+            get_call_ledger().record(
+                qualified_name,
+                arguments,
+                ok=not text.lstrip().startswith("(call failed"),
+                result_preview=text[:200],
+            )
+        except Exception:  # noqa: BLE001
+            pass  # bookkeeping must never break the call it records
+        return result
 
 
 _registry: Optional[ToolRegistry] = None

@@ -41,6 +41,39 @@ def _detect_handback(text: str):
     except Exception:  # noqa: BLE001
         return []
 
+
+def _detect_contradictions(text: str):
+    """Same defensive wrapper as _detect_handback — a guard that crashes
+    is worse than a guard that misses."""
+    try:
+        from backend.app.critique.claim_checker import detect_contradicted_claims
+        return detect_contradicted_claims(text)
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _quality(critique: Dict[str, Any]) -> tuple:
+    """Rank a draft so a refinement can be rejected when it makes things
+    worse. Ordered by what actually harms the founder, worst first:
+
+      1. a hand-back  — the work was not done at all
+      2. fabrications — confident invented content
+      3. completeness — genuine thinness, the least bad of the three
+
+    Returned as a tuple where LARGER is better, so callers can simply
+    compare. Completeness is deliberately last: a thin honest answer
+    beats a fuller invented one, which is the exact trade a live run got
+    backwards when it raised completeness 0.30 -> 0.40 by adding three
+    fabricated claims.
+    """
+    blocking = bool(critique.get("handback") or critique.get("contradicted_claims"))
+    return (
+        0 if blocking else 1,
+        -len(critique.get("fabricated_claims") or []),
+        float(critique.get("completeness_score") or 0.0),
+    )
+
+
 SINGLE_CALL_PROMPT = """{objective}
 
 Give a complete, thorough, well-organized answer in plain written prose
@@ -265,6 +298,13 @@ class Pipeline:
                     "Hand-back detected in draft (%d passage(s)) — forcing refinement",
                     len(critique["handback"]),
                 )
+            critique["contradicted_claims"] = _detect_contradictions(draft)
+            if critique["contradicted_claims"]:
+                logger.warning(
+                    "Draft states %d cause(s) the run's own tool log contradicts "
+                    "— forcing refinement",
+                    len(critique["contradicted_claims"]),
+                )
             manager.set_critique(critique)
 
             while attempts < max_depth and self.critique_engine.needs_refinement(
@@ -281,19 +321,46 @@ class Pipeline:
                 refined = self.critique_engine.refine(objective, draft, critique)
                 if not refined:
                     break
+                logger.info("Refinement produced %d chars", len(refined))
+
+                # Verify against the text that would actually ship, not
+                # the draft that prompted this pass.
+                new_critique = self.critique_engine.critique(objective, refined)
+                if not new_critique:
+                    break
+                # Carry the mechanical hand-back check ONTO the new
+                # critique. This used to be written to the OLD critique
+                # dict one line before that dict was replaced wholesale,
+                # so every post-refinement hand-back check was computed
+                # and immediately discarded — the loop condition below
+                # never saw it.
+                new_critique["handback"] = _detect_handback(refined)
+                new_critique["contradicted_claims"] = _detect_contradictions(refined)
+
+                # Only accept a rewrite that is not worse. Observed in a
+                # live run: a Data Engineer draft went 0.30 -> 0.40 by
+                # INTRODUCING 3 fabricated claims, then back to 0.30,
+                # and shipped at 0.20 — three passes to end up worse
+                # than it started. Refinement pressure buys fabrication
+                # when the specialist has nothing real to add, so the
+                # loop needs the option to keep the earlier draft.
+                if _quality(new_critique) < _quality(critique):
+                    logger.warning(
+                        "Refinement REJECTED (completeness %.2f->%.2f, "
+                        "fabricated %d->%d, handback %d->%d) — keeping the "
+                        "previous draft",
+                        critique.get("completeness_score", 0.0),
+                        new_critique.get("completeness_score", 0.0),
+                        len(critique.get("fabricated_claims") or []),
+                        len(new_critique.get("fabricated_claims") or []),
+                        len(critique.get("handback") or []),
+                        len(new_critique.get("handback") or []),
+                    )
+                    break
+
                 draft = refined
                 manager.set_synthesized_output(draft)
                 manager.set_was_refined(True)
-                logger.info("Refinement produced %d chars", len(draft))
-                # Re-check the rewrite: a refinement that reintroduces the
-                # hand-back must not be allowed to end the loop.
-                critique["handback"] = _detect_handback(draft)
-
-                # Verify against the text that will actually ship, not the
-                # draft that prompted this refinement pass.
-                new_critique = self.critique_engine.critique(objective, draft)
-                if not new_critique:
-                    break
                 critique = new_critique
                 manager.set_critique(critique)
 

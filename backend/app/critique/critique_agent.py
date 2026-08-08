@@ -118,6 +118,12 @@ JSON only."""
         # critique scored it.
         if critique.get("handback"):
             return True
+        # A cause the run's own tool log contradicts (see
+        # critique/claim_checker.py). Mechanical like the hand-back
+        # check, not an opinion: the deliverable blamed a value this run
+        # never sent, and no completeness score makes that shippable.
+        if critique.get("contradicted_claims"):
+            return True
         return False
 
     def refine(self, objective: str, draft: str, critique: Dict[str, Any]) -> Optional[str]:
@@ -126,10 +132,19 @@ JSON only."""
         issues = critique.get("issues") or []
         fabricated = critique.get("fabricated_claims") or []
         handback = critique.get("handback") or []
+        contradicted = critique.get("contradicted_claims") or []
         problems = []
+        if contradicted:
+            # Ahead of everything else, including the hand-back: a draft
+            # that blames the wrong thing actively sends the founder to
+            # debug someone else's system. Being incomplete wastes their
+            # time; being confidently wrong about the cause wastes it in
+            # a specific, misleading direction.
+            from backend.app.critique.claim_checker import claim_correction
+            problems.append(claim_correction(contradicted))
         if handback:
-            # First in the list on purpose: everything else is a quality
-            # nit next to "this draft doesn't do the work at all".
+            # Next: everything below is a quality nit compared with
+            # "this draft doesn't do the work at all".
             from backend.app.critique.handback_detector import handback_correction
             problems.append(handback_correction(handback))
         if gaps:

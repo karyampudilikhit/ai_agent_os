@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -71,11 +72,49 @@ _http_runner = HTTPToolRunner()
 _action_registry = get_action_registry()
 _tool_registry = get_tool_registry()
 
-MAX_STEPS = 10               # hard ceiling on THINK->ACT cycles
-DEADLINE_SECONDS = 240.0     # wall-clock budget for the whole loop
-MAX_OBSERVATION_CHARS = 1500  # per-tool-result cap, keeps context bounded
-MAX_TRANSCRIPT_CHARS = 9000   # total transcript cap fed back into the prompt
-STEP_MAX_TOKENS = 700
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, "") or default)
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, "") or default)
+    except ValueError:
+        return default
+
+
+# All four are env-overridable. The defaults are tuned for the ordinary
+# business task — research something, fill a form, draft a document —
+# where a handful of steps and short observations are right, and a
+# runaway loop is the failure to guard against.
+#
+# They are the WRONG defaults for an interactive environment, and it is
+# worth being precise about why, because the failure is silent. Driving
+# a stateful API (a game, a booking flow, a multi-screen app) means
+# dozens to hundreds of actions, and each observation is a full state
+# snapshot rather than a paragraph. Measured against ARC-AGI-3: human
+# baselines for a single level run 7-578 actions against MAX_STEPS=10,
+# and one 64x64 frame renders to ~4300 characters against
+# MAX_OBSERVATION_CHARS=1500 — so the agent would silently see the top
+# third of the board and be judged on decisions made from it.
+#
+# Making these configurable rather than raising the defaults is
+# deliberate: a bigger budget on ordinary tasks buys nothing and costs
+# tokens on every run.
+# How many times one tool may fail IN A ROW (with any arguments) before
+# the loop gives up on it. Three is enough to survive a transient blip
+# and a single bad guess, and short of the eight-guess sweep that
+# motivated it.
+MAX_CONSECUTIVE_FAILURES = _env_int("AGENT_MAX_CONSECUTIVE_FAILURES", 3)
+
+MAX_STEPS = _env_int("AGENT_MAX_STEPS", 10)               # THINK->ACT ceiling
+DEADLINE_SECONDS = _env_float("AGENT_DEADLINE_SECONDS", 240.0)  # wall-clock
+MAX_OBSERVATION_CHARS = _env_int("AGENT_MAX_OBSERVATION_CHARS", 1500)
+MAX_TRANSCRIPT_CHARS = _env_int("AGENT_MAX_TRANSCRIPT_CHARS", 9000)
+STEP_MAX_TOKENS = _env_int("AGENT_STEP_MAX_TOKENS", 700)
 
 
 STEP_PROMPT = """You are {role}, working on a task. You can call tools one at a time.
@@ -98,6 +137,17 @@ Rules:
   say — not on what you assumed before calling.
 - If a call failed or returned nothing useful, try a DIFFERENT approach
   or different arguments. Do not repeat an identical call.
+- If a call fails because of an ARGUMENT you supplied, RE-READ THE TASK
+  for the correct value before trying again. Do not invent plausible
+  substitutes. Guessing an id or a name three times in a row is never
+  the right move — the correct value is usually written in the task.
+- Only use a tool that genuinely does the job. If NO available tool can
+  do what this task needs, say so plainly and return DONE — do not
+  substitute a loosely related tool (do not send email, read the inbox,
+  or read unrelated files just because those tools exist).
+- Do not stop early while useful work remains. If you return DONE before
+  the task is actually complete, your thought MUST state what stopped
+  you.
 - If a tool result says something is "queued for founder approval",
   that action has NOT happened yet. That is expected and correct —
   treat it as done-for-now and move on. Never re-queue the same action.
@@ -193,6 +243,7 @@ class AgenticExecutor:
         steps: List[Dict[str, str]] = []   # rendered transcript entries
         seen_calls: set = set()            # (qname, args-json) repeat guard
         repeat_counts: Dict[Any, int] = {}  # how often each call has been repeated
+        consecutive_failures: Dict[str, int] = {}  # per-tool failure streak
         acted = False
 
         for step_i in range(self.max_steps):
@@ -282,6 +333,36 @@ class AgenticExecutor:
                 "result": _truncate(result, MAX_OBSERVATION_CHARS),
             })
 
+            # Degenerate-sweep guard.
+            #
+            # The repeat guard above keys on (tool, arguments), so it only
+            # catches a model calling the SAME thing twice. A live run
+            # walked arc_reset through game_id 0, 1, 2, 3, "default",
+            # "arcade", "test", "arcade3" — eight consecutive failures,
+            # every fingerprint different, guard never fired. That is the
+            # same stuck-loop pathology wearing incrementing arguments.
+            #
+            # Keyed on the tool alone and reset by any success, so a tool
+            # that fails once and then works is unaffected.
+            if _call_failed(result):
+                consecutive_failures[action] = consecutive_failures.get(action, 0) + 1
+                if consecutive_failures[action] >= MAX_CONSECUTIVE_FAILURES:
+                    logger.warning(
+                        "[%s] %s failed %d times in a row — stopping the loop",
+                        role, action, consecutive_failures[action],
+                    )
+                    steps.append({"note": (
+                        f"(stopped: {action} failed "
+                        f"{consecutive_failures[action]} times in a row with "
+                        f"different arguments. The arguments are not the "
+                        f"problem to guess at — re-read the task for the "
+                        f"correct value, or report honestly that this tool "
+                        f"could not be used and why.)"
+                    )})
+                    break
+            else:
+                consecutive_failures[action] = 0
+
         _release_browser_sessions(role)
 
         if not acted:
@@ -353,6 +434,29 @@ def _release_browser_sessions(role: str) -> None:
             logger.info("[%s] released browser session %s", role, token)
     except Exception as exc:  # noqa: BLE001
         logger.info("browser session cleanup skipped: %s", exc)
+
+
+def _call_failed(result: Any) -> bool:
+    """True when a tool result is one of the system's failure strings.
+
+    Failure is signalled as TEXT here, not exceptions — every subsystem
+    normalizes to a parenthesised marker so a failure is an observation
+    the model can react to rather than a crashed run (see
+    AgenticExecutor._execute and ToolRegistry.call). The cost of that
+    choice is that callers cannot use try/except to notice a failure, so
+    the markers have to be recognised explicitly.
+    """
+    text = str(result or "").lstrip().lower()
+    return text.startswith((
+        "(call failed",
+        "(action failed",
+        "(invalid argument",
+        "(missing required argument",
+        "(no action named",
+        "(invalid tool name",
+        "(not an action tool",
+        "(could not enqueue",
+    ))
 
 
 def _truncate(text: str, limit: int) -> str:

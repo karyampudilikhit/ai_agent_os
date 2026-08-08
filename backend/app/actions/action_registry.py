@@ -155,6 +155,16 @@ class ActionRegistry:
         if missing:
             return f"(missing required arguments: {', '.join(missing)})"
 
+        type_error = _check_arg_types(spec, args)
+        if type_error:
+            return type_error
+        return self._dispatch(spec, args)
+
+
+    def _dispatch(self, spec: "ActionSpec", args: Dict[str, Any]) -> str:
+        """Enqueue-or-run. Split out of call() only so the validation
+        there reads as a guard clause instead of being buried above 40
+        lines of dispatch."""
         if spec.mutating:
             try:
                 preview = spec.preview(args)
@@ -183,6 +193,7 @@ class ActionRegistry:
             return f"(action failed: {exc})"
         return _truncate(result)
 
+
     def execute_now(self, action_id: str) -> Dict[str, Any]:
         """Run an already-approved queued action against the environment.
         Returns the updated queue record. Only called by the API's
@@ -206,6 +217,69 @@ class ActionRegistry:
             return updated
         updated = self._queue.set_status(action_id, "executed", result=_truncate(result))
         return updated
+
+
+# Declared type -> what Python types are acceptable. Deliberately
+# permissive where coercion is unambiguous (an int is a fine "number",
+# and "42" is a fine integer), strict where it hides a real mistake.
+_TYPE_CHECKS = {
+    "string": (str,),
+    "integer": (int,),
+    "number": (int, float),
+    "boolean": (bool,),
+    "array": (list, tuple),
+    "object": (dict,),
+}
+
+
+def _check_arg_types(spec: "ActionSpec", args: Dict[str, Any]) -> Optional[str]:
+    """Reject an argument whose type contradicts the spec, and say what
+    was expected.
+
+    Why this exists: asked to play a game whose id was stated verbatim in
+    the prompt ('vc33-5430563c'), the planner called arc_reset with the
+    INTEGER 0, then 1, then 2, then 3 — against a parameter declared
+    "string". Nothing checked, so each call reached the tool, failed
+    somewhere downstream with a generic error, and the model simply
+    guessed a different wrong value. Eight attempts, zero valid actions.
+
+    A type mismatch is one of the few planner mistakes that is provable
+    at the boundary, and saying "expected a string like 'vc33-5430563c'"
+    is far more recoverable than "game 0 not found". Booleans are checked
+    before integers because bool is a subclass of int in Python.
+    """
+    declared = {p["name"]: p for p in spec.parameters}
+    for name, value in (args or {}).items():
+        p = declared.get(name)
+        if not p or value is None:
+            continue
+        expected = str(p.get("type") or "").strip().lower()
+        allowed = _TYPE_CHECKS.get(expected)
+        if not allowed:
+            continue
+        if expected != "boolean" and isinstance(value, bool):
+            ok = False  # True is not a sensible string/int/number here
+        elif expected == "string":
+            ok = isinstance(value, str)
+        elif expected == "integer":
+            # "42" is an honest integer; 42.0 is too. 42.5 is not.
+            ok = isinstance(value, int) or (
+                isinstance(value, (str, float))
+                and str(value).strip().lstrip("-").replace(".0", "").isdigit()
+            )
+        else:
+            ok = isinstance(value, allowed)
+        if ok:
+            continue
+
+        hint = str(p.get("description") or "").strip()
+        hint = f" {hint}" if hint else ""
+        return (
+            f"(invalid argument {name!r}: expected {expected}, got "
+            f"{type(value).__name__} {value!r}.{hint} "
+            f"Re-read the task for the correct value — do not guess.)"
+        )
+    return None
 
 
 def _truncate(text: str) -> str:
@@ -234,7 +308,7 @@ def _load_builtins(registry: ActionRegistry) -> None:
     from backend.app.actions.builtin import (
         send_email, post_slack, write_file, read_file, read_inbox, reply_email,
         create_pptx, create_docx, create_xlsx, browser_task, create_github_repo,
-        calculate,
+        calculate, arc_game,
     )
     registry.register(send_email.SPEC)
     registry.register(reply_email.SPEC)
@@ -256,3 +330,5 @@ def _load_builtins(registry: ActionRegistry) -> None:
     registry.register(browser_task.BROWSER_CLICK_SPEC)
     registry.register(browser_task.BROWSER_LOGIN_WAIT_SPEC)
     registry.register(browser_task.BROWSER_SUBMIT_SPEC)
+    registry.register(arc_game.ARC_RESET_SPEC)
+    registry.register(arc_game.ARC_CLICK_SPEC)

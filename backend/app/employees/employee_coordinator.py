@@ -38,6 +38,23 @@ TEAMMATE_SUMMARY_CHARS = 2000  # bound how much of each teammate's PROSE is quot
 TEAMMATE_FACTS_CHARS = 5000
 TOTAL_FACTS_CHARS = 12000  # ceiling across all teammates, so the prompt stays bounded
 
+
+def _successful_call_count() -> int:
+    """Successful tool calls recorded process-wide so far.
+
+    Sampled either side of a specialist's turn to measure what it
+    actually achieved. Process-wide rather than per-run is fine for the
+    delta — specialists run sequentially here, so nothing else is
+    incrementing the counter in between. Never raises: a bookkeeping
+    failure must not stop a run, and returning 0 simply means the
+    receipt is unavailable rather than wrong.
+    """
+    try:
+        from backend.app.tools.tool_call_ledger import get_call_ledger
+        return get_call_ledger().counts().get("ok", 0)
+    except Exception:  # noqa: BLE001
+        return 0
+
 # Injected ahead of the Supervisor's mandate when it has no specialists,
 # to cancel the mandate's standing "you plan, you don't do the work"
 # instruction for that one call. See the comment at its use site in
@@ -186,7 +203,24 @@ class EmployeeCoordinator:
                     on_role_working(employee.role)
                 except Exception:  # noqa: BLE001  # never let progress callbacks crash a run
                     pass
+            before = _successful_call_count()
             result = employee.run_task(prompt, teammates_context=teammates_context)
+            # Receipt, measured rather than self-reported. A specialist's
+            # own prose is exactly what cannot be trusted here — one
+            # finished with ZERO agentic steps and still wrote a
+            # confident-sounding contribution that the next role built
+            # on. The tool ledger knows what actually happened.
+            gained = _successful_call_count() - before
+            result["successful_tool_calls"] = gained
+            result["produced_nothing"] = (
+                gained == 0 and not (result.get("gathered_context") or "").strip()
+            )
+            if result["produced_nothing"]:
+                logger.warning(
+                    "%s produced no real data (0 successful tool calls) — "
+                    "downstream specialists will be told not to rely on it",
+                    employee.role,
+                )
             contributions.append(result)
             if on_role_done:
                 try:
@@ -262,6 +296,25 @@ class EmployeeCoordinator:
             facts = (c.get("gathered_context") or "").strip()
             if not out and not facts:
                 continue
+            # Say plainly when an upstream step retrieved NOTHING.
+            #
+            # Both live tests failed the same way here. A Quant Analyst
+            # was told to "run a full backtest on the cleaned dataset"
+            # that the Data Engineer never built; a Rule Analyst was told
+            # to "infer the rule from the Game Operator's grid logs" when
+            # no frame had ever been retrieved. In both cases the
+            # downstream specialist read confident prose about work that
+            # had not happened, assumed the artefact existed, and
+            # produced filler. The prose alone cannot carry this — it has
+            # to be stated.
+            if c.get("produced_nothing"):
+                blocks.append(
+                    f"[{role}] PRODUCED NO REAL DATA — every tool call it made "
+                    f"failed, or it made none. Anything it describes below is "
+                    f"unverified. Do NOT assume any file, dataset or artefact "
+                    f"it mentions exists. If your task depends on that output, "
+                    f"say so plainly instead of proceeding as if it were there."
+                )
             if out:
                 blocks.append(f"[{role}] wrote:\n{out[:TEAMMATE_SUMMARY_CHARS]}")
             # Newest contributions matter most, but they're appended in

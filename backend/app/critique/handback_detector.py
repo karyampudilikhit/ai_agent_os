@@ -52,12 +52,24 @@ _HANDBACK_PATTERNS = [
     # "...until the cleaned price file (clean_prices.csv) is uploaded",
     # where a filename's dot broke an earlier sentence-bounded version.
     # Still line-bounded and length-capped so it can't span paragraphs.
+    #
+    # The verb list below was widened after a live test slipped through
+    # on ONE missing word. A full quant run shipped "cannot be judged for
+    # edge yet because the required historical price dataset HAS NOT BEEN
+    # LOADED" — a textbook blocked-until hand-back that scored zero hits,
+    # because the list covered provided/supplied/uploaded/shared and not
+    # "loaded". The lesson generalises: this set has to cover how DATA
+    # arrives, not only how a person hands something over.
     r"\b(?:cannot|can't|unable to)\b[^\n]{0,140}\buntil\b[^\n]{0,140}"
-    r"\b(?:provided|supplied|uploaded|shared|available|received)\b",
+    r"\b(?:provided|supplied|uploaded|shared|available|received|loaded|"
+    r"fetched|downloaded|populated|ingested|initialised|initialized|"
+    r"configured|connected)\b",
     r"\b(?:notify|tell|let)\s+us\s+(?:know\s+)?(?:once|when|after)\b",
     r"\bonce\s+(?:you|the\s+\w+)\s+(?:provide|send|upload|share|supply)[a-z]*\b",
     r"\bonce\s+(?:the|this|that)\b[^.\n]{0,80}\bis\s+(?:provided|supplied|uploaded|received)\b",
-    r"\b(?:has|have)\s+not\s+been\s+(?:provided|supplied|uploaded|shared)\b",
+    r"\b(?:has|have)\s+not\s+been\s+(?:provided|supplied|uploaded|shared|"
+    r"loaded|fetched|downloaded|populated|ingested|initialised|initialized|"
+    r"configured|connected|executed|run)\b",
     r"\bawaiting\s+(?:your|the founder's)\b",
     r"\bpending\s+(?:your|founder)\s+(?:input|upload|response|confirmation)\b",
 
@@ -96,13 +108,99 @@ _COMPILED = [re.compile(p, re.IGNORECASE) for p in _HANDBACK_PATTERNS]
 MAX_REPORTED = 5
 
 
+# ---------------------------------------------------------------------
+# The deferred-work hand-back: "here is your to-do list"
+#
+# The patterns above all look for a REQUEST ("please provide X"). Two
+# live tests shipped a hand-back with no request in it at all, and both
+# scored zero hits. They looked like this:
+#
+#   **What to do next**
+#   1. Approve the data pull: run the FMP API calls for every ticker...
+#   2. Verify the CSV...
+#   3. Execute the back-test...
+#
+#   **What to do next**
+#   - Verify the correct `game_id`...
+#   - Run `arc_reset` with the valid ID...
+#
+# That is the assigned work, handed back as instructions. It is the most
+# common shape this failure takes and it was completely invisible.
+#
+# A plain "Next steps" match would be far too broad — a good strategy
+# deliverable is ALLOWED to recommend actions, and blocking those is
+# worse than the bug (see the module docstring). So this requires
+# CO-OCCURRENCE with the deliverable admitting the work was not done.
+# A genuine recommendation doesn't come attached to "no back-test,
+# Sharpe, or draw-down numbers exist"; a hand-back always does.
+_NEXT_STEPS_HEADING = re.compile(
+    r"^[\s#>*_-]*(?:what\s+to\s+do\s+next|next\s+steps?|"
+    r"recommended\s+(?:next\s+)?(?:actions?|steps?)|action\s+items?)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# Imperatives that describe EXECUTING THE ASSIGNED WORK, deliberately
+# not business advice ("hire", "launch", "negotiate" are absent on
+# purpose — telling a founder to hire someone is a legitimate
+# recommendation, telling them to run the backtest is not).
+_WORK_IMPERATIVE = re.compile(
+    r"^\s*(?:[-*•–]|\d+[.)])\s*(?:\*\*|`)?\s*"
+    r"(approve|execute|re-?run|run|verify|confirm|populate|fetch|download|"
+    r"pull|load|ingest|install|configure|obtain|gather|collect|compute|"
+    r"calculate|perform|resume|retry)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# The admission that the work did not happen.
+_WORK_NOT_DONE = re.compile(
+    r"\b(?:no|not|never|cannot|can't|could\s+not|couldn't|unable\s+to|"
+    r"has\s+not\s+been|have\s+not\s+been|was\s+not|were\s+not)\b[^\n]{0,90}?"
+    r"\b(?:exists?|executed|run|ran|completed|performed|available|produced|"
+    r"generated|obtained|retrieved|initiali[sz]ed|discovered|calculated)\b",
+    re.IGNORECASE,
+)
+
+
+def _detect_deferred_work(text: str) -> List[str]:
+    """Catch a to-do list handed to the founder in place of the work.
+
+    Requires BOTH the instruction shape AND an admission that the work
+    was not done, because either alone produces false positives on
+    legitimate deliverables that recommend actions.
+    """
+    not_done = _WORK_NOT_DONE.search(text)
+    if not not_done:
+        return []
+
+    imperatives = list(_WORK_IMPERATIVE.finditer(text))
+    if not imperatives:
+        return []
+
+    heading = _NEXT_STEPS_HEADING.search(text)
+    # A heading plus one instruction is enough; without a heading, want
+    # a run of them before calling it a to-do list.
+    if not heading and len(imperatives) < 3:
+        return []
+
+    verbs = ", ".join(sorted({m.group(1).lower() for m in imperatives})[:6])
+    admission = " ".join(text[not_done.start():not_done.end() + 40].split())
+    label = (
+        f"deferred work: {len(imperatives)} instruction(s) to the founder "
+        f"({verbs}) alongside \"{admission}\""
+    )
+    return [label]
+
+
 def detect_handback(text: str) -> List[str]:
     """Return the offending phrases (with a little surrounding context),
     or [] when the deliverable stands on its own. Empty list is the
     normal, healthy case."""
     if not text:
         return []
-    found: List[str] = []
+    # Checked first: this is the shape that shipped past every other
+    # pattern in both live tests, so it should lead the issue list the
+    # refinement pass sees.
+    found: List[str] = list(_detect_deferred_work(text))
     seen: set = set()
     for pattern in _COMPILED:
         for match in pattern.finditer(text):
