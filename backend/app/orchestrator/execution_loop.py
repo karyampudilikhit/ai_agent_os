@@ -122,6 +122,50 @@ MAX_TRANSCRIPT_CHARS = _env_int("AGENT_MAX_TRANSCRIPT_CHARS", 9000)
 STEP_MAX_TOKENS = _env_int("AGENT_STEP_MAX_TOKENS", 700)
 
 
+def _loop_adapter(default: Any) -> Any:
+    """Optionally run the AGENTIC LOOP on a different model than the rest
+    of the pipeline.
+
+    Deciding a tool call and writing a deliverable are different jobs.
+    The default model (gpt-oss:120b-cloud) is decent at prose and poor at
+    the first one: across four quant runs it called run_python ZERO
+    times, while the tool sat first in its list with a full description,
+    and then wrote that metrics "could not be retrieved because
+    action.calculate returned no values" — a tool it had never invoked.
+    Four separate scaffolding fixes (build the tool, lengthen the
+    description, rank it first, add prompt rules) moved that count from
+    0 to 0.
+
+    So this exists to answer the question those fixes could not: is the
+    planner failing because of the scaffolding, or because of the model?
+    Set AGENT_LOOP_MODEL and only the loop changes; synthesis, critique
+    and evidence all stay on the main adapter, so any difference in
+    behaviour is attributable.
+
+    If a stronger model does pick the right tool, this stops being a
+    diagnostic and becomes the fix — route tool-selection to a
+    tool-capable model, keep the cheaper one for prose.
+    """
+    name = os.environ.get("AGENT_LOOP_MODEL", "").strip()
+    if not name:
+        return default
+    try:
+        from backend.app.models.provider_adapters.ollama_adapter import OllamaAdapter
+        adapter = OllamaAdapter(
+            base_url=os.environ.get("OLLAMA_HOST", "http://localhost:11434"),
+            model=name,
+            api_key=os.environ.get("OLLAMA_API_KEY") or None,
+        )
+        logger.info("agentic loop using override model: %s", name)
+        return adapter
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "AGENT_LOOP_MODEL=%s could not be built (%s) — falling back to the "
+            "pipeline adapter", name, exc,
+        )
+        return default
+
+
 STEP_PROMPT = """You are {role}, working on a task. You can call tools one at a time.
 After each call you SEE the result, then decide the next action. Work
 step by step until the task is genuinely done.
@@ -186,7 +230,7 @@ class AgenticExecutor:
         max_steps: int = MAX_STEPS,
         deadline_seconds: float = DEADLINE_SECONDS,
     ):
-        self.adapter = model_adapter
+        self.adapter = _loop_adapter(model_adapter)
         self.max_steps = max_steps
         self.deadline_seconds = deadline_seconds
 
