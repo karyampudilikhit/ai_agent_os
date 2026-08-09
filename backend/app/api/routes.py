@@ -1861,7 +1861,63 @@ CLARIFIER_SNIPPET_CHARS = 2500
 AUTO_UNIT_MAX_SPECIALISTS = 3
 
 
-def _gate_deliverable(output: str) -> str:
+# Words that mean "a number had to be COMPUTED", not merely looked up.
+# Deliberately narrow: these are results you can only get by running
+# something over a dataset, so their presence in the ask plus the
+# absence of any compute call is a provable gap rather than a guess.
+_COMPUTED_METRIC_WORDS = (
+    "sharpe", "cagr", "drawdown", "annualised return", "annualized return",
+    "win rate", "win-rate", "backtest", "back-test", "back‑test",
+    "volatility", "sortino", "alpha", "beta", "correlation matrix",
+)
+
+# Tools that can actually produce such a number.
+_COMPUTE_TOOLS = ("run_python", "calculate")
+
+
+def _unused_compute_capability(task: str, output: str) -> Optional[str]:
+    """Block a deliverable that was asked to COMPUTE something and never
+    ran anything.
+
+    Three runs in a row wrote *about* computing metrics and never called
+    a compute tool. Ranking the tool to the top of the list, lengthening
+    its description and adding prompt rules all failed to change that.
+    The last run then blamed `action.calculate` for "returning no
+    values" — a tool it had not called, for a job that tool cannot do.
+
+    So this stops asking the model to choose well and checks the ledger
+    instead: if the founder asked for a Sharpe ratio and nothing was
+    ever executed, the run did not do the work, whatever the prose says.
+    That is the same move as every guard here that has actually held —
+    verify against something recorded, not against text.
+
+    Deliberately requires the metric words to appear in the TASK. A
+    deliverable that merely mentions volatility in passing is not a
+    computation request, and blocking that would be the false positive
+    this is not worth.
+    """
+    ask = (task or "").lower()
+    if not any(w in ask for w in _COMPUTED_METRIC_WORDS):
+        return None
+    try:
+        from backend.app.tools.tool_call_ledger import get_call_ledger
+        calls = get_call_ledger().calls()
+    except Exception:  # noqa: BLE001
+        return None
+    ran = [
+        c for c in calls
+        if c.get("ok") and any(t in str(c.get("tool") or "") for t in _COMPUTE_TOOLS)
+    ]
+    if ran:
+        return None
+    return (
+        "the task asked for computed figures but no computation was ever "
+        "run — run_python was never called, so any metric in this "
+        "deliverable is asserted rather than calculated"
+    )
+
+
+def _gate_deliverable(output: str, task: str = "") -> str:
     """Last check before a run is reported as succeeded.
 
     The refinement loop already forces a rewrite when it finds a
@@ -1914,6 +1970,10 @@ def _gate_deliverable(output: str) -> str:
             )
     except Exception:  # noqa: BLE001
         pass
+
+    unused = _unused_compute_capability(task, text)
+    if unused:
+        problems.append(unused)
 
     if not problems:
         return output
@@ -2141,7 +2201,7 @@ def _dispatch_run(
                 output += _maybe_generate_document(task, output)
             except Exception as exc:  # noqa: BLE001
                 print(f"[warn] document auto-generation failed: {exc}")
-            _gate_deliverable(output)
+            _gate_deliverable(output, effective_task)
             return (output, [e.model_dump() for e in (result.evidence or [])])
 
         submit_run(run_id, _company_work)
@@ -2196,7 +2256,7 @@ def _dispatch_run(
             output += _maybe_generate_document(task, output)
         except Exception as exc:  # noqa: BLE001
             print(f"[warn] document auto-generation failed: {exc}")
-        _gate_deliverable(output)
+        _gate_deliverable(output, _task)
         return (output, [e.model_dump() for e in (result.evidence or [])])
 
     submit_run(run_id, _unit_work)

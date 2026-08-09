@@ -383,3 +383,32 @@ if __name__ == "__main__":
             failed += 1
     print(f"\n{passed} passed, {failed} failed")
     raise SystemExit(1 if failed else 0)
+
+
+def test_compute_request_without_any_computation_is_blocked() -> None:
+    """Three runs wrote about computing metrics and never ran anything;
+    ranking, descriptions and prompt rules all failed to change it. So
+    the ledger decides: asked for a Sharpe ratio, executed nothing, not
+    a completed run."""
+    import backend.app.api.routes as routes
+    from backend.app.tools.tool_call_ledger import get_call_ledger
+
+    led = get_call_ledger()
+    led.reset()
+    ask = "Deliver the backtest results with real numbers: Sharpe, CAGR, drawdown."
+    assert routes._unused_compute_capability(ask, "Sharpe: N/A")
+
+    led.record("action.run_python", {"code": "print(1)"}, ok=True)
+    assert routes._unused_compute_capability(ask, "Sharpe 0.92") is None
+
+
+def test_non_compute_task_is_not_blocked() -> None:
+    """A blog post that mentions volatility in passing is not a
+    computation request — blocking it would be the false positive."""
+    import backend.app.api.routes as routes
+    from backend.app.tools.tool_call_ledger import get_call_ledger
+
+    get_call_ledger().reset()
+    assert routes._unused_compute_capability(
+        "Write a 500-word blog post about remote work", "market volatility is up"
+    ) is None
