@@ -101,7 +101,49 @@ class OllamaAdapter:
             # Parse response
             if response.status_code == 200:
                 response_data = response.json()
-                return response_data.get("response", "No response generated")
+                text = response_data.get("response") or ""
+
+                # An EMPTY 200 is a failure wearing a success's clothes,
+                # and it is the normal outcome for a thinking model whose
+                # reasoning outgrew the token budget: Ollama spends
+                # `num_predict` on `thinking` first, then has nothing left
+                # for `response` and returns done_reason="length" with
+                # response="". Found while trying to run the
+                # tool-selection diagnostic on nemotron-3-super — every
+                # call came back "" and the run would have reported
+                # "the model never called run_python", which is the exact
+                # WRONG conclusion: it never said anything at all.
+                #
+                # Same rule as the HTTP branch below: raise. Returning ""
+                # lets a backend condition travel as content, and an empty
+                # string is worse than an error string because nothing
+                # downstream can even tell something went wrong.
+                if not text.strip():
+                    thinking = response_data.get("thinking") or ""
+                    reason = response_data.get("done_reason")
+                    detail = (
+                        f"empty response (done_reason={reason!r}, "
+                        f"eval_count={response_data.get('eval_count')}, "
+                        f"thinking={len(thinking)} chars)"
+                    )
+                    if reason == "length" and thinking:
+                        detail += (
+                            " — the model's reasoning consumed the whole "
+                            f"num_predict budget ({max_tokens}). Raise "
+                            "max_tokens for this model, or use one that "
+                            "reasons less."
+                        )
+                    raise OllamaAdapterError(
+                        f"Ollama returned an {detail}",
+                        error_code=ErrorCode.MODEL_CALL_FAILED,
+                        context={
+                            "model": self.model,
+                            "done_reason": reason,
+                            "max_tokens": max_tokens,
+                            "thinking_chars": len(thinking),
+                        },
+                    )
+                return text
 
             # RAISE, never return the error as if it were the model's
             # answer. Returning it — which this did — means every caller
