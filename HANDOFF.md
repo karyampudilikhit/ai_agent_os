@@ -1,18 +1,26 @@
 # Vision AI — Session Handoff
 
-> **Purpose:** This file lets a new chat session pick up exactly where the last one ended. The README is the evergreen snapshot of the whole project; this is the fresh-in-my-head "here's what we were mid-doing" companion.
+> **Purpose:** This file lets a new chat session pick up exactly where the last
+> one ended. The README is the evergreen snapshot of the whole project; this is
+> the fresh-in-my-head "here's what we were mid-doing" companion.
 
 ---
 
 ## What Vision AI is
 
-Vision AI (repo still named `ai_agent_os`) is **a team of AI employees that actually does your work** — research, drafts, real actions (send email, create a repo, fill a form) — verified against sources, with founder approval on every irreversible action.
+Vision AI (repo still named `ai_agent_os`) is **a team of AI employees that
+actually does your work** — research, drafts, real actions (send email, create a
+repo, fill a form) — verified against sources, with founder approval on every
+irreversible action.
 
-**Positioning updated this session:** no longer "an AI co-founder." Founder's call — the product shouldn't be locked to founders as it grows. Current framing: *"AI employees that actually do your work."* Founders are the **starting wedge**, not the definition.
+**Positioning:** *"AI employees that actually do your work."* Founders are the
+starting wedge, not the definition. Live waitlist site is branded **Vistron AI**
+(https://vistron-ai.vercel.app/) — the repo assets still say Vision AI. That
+inconsistency is unresolved.
 
 **Locked vocabulary:** Employee → Team → Unit → Company.
 
-**The hard rule (violated twice this session, now a standing bar):** if the AI hands work back to the user, it has failed. See memory `ai-must-do-the-work-never-hand-back`.
+**The hard rule:** if the AI hands work back to the user, it has failed.
 
 ---
 
@@ -22,10 +30,15 @@ Vision AI (repo still named `ai_agent_os`) is **a team of AI employees that actu
 cd "C:\Users\KARYAM~1\AppData\Local\Temp\claude\D--quant\34a3eb1d-a204-44dc-ac02-0da452892d77\scratchpad\repos\ai_agent_os"
 curl http://localhost:11434/api/tags          # Ollama up?
 py -3 -m uvicorn backend.app.api.main:app --port 8000
+py -3 -m pytest test_phase6_fixes.py test_execution_loop.py test_phase5_coverage.py test_memory_recall.py -q   # 77 pass
 ```
 
 - Marketing page: http://127.0.0.1:8000/
 - Playground: http://127.0.0.1:8000/**app/**
+
+⚠️ Run the server yourself in a terminal. Background-started servers get reaped
+between turns and a stale one on :8000 will silently serve the WRONG code — that
+nearly produced a fake benchmark result. The test harness now guards for it.
 
 ---
 
@@ -33,40 +46,67 @@ py -3 -m uvicorn backend.app.api.main:app --port 8000
 
 | | |
 |---|---|
-| **Branch** | `feat/phase-4-orchestration` — **large uncommitted delta, NOT pushed** |
-| **Last commit** | `484a046` context-aware clarifier, landing page, tree Canvas/Org |
-| **Waitlist site** | ✅ Live on Vercel (founder deployed). Source in `landing/` |
-| **Live app deploy** | ❌ Still local only. `fly.toml` set to `neutron-ai`, never launched |
+| **Branch** | `feat/phase-4-orchestration` — all work committed, **not pushed** since `12e5e9e` |
+| **Last commit** | `790c797` Block a compute request that never computed anything |
+| **Tests** | 77 pass |
+| **Deploy** | ❌ still local only. `fly.toml` names `neutron-ai`, never created |
 | **Design partners / paying** | ❌ Zero / Zero |
-| **Deck** | ✅ `Vision_AI_Pitch_Deck.pptx` (12 slides) — on Desktop |
-| **Financial model** | ✅ `Vision_AI_3Yr_Financial_Model.xlsx` — on Desktop |
 | **Demo video** | ❌ Not recorded |
+| **Browser automation** | ✅ works, incl. inside the agentic loop |
+| **Compute + market data** | ✅ tools exist and work; ⚠️ the planner won't call them |
 
 ---
 
 ## What got done this session
 
-- ✅ **Deep browser research (Phase 1)** — `browser_automation.py`, Playwright, JS-rendered multi-page crawls. Proven: 7-page linear.app crawl with real pricing pulled into a report.
-- ✅ **Interactive browser automation (Phase 2)** — `browser_task.py` + `browser_session_manager.py`. Opens a real visible Chrome (persistent profile), founder logs in themselves, AI fills the form, **pauses before submit**. Verified end-to-end on a local test form.
-- ✅ **Multi-step execution loop** — `orchestrator/execution_loop.py`. Replaced the single-shot 4-tool planner with a real THINK→ACT→OBSERVE loop. **This is the "does any work" unlock.** Proven: read a file, then used a name found *inside* it in the next tool call.
-- ✅ **Auto-Company on first task** — `hierarchy_designer.design_from_task()`. ⚠️ **Founder objected — see Open Decisions.**
-- ✅ **`create_github_repo` action tool** — GitHub REST API, approval-gated.
-- ✅ **OAuth2 "Connect GitHub" flow** — `backend/app/auth/` + `api/oauth_routes.py`. Provider-agnostic (Google stubbed). CSRF state verified working. **Endpoints live; no UI button yet.**
-- ✅ **Universal playbook rules** — `_UNIVERSAL_RULES` prepended to every playbook: never write how-to instructions, never ask for credentials, report queued≠done.
-- ✅ **Clarifier hardening** — `SYSTEM_CAPABILITIES` block + `_drop_credential_requests` regex filter.
-- ✅ **Marketing/growth assets** — landing page + waitlist (`landing/`), investor pitch deck, 3-yr financial model, investor cold email, build-in-public post drafts.
-- ✅ **Security fix (this turn):** `browser_profile/`, `.oauth_tokens.json`, `.pending_actions.json` added to `.gitignore` — they hold **live session cookies and tokens** and were previously committable.
+Two live end-to-end tests were run against the real app, then everything they
+found was fixed. Full reports: `test1_quant.pdf`, `test2_arc_agi3.pdf`,
+`test1_quant_rerun.pdf` (in the session scratchpad).
+
+**The tests**
+- Test 1 — build a quant model end to end: shipped **zero backtest numbers** and
+  a to-do list for the founder.
+- Test 2 — ARC-AGI-3 (game VC33): ARC's own scorecard **0.0**, and it blamed a
+  `game_id` it had never sent.
+
+**Three failures repeated across both**, which made them structural: a hand-back
+shipped past a detector that scored 0/2; downstream specialists briefed on
+artefacts nobody produced; irrelevant tools substituted for missing ones.
+
+**The pattern that drove every fix:** guards that **query recorded facts** held
+(SourceLedger caught 2 fabricated citations by asking the network). Guards that
+**pattern-match text** failed — repeatedly, always on a word missing from a list.
+
+**Shipped (6 commits, `6b01f7e` → `790c797`)**
+- ✅ Hand-back detector: widened verbs + new deferred-work check (the "What to do
+  next" shape), gated on co-occurrence with a not-done admission
+- ✅ `ToolCallLedger` + `claim_checker` — catches a deliverable blaming a value
+  the run never sent
+- ✅ Refinement can no longer ship a worse draft (was: 0.30 → 0.40 by adding 3
+  fabrications → shipped at 0.20)
+- ✅ Argument type validation — the ARC 8-guess sweep became 1 guess + correction
+- ✅ Per-tool consecutive-failure guard (old guard only caught identical calls)
+- ✅ `_gate_deliverable` — detection can now **fail a run** instead of only
+  forcing a rewrite; draft preserved on the failed record
+- ✅ DONE-challenge when a specialist quits with ≤1 successful call
+- ✅ `run_python` (sandboxed) + `fetch_market_data` — verified composing on real
+  data: 1,255 SPY bars → CAGR 9.61%, Sharpe 0.92, MaxDD −13.34%
+- ✅ Tool list ranked by relevance to the task (reuses the BM25 from memory)
+- ✅ Compute-request gate: asks for Sharpe/CAGR, ran nothing → run fails
 
 ---
 
 ## What did NOT get done
 
-- ❌ **Nothing committed or pushed.** Whole session's work is local-only.
-- ❌ **Connect GitHub UI button** — endpoints work, no button in the app.
-- ❌ **GitHub OAuth App not registered** — founder-only step, blocks the whole connect flow.
-- ❌ **Desktop agent (Phase 3)** — scoped, deliberately not started.
-- ❌ **Loop can't trigger browser_task** — if it *discovers* a URL mid-task it can't act on it (browser is `planner_excluded`).
-- ❌ **19 junk auto-created companies** in the workspace, incl. 2 duplicate "Pixel Forge Studios".
+- ❌ **The tool-selection problem is unsolved.** Four levers tried (build the
+  tool, longer description, rank it first, prompt rules) — `run_python` was
+  **never called** in any of 4 quant re-runs. What changed is that the failure is
+  now visible: the run fails honestly instead of shipping an N/A table as `done`.
+- ❌ Test 1 and Test 2 still do not pass their criteria.
+- ❌ Not pushed since `12e5e9e`.
+- ❌ Deploy, demo video, GitHub OAuth app registration — all untouched.
+- ❌ `test1_quant.pdf` / `test2_arc_agi3.pdf` not regenerated with the correction
+  that "null evidence rows" was a harness bug, not a product defect.
 
 ---
 
@@ -74,45 +114,52 @@ py -3 -m uvicorn backend.app.api.main:app --port 8000
 
 ### What only the founder can do
 
-1. **Register the GitHub OAuth App** (~5 min, unblocks everything GitHub):
-   - [github.com/settings/developers](https://github.com/settings/developers) → New OAuth App
-   - Callback URL **exactly**: `http://127.0.0.1:8000/api/oauth/github/callback`
-   - Put `GITHUB_OAUTH_CLIENT_ID` + `GITHUB_OAUTH_CLIENT_SECRET` in `.env`
-2. **Answer the auto-Company decision** (A/B/C below) — blocking.
-3. **Drive waitlist signups** — post the build-in-public drafts from this session.
+1. **Decide the tool-selection strategy** (see Open decisions #1) — this is the
+   binding constraint on everything else.
+2. **Register the GitHub OAuth App** (~5 min) — endpoints built, app never
+   registered, so the whole connect flow is dead code.
+3. **`fly auth login`** if we're deploying.
+4. **Settle Vision AI vs Vistron AI naming.**
 
 ### What Claude does in parallel
 
-1. Build the **Connect GitHub button** in the Connectors sidebar.
-2. Apply the **auto-Company decision** once given.
-3. Optionally clean up the 19 junk companies.
+- Put the tool name INTO the sub-task text (`supervisor.design_delegation`) —
+  the specialist reliably reads its objective, and has ignored the tool list 4×.
+- Regenerate the two stale PDFs with the correction.
+- Push the branch (README first, per standing rule).
 
 ### Success criteria
 
-OAuth App registered + Connect button working = "create a repo" works reliably, no browser, no tokens pasted.
+A quant re-run where `run_python` is actually called and a real Sharpe ratio
+reaches the deliverable. Everything else is secondary.
 
 ---
 
 ## Open decisions
 
-1. **Auto-Company overreach — A / B / C. BLOCKING, founder TBD.**
-   It auto-invented *"Pixel Forge Studios"* (a fictional name + purpose + 6 Units) **twice, 9 min apart**, from a single task. Founder: *"why is this defined i didnt even tell the ai to do this."* Options:
-   - **A** — revert auto-Company entirely
-   - **B** — cut to the real fix: no invented company identity, one Unit sized to the task
-   - **C** — propose-and-confirm before creating anything
-2. **Delete the 19 junk companies?** — founder TBD.
-3. **Desktop agent scope** — full OS control (screenshot/click/type/shell). Security model undecided. Deferred by agreement.
-4. **Should the loop be able to call browser_task?** — would enable "find a URL, then go fill that form", but risks stalling the loop on a human login.
+1. **Tool selection: scaffolding or model?** — 4 scaffolding levers failed. Next
+   options: (a) name the tool in the sub-task objective, (b) try a stronger model
+   for the execution loop and measure whether selection improves. (b) tells us
+   whether more scaffolding is even worth building. Founder: **TBD**
+2. **Vision AI vs Vistron AI** — site says one, all repo/deck/model assets say
+   the other. Founder: **TBD**
+3. **fly.toml memory 512mb** — likely too small for headless Chromium; raising it
+   is a billing call. Founder: **TBD**
+4. **Push `feat/phase-4-orchestration`?** — 6 unpushed commits. Founder: **TBD**
 
 ---
 
 ## Past days log
 
-### This session
-- Built browser automation (both phases), the agentic execution loop, GitHub API tool, OAuth2 layer, auto-Company
-- Produced all the fundraising/growth assets (deck, model, landing page, emails)
-- **Two hard lessons from founder testing:** (1) the clarifier asked for GitHub credentials — fixed at the clarifier layer after an earlier fix missed it; (2) a failed browser task produced a *how-to guide telling the founder to do it manually* — now banned via universal playbook rules
-- Founder pivoted positioning away from "AI co-founder"
+### This session (9 Aug 2026)
+- Ran 2 live end-to-end tests, wrote 3 PDF reports, fixed everything they found
+- 6 commits, 77 tests, +2 real capabilities (compute + market data)
+- Ended with tool selection as the single unsolved blocker
 
-### Previous session
-- Plan/Work modes, file upload, pptx/docx/xlsx generation, router truncation fix, `+ New` hard reset
+### Previous session (8 Aug 2026)
+- Phases 4 & 5 of the audit: memory system (relevance recall), test coverage for
+  4 untested subsystems, Dockerfile Chromium fix
+- Pushed `12e5e9e`
+
+### Earlier
+- Phases 1–3 of the audit; browser automation; connectors-as-config
