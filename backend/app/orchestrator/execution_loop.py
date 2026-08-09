@@ -110,6 +110,11 @@ def _env_float(name: str, default: float) -> float:
 # motivated it.
 MAX_CONSECUTIVE_FAILURES = _env_int("AGENT_MAX_CONSECUTIVE_FAILURES", 3)
 
+# How many tools get promoted to the top of the list with their full
+# description. Small on purpose: promoting half the registry would
+# reproduce the flat dump this exists to fix.
+RELEVANT_TOOLS_SHOWN = _env_int("AGENT_RELEVANT_TOOLS_SHOWN", 5)
+
 MAX_STEPS = _env_int("AGENT_MAX_STEPS", 10)               # THINK->ACT ceiling
 DEADLINE_SECONDS = _env_float("AGENT_DEADLINE_SECONDS", 240.0)  # wall-clock
 MAX_OBSERVATION_CHARS = _env_int("AGENT_MAX_OBSERVATION_CHARS", 1500)
@@ -200,13 +205,69 @@ class AgenticExecutor:
         except Exception:  # noqa: BLE001
             return []
 
-    def _render_tools(self, tools: List[Dict[str, Any]]) -> str:
-        lines = []
-        for t in tools:
+    def _render_tools(self, tools: List[Dict[str, Any]], task: str = "") -> str:
+        """Render the tool list with the ones that fit THIS task first.
+
+        Order and length both turned out to matter more than expected.
+        Two live runs had the right tool registered, visible, and unused:
+        a quant run reached for read_inbox and post_slack while
+        fetch_market_data sat in the list, and never called run_python at
+        all despite being asked for backtest metrics. The list was a flat
+        dump of 26 tools in registration order, each truncated at 180
+        characters — so the relevant one was buried among irrelevant ones
+        and its usage guidance ("Use this for EVERY computed result…")
+        was cut off mid-sentence.
+
+        So the most relevant few are promoted to the top with their FULL
+        description, and everything else follows. Ranking is the same
+        BM25 used for memory recall (memory/retrieval.py) — no extra LLM
+        call, no new dependency, and it degrades to the old flat listing
+        when nothing scores.
+
+        This is a nudge, not a restriction: every tool is still listed
+        and callable. Hiding the rest would trade one failure (wrong tool
+        chosen) for a worse one (right tool unavailable).
+        """
+        def _entry(t: Dict[str, Any], desc_chars: int) -> str:
             schema = t.get("input_schema") or {}
             props = list((schema.get("properties") or {}).keys())[:8]
             params = f"  params: {', '.join(props)}" if props else ""
-            lines.append(f"- {t['qualified_name']}: {str(t.get('description') or '')[:180]}" + (f"\n{params}" if params else ""))
+            desc = str(t.get("description") or "")[:desc_chars]
+            return f"- {t['qualified_name']}: {desc}" + (f"\n{params}" if params else "")
+
+        ranked_names: List[str] = []
+        if task:
+            try:
+                from backend.app.memory import retrieval
+                docs = [
+                    (
+                        t["qualified_name"],
+                        f"{t['qualified_name']} {t.get('capability') or ''} "
+                        f"{t.get('description') or ''}",
+                    )
+                    for t in tools
+                ]
+                ranked_names = [
+                    name for name, _ in retrieval.rank(
+                        task, docs, limit=RELEVANT_TOOLS_SHOWN, min_relevance=0.0
+                    )
+                ]
+            except Exception:  # noqa: BLE001
+                ranked_names = []
+
+        if not ranked_names:
+            return "\n".join(_entry(t, 180) for t in tools)
+
+        by_name = {t["qualified_name"]: t for t in tools}
+        top = [by_name[n] for n in ranked_names if n in by_name]
+        rest = [t for t in tools if t["qualified_name"] not in set(ranked_names)]
+        logger.info("tool ranking for task: %s", ", ".join(ranked_names))
+
+        lines = ["MOST LIKELY RELEVANT TO THIS TASK (read these first):"]
+        lines += [_entry(t, 600) for t in top]
+        lines.append("")
+        lines.append("ALL OTHER TOOLS:")
+        lines += [_entry(t, 180) for t in rest]
         return "\n".join(lines)
 
     # ---- execution ----------------------------------------------------
@@ -230,7 +291,7 @@ class AgenticExecutor:
         if not tools:
             return None
 
-        tools_block = self._render_tools(tools)
+        tools_block = self._render_tools(tools, task)
         known_names = {t["qualified_name"] for t in tools}
         # Tools marked pollable (browser_task_status) are MEANT to be
         # called again with identical arguments while something else

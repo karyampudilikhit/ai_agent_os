@@ -333,6 +333,42 @@ def test_market_data_rejects_a_bad_range() -> None:
     assert "not valid" in out and "5y" in out, out
 
 
+def test_relevant_tools_are_promoted_to_the_top() -> None:
+    """Two live runs had the right tool registered, visible and unused —
+    buried in a flat 26-tool dump with its guidance truncated mid-
+    sentence. The backtest tools must now lead the list for a backtest
+    task, and every other tool must still be listed."""
+    from backend.app.orchestrator.execution_loop import AgenticExecutor
+    from backend.app.tools.tool_registry import get_registry
+
+    ex = AgenticExecutor.__new__(AgenticExecutor)
+    tools = get_registry().list_tools(for_planner=True)
+    rendered = ex._render_tools(
+        tools,
+        "Implement the strategy, run a rigorous backtest on the dataset and "
+        "compute annualised return, Sharpe ratio and maximum drawdown",
+    )
+    head, _, tail = rendered.partition("ALL OTHER TOOLS:")
+    assert "run_python" in head, "the compute tool was not promoted"
+    assert "fetch_market_data" in head, "the data tool was not promoted"
+    # Full guidance survives in the promoted block (was cut at 180 chars).
+    assert "You MUST print()" in head
+    # Nothing is hidden — every tool still appears somewhere.
+    for t in tools:
+        assert t["qualified_name"] in rendered
+
+
+def test_tool_rendering_falls_back_when_nothing_ranks() -> None:
+    from backend.app.orchestrator.execution_loop import AgenticExecutor
+    from backend.app.tools.tool_registry import get_registry
+
+    ex = AgenticExecutor.__new__(AgenticExecutor)
+    tools = get_registry().list_tools(for_planner=True)
+    flat = ex._render_tools(tools, "")
+    assert "MOST LIKELY RELEVANT" not in flat
+    assert "run_python" in flat
+
+
 if __name__ == "__main__":
     passed = failed = 0
     for name, fn in sorted(list(globals().items())):
