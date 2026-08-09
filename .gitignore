@@ -16,6 +16,11 @@ env/
 phase4_run.json
 *.log
 
+# Per-run diagnostic records from run_test_model.py. Regenerable, and
+# each embeds a full deliverable plus a log containing absolute local
+# paths. The finding they support belongs in the README; the blobs don't.
+diag_*.json
+
 # Benchmark scratch (raw judge splits, crash dumps, one-off probes —
 # regenerable from the rerun_*.py / build_blind_report_*.py scripts)
 judge_tmp/
