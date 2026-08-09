@@ -54,6 +54,8 @@ nearly produced a fake benchmark result. The test harness now guards for it.
 | **Demo video** | ❌ Not recorded |
 | **Browser automation** | ✅ works, incl. inside the agentic loop |
 | **Compute + market data** | ✅ tools exist and work; ⚠️ the planner won't call them |
+| **Models** | 🔴 only `gpt-oss:120b-cloud` alive — the other two are retired upstream |
+| **Nearest competitor** | Vellum (vellum.ai) — direct, shipping, $30-200/mo |
 
 ---
 
@@ -110,16 +112,100 @@ artefacts nobody produced; irrelevant tools substituted for missing ones.
 
 ---
 
+## BLOCKER — the diagnostic can't run: two of three models are retired
+
+The open question is whether the tool-selection failure is **scaffolding
+or model**. That diagnostic is built and wired (`AGENT_LOOP_MODEL` swaps
+the model for the agentic loop ONLY, leaving synthesis/critique/evidence
+on the main adapter so any difference is attributable) — but it cannot
+be run, because both stronger models are dead upstream:
+
+```
+qwen3-coder:480b    -> HTTP 410, retired 2026-07-15
+deepseek-v3.1:671b  -> HTTP 410, retired 2026-07-15
+gpt-oss:120b-cloud  -> ALIVE (the only one)
+phi3:latest         -> local, far weaker; testing with it answers nothing
+```
+
+They still appear in `/api/tags`, so a run looks healthy right up to the
+first model call and then every step fails. Phase 1's adapter fix is why
+this took one command to find — it raised the real HTTP 410 instead of
+returning it as model output.
+
+**Operational risk:** the product depends on ONE working cloud model with
+no fallback. If gpt-oss:120b-cloud retires the same way, Vision AI stops
+working entirely, with no warning.
+
+To unblock: pull a current Ollama cloud model (cheapest), or add an
+adapter for an API key you already hold (~1 hour). Then:
+
+```bash
+AGENT_LOOP_MODEL=<model> bash run_test_model.sh "<the quant prompt>"
+```
+
+Watch one number: **`run_python` call count**. It has been 0 across four
+runs. ≥1 means model problem → route the loop to that model and most
+further scaffolding is unnecessary. Still 0 means architecture → build
+required-outputs (below).
+
+---
+
+## Competitor: Vellum (vellum.ai) — direct, and they ship
+
+Checked 9 Aug 2026. **Appears to have pivoted** from an LLMOps platform
+to a personal AI assistant — two live pages agree, while every search
+result still shows the old positioning. Treat the pivot as inference,
+not confirmed fact.
+
+- Pitch: *"a personal AI assistant that remembers how you work, learns
+  your preferences, and takes action across the tools you already use"*
+- Pricing: $30 / $100 / $200 per month, metered by vCPU + GiB + credits;
+  higher tiers include an assistant email and subdomain
+- Has: persistent memory, self-improving skills, real actions incl.
+  **code execution**, background/scheduled runs, its own email/GitHub/
+  Slack identity, and permission tiers ("Strict: they ask before every
+  action")
+
+Much closer to us than Prime Agent was: hosted, paid, non-technical
+buyer, our price band. Note they charge $200/mo for code execution —
+the exact capability our planner refuses to use.
+
+**Four confirmed gaps → our advantage features**
+
+1. **No output verification.** Their trust story is entirely about
+   SECURITY (Keychain, no training on your data) and says nothing about
+   citations, fabrication or accuracy. Ours is built and proven. Surface
+   it: a trust receipt per deliverable ("9 of 12 claims verified against
+   pages actually opened"). Hardest for them to copy — it needs the
+   recording substrate, not a feature flag.
+2. **Single-user only.** No multi-user accounts, no shared workspaces,
+   no audit logs; credentials live in one person's macOS Keychain. A
+   5-person team can't share an employee. Our Employee→Team→Unit→Company
+   model is a different product shape, not a feature they can add.
+3. **macOS + iPhone only** — "Android and Windows are on the roadmap".
+   We're a web app, working on both today. India is overwhelmingly
+   Windows/Android. Free positioning, expires when they ship Windows.
+4. **You pay while idle.** Their own caveat: background memory incurs
+   cost "even when you're not actively using it", remedied by turning
+   features off. Flat pricing is a direct attack on that.
+
+**The uncomfortable part:** a funded team independently validated this
+market (good), but they ship and we don't. None of these advantages
+count until Vistron is deployed and demoable.
+
+---
+
 ## Tomorrow's plan
 
 ### What only the founder can do
 
 1. **Decide the tool-selection strategy** (see Open decisions #1) — this is the
    binding constraint on everything else.
-2. **Register the GitHub OAuth App** (~5 min) — endpoints built, app never
+2. **Get a working second model** (pull a current Ollama cloud model, or hand over an API key) — this is what unblocks the diagnostic, and the diagnostic decides the next week of work.
+3. **Register the GitHub OAuth App** (~5 min) — endpoints built, app never
    registered, so the whole connect flow is dead code.
-3. **`fly auth login`** if we're deploying.
-4. **Settle Vision AI vs Vistron AI naming.**
+4. **`fly auth login`** if we're deploying.
+5. **Settle Vision AI vs Vistron AI naming.**
 
 ### What Claude does in parallel
 
@@ -127,6 +213,8 @@ artefacts nobody produced; irrelevant tools substituted for missing ones.
   the specialist reliably reads its objective, and has ignored the tool list 4×.
 - Regenerate the two stale PDFs with the correction.
 - Push the branch (README first, per standing rule).
+- Surface the verification layer as a founder-facing trust receipt — it is
+  Vellum's clearest gap and ours is already built and proven.
 
 ### Success criteria
 
@@ -137,15 +225,16 @@ reaches the deliverable. Everything else is secondary.
 
 ## Open decisions
 
-1. **Tool selection: scaffolding or model?** — 4 scaffolding levers failed. Next
+1. **Unblock the model diagnostic** — pull a current cloud model or supply an API key. Everything else waits on this. Founder: **TBD**
+2. **Tool selection: scaffolding or model?** — 4 scaffolding levers failed. Next
    options: (a) name the tool in the sub-task objective, (b) try a stronger model
    for the execution loop and measure whether selection improves. (b) tells us
    whether more scaffolding is even worth building. Founder: **TBD**
-2. **Vision AI vs Vistron AI** — site says one, all repo/deck/model assets say
+3. **Vision AI vs Vistron AI** — site says one, all repo/deck/model assets say
    the other. Founder: **TBD**
-3. **fly.toml memory 512mb** — likely too small for headless Chromium; raising it
+4. **fly.toml memory 512mb** — likely too small for headless Chromium; raising it
    is a billing call. Founder: **TBD**
-4. **Push `feat/phase-4-orchestration`?** — 6 unpushed commits. Founder: **TBD**
+5. **Push `feat/phase-4-orchestration`?** — 8 unpushed commits. Founder: **TBD**
 
 ---
 
