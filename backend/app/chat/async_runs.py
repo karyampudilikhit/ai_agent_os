@@ -34,6 +34,28 @@ _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="async-run")
 
 VALID_STATUSES = {"queued", "running", "done", "failed"}
 
+
+class DeliverableBlocked(Exception):
+    """Raised when a finished draft must not be reported as success.
+
+    A live ARC run illustrates why this is its own exception rather than
+    an ordinary failure. The pipeline detected everything correctly — it
+    flagged two claims the tool log contradicted, rejected a refinement
+    that tried to buy completeness with five fabricated claims, and the
+    hand-back detector fired on the final text. Then the refinement
+    budget ran out and the draft shipped as `status: done` anyway.
+
+    Detection that forces a rewrite but cannot stop delivery is only
+    half a guard. When the rewrites are exhausted and the blocking
+    problem is still there, the honest outcome is a failed run — with
+    the draft preserved, because a founder should still be able to read
+    what was produced. They just must not be told it worked.
+    """
+
+    def __init__(self, message: str, draft: str = "") -> None:
+        super().__init__(message)
+        self.draft = draft
+
 # Enough to be real history without letting one long-lived server grow a
 # multi-megabyte JSON file it rewrites on every run.
 MAX_PERSISTED_RUNS = 200
@@ -179,8 +201,18 @@ class RunStore:
         )
         self._save()
 
-    def set_failed(self, run_id: str, error: str) -> None:
-        self._set(run_id, status="failed", finished_at=time.time(), error=error)
+    def set_failed(
+        self, run_id: str, error: str, output: Optional[str] = None
+    ) -> None:
+        """Mark a run failed. `output` is kept when a draft exists but was
+        judged unshippable — the founder should still be able to read what
+        was produced, they just must not be told it succeeded."""
+        fields: Dict[str, Any] = {
+            "status": "failed", "finished_at": time.time(), "error": error,
+        }
+        if output is not None:
+            fields["output"] = output
+        self._set(run_id, **fields)
         self._save()
 
     def list_history(self, limit: int = 50) -> List[Dict[str, Any]]:
@@ -261,6 +293,12 @@ def submit(
         store.set_running(run_id)
         try:
             output, evidence = work()
+        except DeliverableBlocked as exc:
+            # Not a crash — the work finished, and finished badly enough
+            # that reporting success would be a lie. Keep the draft.
+            logger.warning("run %s blocked from shipping: %s", run_id, exc)
+            store.set_failed(run_id, str(exc), output=exc.draft)
+            return
         except Exception as exc:  # noqa: BLE001
             logger.exception("run %s failed", run_id)
             store.set_failed(run_id, str(exc))

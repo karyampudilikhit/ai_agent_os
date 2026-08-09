@@ -1861,6 +1861,56 @@ CLARIFIER_SNIPPET_CHARS = 2500
 AUTO_UNIT_MAX_SPECIALISTS = 3
 
 
+def _gate_deliverable(output: str) -> str:
+    """Last check before a run is reported as succeeded.
+
+    The refinement loop already forces a rewrite when it finds a
+    hand-back or a claim the tool log contradicts. What it could not do
+    was STOP: when the retry budget ran out with the problem still
+    present, the draft shipped as `status: done`. A live ARC run did
+    exactly that — it detected two contradicted claims, rejected a
+    refinement that tried to add five fabricated ones, and then handed
+    the founder a deliverable saying the game "was never reset" (it was)
+    alongside a to-do list.
+
+    So this is deliberately the LAST word rather than another nudge. It
+    does not rewrite anything; it decides whether the result may be
+    called a success. Returns the output unchanged when the deliverable
+    is clean.
+    """
+    text = output or ""
+    if not text.strip():
+        return output
+
+    problems = []
+    try:
+        from backend.app.critique.handback_detector import detect_handback
+        hb = detect_handback(text)
+        if hb:
+            problems.append(f"hands the work back to you ({hb[0][:160]})")
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from backend.app.critique.claim_checker import detect_contradicted_claims
+        cc = detect_contradicted_claims(text)
+        if cc:
+            problems.append(cc[0][:200])
+    except Exception:  # noqa: BLE001
+        pass
+
+    if not problems:
+        return output
+
+    from backend.app.chat.async_runs import DeliverableBlocked
+    raise DeliverableBlocked(
+        "This run did not produce a usable deliverable: "
+        + "; ".join(problems)
+        + ". The draft is kept below so you can see what it did produce, "
+          "but it was not completed and is not being reported as done.",
+        draft=text,
+    )
+
+
 def _build_clarifier_context(
     *,
     current_company: Optional[Dict[str, Any]],
@@ -2074,6 +2124,7 @@ def _dispatch_run(
                 output += _maybe_generate_document(task, output)
             except Exception as exc:  # noqa: BLE001
                 print(f"[warn] document auto-generation failed: {exc}")
+            _gate_deliverable(output)
             return (output, [e.model_dump() for e in (result.evidence or [])])
 
         submit_run(run_id, _company_work)
@@ -2128,6 +2179,7 @@ def _dispatch_run(
             output += _maybe_generate_document(task, output)
         except Exception as exc:  # noqa: BLE001
             print(f"[warn] document auto-generation failed: {exc}")
+        _gate_deliverable(output)
         return (output, [e.model_dump() for e in (result.evidence or [])])
 
     submit_run(run_id, _unit_work)

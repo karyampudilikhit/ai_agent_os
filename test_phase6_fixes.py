@@ -225,6 +225,53 @@ def test_handback_and_contradiction_outrank_completeness() -> None:
     assert _quality(polished_false_cause) < _quality(clean_thin)
 
 
+# ======================================================================
+# Detection must be able to STOP a run, not just force a rewrite
+# ======================================================================
+
+def test_blocked_deliverable_fails_the_run_and_keeps_the_draft() -> None:
+    """The gap the first re-run exposed. Every guard fired correctly —
+    contradictions flagged, a 5-fabrication refinement rejected — the
+    retry budget ran out, and the draft shipped as status: done anyway.
+    """
+    import backend.app.api.routes as routes
+    from backend.app.chat.async_runs import DeliverableBlocked
+
+    try:
+        routes._gate_deliverable(QUANT_HANDBACK)
+    except DeliverableBlocked as exc:
+        assert exc.draft == QUANT_HANDBACK, "the draft must be preserved"
+        assert "hands the work back" in str(exc)
+        return
+    raise AssertionError("a hand-back deliverable was allowed to ship as done")
+
+
+def test_clean_deliverable_passes_the_gate() -> None:
+    import backend.app.api.routes as routes
+    assert routes._gate_deliverable(LEGIT_WORK_DONE_WITH_ADVICE) == \
+        LEGIT_WORK_DONE_WITH_ADVICE
+    assert routes._gate_deliverable("") == ""
+
+
+def test_failed_run_can_carry_its_draft() -> None:
+    """A blocked run is still worth reading — the founder must be able to
+    see what was produced, they just must not be told it succeeded."""
+    import tempfile
+    from pathlib import Path
+
+    from backend.app.chat.async_runs import RunStore
+
+    store = RunStore(path=str(Path(tempfile.mkdtemp()) / "runs.json"))
+    run_id = store.create(intent="run_task_unit", task="build a quant model")
+    store.set_running(run_id)
+    store.set_failed(run_id, "blocked: hands the work back", output="the draft")
+
+    rec = store.get(run_id)
+    assert rec["status"] == "failed"
+    assert rec["output"] == "the draft"
+    assert "hands the work back" in rec["error"]
+
+
 if __name__ == "__main__":
     passed = failed = 0
     for name, fn in sorted(list(globals().items())):

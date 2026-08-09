@@ -244,6 +244,8 @@ class AgenticExecutor:
         seen_calls: set = set()            # (qname, args-json) repeat guard
         repeat_counts: Dict[Any, int] = {}  # how often each call has been repeated
         consecutive_failures: Dict[str, int] = {}  # per-tool failure streak
+        successful_calls = 0   # real work done, used to challenge an early DONE
+        done_challenged = False
         acted = False
 
         for step_i in range(self.max_steps):
@@ -275,6 +277,36 @@ class AgenticExecutor:
             thought = str(decision.get("thought") or "").strip()
 
             if not action or action.upper() == "DONE":
+                # Challenge a DONE that arrives with nothing achieved.
+                #
+                # A prompt rule was tried first and did not hold: a Game
+                # Runner opened an ARC game successfully — it had the
+                # grid in hand — then returned DONE at step 2 of 40
+                # without a single click, and the run reported "no game
+                # data was returned". One successful call is not the
+                # same as a finished task, and the model is a poor judge
+                # of the difference when it is eager to stop.
+                #
+                # Challenged ONCE only. A second DONE is accepted: a
+                # specialist that genuinely has nothing left to do must
+                # be able to stop, and nagging it into make-work is the
+                # failure mode on the other side of this.
+                if not done_challenged and successful_calls <= 1 and step_i + 1 < self.max_steps:
+                    done_challenged = True
+                    logger.info(
+                        "[%s] DONE at step %d with %d successful call(s) — "
+                        "challenging once", role, step_i + 1, successful_calls,
+                    )
+                    steps.append({"note": (
+                        f"(you returned DONE after {successful_calls} successful "
+                        f"tool call(s), with {self.max_steps - step_i - 1} steps "
+                        f"still available. If the task is genuinely finished, "
+                        f"return DONE again and say in your thought what you "
+                        f"completed. If it is NOT finished — you opened something "
+                        f"but never acted on it, or you have data you have not "
+                        f"used yet — continue working now.)"
+                    )})
+                    continue
                 logger.info("[%s] agentic loop finished after %d step(s)", role, step_i)
                 break
 
@@ -362,6 +394,7 @@ class AgenticExecutor:
                     break
             else:
                 consecutive_failures[action] = 0
+                successful_calls += 1
 
         _release_browser_sessions(role)
 
