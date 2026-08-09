@@ -147,16 +147,31 @@ _WORK_IMPERATIVE = re.compile(
     r"^\s*(?:[-*•–]|\d+[.)])\s*(?:\*\*|`)?\s*"
     r"(approve|execute|re-?run|run|verify|confirm|populate|fetch|download|"
     r"pull|load|ingest|install|configure|obtain|gather|collect|compute|"
-    r"calculate|perform|resume|retry)\b",
+    r"calculate|perform|resume|retry|acquire|align|assemble|prepare|"
+    r"implement|clean|build|extend|supply|provide)\b",
     re.IGNORECASE | re.MULTILINE,
 )
 
 # The admission that the work did not happen.
+#
+# This list has to track the blocked-until verbs above, and did not: a
+# quant re-run shipped "full S&P 500 price data not yet LOADED" and
+# "cannot be JUDGED yet" under a "What to do next" heading, and scored
+# zero — because neither verb was here, even though "loaded" had just
+# been added to the pattern above. Same omission, two places. Anything
+# describing work NOT HAPPENING belongs in both.
+#
+# 'unavailable' and 'N/A' are matched standalone: they are already
+# negations, so requiring a preceding "not" misses the most common way
+# a results table admits it has no results.
 _WORK_NOT_DONE = re.compile(
     r"\b(?:no|not|never|cannot|can't|could\s+not|couldn't|unable\s+to|"
     r"has\s+not\s+been|have\s+not\s+been|was\s+not|were\s+not)\b[^\n]{0,90}?"
     r"\b(?:exists?|executed|run|ran|completed|performed|available|produced|"
-    r"generated|obtained|retrieved|initiali[sz]ed|discovered|calculated)\b",
+    r"generated|obtained|retrieved|initiali[sz]ed|discovered|calculated|"
+    r"loaded|fetched|downloaded|acquired|gathered|collected|judged|"
+    r"evaluated|assessed|measured|determined|populated|computed|built)\b"
+    r"|\bunavailable\b|(?<![\w/])N/A(?![\w/])",
     re.IGNORECASE,
 )
 

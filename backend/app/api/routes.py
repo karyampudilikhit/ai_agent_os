@@ -1898,6 +1898,23 @@ def _gate_deliverable(output: str) -> str:
     except Exception:  # noqa: BLE001
         pass
 
+    # Fabricated citations. The source ledger has always DETECTED these
+    # — a quant re-run shipped four, including a Yahoo bulk-download URL
+    # and a pushshift endpoint the run never opened — but detection only
+    # coloured a badge. A citation to a page that was never fetched is
+    # the most trust-damaging thing this product can emit, because it
+    # reads as the most verified line in the report.
+    try:
+        from backend.app.tools.source_ledger import get_ledger
+        unretrieved = get_ledger().unretrieved_urls(text)
+        if len(unretrieved) >= 2:
+            problems.append(
+                f"cites {len(unretrieved)} source(s) that were never actually "
+                f"opened during this run (e.g. {unretrieved[0][:80]})"
+            )
+    except Exception:  # noqa: BLE001
+        pass
+
     if not problems:
         return output
 
