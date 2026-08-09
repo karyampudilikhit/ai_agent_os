@@ -1,9 +1,15 @@
 # Vision AI (repo: `ai_agent_os`)
 
-**A co-founder for solo founders.** You give it what you're building — a
-raw idea, a launch to plan, a customer to reach — and it spins up a
-persistent team of AI employees who don't fabricate evidence and
-actually do the work using the tools you already use.
+**AI employees that actually do your work.** You give it what you're
+building — a raw idea, a launch to plan, a customer to reach — and it
+spins up a persistent team of AI employees who don't fabricate evidence
+and actually do the work using the tools you already use.
+
+> **Positioning note (2026-08-02):** "an AI co-founder for solo founders"
+> is retired. Solo founders are the **starting wedge**, not the
+> definition — the Employee model is role-generic, so the same product
+> expands to any knowledge worker. Investor framing keeps the wedge
+> explicit: *start with founders, built for everyone.*
 
 **The pitch, in one sentence:** everyone else's AI writes about the work;
 ours does it — sends the emails, posts the Slack, writes the file — and
@@ -11,9 +17,17 @@ every deliverable is verification-gated so nothing hallucinated ships.
 Mutating actions never fire without a founder tap; the approval gate is
 what makes "AI does the work" safe.
 
-Founders first, general audience later. Flat-monthly SaaS pricing
-(~$29-49/mo unlimited, small free tier) — no per-seat, no per-task
-metering.
+Flat-monthly SaaS pricing (~$29-49/mo unlimited, small free tier) — no
+per-seat, no per-task metering.
+
+**Naming (decided 2026-08-09): the product is Vision AI.** The live
+waitlist site at https://vistron-ai.vercel.app/ still says "Vistron AI"
+and is the one asset left to rebrand — everything in this repo, the deck,
+and the model assets are already Vision AI.
+
+**The hard rule:** if the AI hands work back to the user, it has failed.
+Approval-gate irreversible actions only; never ask for state the system
+can observe itself.
 
 This file is the state-of-the-project snapshot. It gets rewritten every
 time work is pushed so a new chat (no memory of the last session) can
@@ -58,6 +72,11 @@ approves, Units + specialists auto-hire).
 | **Playground UI** | ✅ live at `/app/` (`frontend_mvp/app/index.html`). Studio Chat + Canvas + Org + Output tabs + Edit/Connectors sidebar with live per-employee progress. **Canvas and Org tabs render as SVG branching trees** as of this session: shared `renderTreeInto` helper does leaf-weighted horizontal layout (a Unit with 3 specialists gets 3× the band of one with 1), draws smooth S-curve branch paths with `vector-effect: non-scaling-stroke`, auto-centers the root on load, supports click-and-drag pan + wheel-to-horizontal-scroll + a visible custom scrollbar. Layout is proper 3-level (CEO → Supervisor → specialists) at Company altitude, 2-level (Supervisor → specialists) at Unit altitude. Also fixed a serious flexbox propagation bug where the tree's inline `min-width` was bleeding up through `.canvas-body` → `.center` → `.app` and inflating the whole page past the viewport (that's what made "I can't move it" happen — the founder was dragging the whole page, not the tree). Fixed with `min-width: 0` on each ancestor. Old flat-flow `.emp-node` and Unit-card DOM removed; progress polling now updates `.tree-node[data-role]` instead. |
 | **Clarifier context awareness** | ✅ live at `backend/app/chat/clarifier.py` — the clarifier now reads (a) the active Company's name + purpose, (b) up to 2 most-recent finished deliverables' output snippets (up to 2500 chars each), and (c) cross-turn Q&A memory from earlier clarification cycles in the same session. Two hygiene passes strip bad LLM output before it ever reaches the founder: `_drop_resolved_reference` kills identification-shaped questions ("Who are the personas?", "Which video idea?") whenever the referenced entity already appears in a recent deliverable, and `_drop_redundant` uses token-overlap against pooled + per-source vocabularies to filter re-asks the LLM is famous for. Multi-part questions get split into atomic ones (parenthetical-safe regex — "roles, and industries" stays intact, "industries, and what insights" splits). Persistence: `ClarificationStore.record_qa` keeps the last 8 (Q, A) pairs per session/company so audience answered on turn 2 is still known on turn 5. Also fixed the root-cause bug that made this all pointless: unit runs launched inside a Company were only tagged with `session_id`, never `company_id`, so `RunStore.list_recent_done` couldn't find the personas deliverable when the next chat turn looked it up by Company scope. Now every run carries both ids. Regression tests in `scratchpad/test_clarifier_bug.py` + `scratchpad/test_end_to_end.py` cover the personas + Finance-Free Friday + audience-research bundled-reask cases. |
 | **Verification / no-fabrication** | ✅ live — critique/refine loop, measured working (multi-agent 1/10 vs single-call 3/10 in the independent-judge benchmarks). |
+| **Agentic execution loop** | ✅ live — `orchestrator/execution_loop.py`, THINK → ACT → OBSERVE, bounded (10 steps / 240s / repeat-guard). Replaced the old single-shot `MCPPlanner` that picked 4 tools blind before seeing any result. This is what makes dependent work possible ("read the file, then email the person named in it"). `AGENT_LOOP_MODEL` routes the loop to a different model than synthesis/critique; `AGENT_STEP_MAX_TOKENS` (default 700) sizes each step. |
+| **Browser automation** | ✅ live, including inside the agentic loop. Real visible Chrome, persistent profile, founder logs in themselves (no password ever enters the codebase). Async dispatch via `action.browser_task_async` + pollable status. Screenshot-on-failure, consent-banner dismissal, classified open-failures. **One shared Playwright instance on one dedicated thread** — never start/stop per session, and marshal all `Page`/`Locator` access through `run_on_browser_thread()`. |
+| **Compute + real market data** | ✅ live — `action.run_python` (separate isolated interpreter, wall-clock timeout, scratch cwd, sockets disabled, credentials stripped) and `action.fetch_market_data`. Verified composing on real data end to end **through the agentic loop**: SPY daily bars → SMA-50/200 crossover → **CAGR 11.26%, Sharpe 0.9329, MaxDD −18.76%**, computed by executed code and carried into the deliverable with a citation to the execution step. ⚠️ Reaches this outcome in **2 of 4** valid runs — see "Open problems" #1. |
+| **Guard layer (record-checking)** | ✅ live and load-bearing. `SourceLedger` (asks the network "was this URL actually fetched?" — caught 2 fabricated citations), `ToolCallLedger` + `claim_checker` (asks the call log "was this value ever sent?" — caught a deliverable blaming a `game_id` the run never sent), per-tool consecutive-failure guard, argument type validation, refinement-can't-ship-a-worse-draft, DONE-challenge when a specialist quits with ≤1 successful call, and `_gate_deliverable` — **detection can fail a run**, not merely force a rewrite, with the draft preserved on the failed record. |
+| **Model dependency** | 🔴 **single point of failure.** Only `gpt-oss:120b-cloud` and `nemotron-3-super:cloud` are alive on the free Ollama tier. `qwen3-coder:480b` and `deepseek-v3.1:671b` were **retired upstream 2026-07-15 and now return HTTP 410** — they still appear in `/api/tags`, so a run looks healthy right up to the first model call. The current top-tier cloud models (`kimi-k2.7-code`, `deepseek-v4-pro`, `glm-5.2`, `minimax-m2.7`) all return **HTTP 403 — paid subscription required**. If `gpt-oss:120b-cloud` retires the same way, the product stops working with no warning. |
 | **Playbook library (premium output on weaker models)** | ✅ live — Supervisor classifies each task (`validation`, `research`, `writing`, `analysis`, `strategy`, `general`), pulls task-specific quality rules ("mark unknown," "cite verbatim," "prove absence," adversarial paragraph, etc.), and composes a task-tailored briefing for each specialist. This is the mechanism that closes ~70% of the gap vs premium hosted models on local `gpt-oss:120b` — output quality moved from 6.5/10 → 7.5/10 in the validation-task A/B. Reflection-loop-driven mutations of the playbook are Phase 2. |
 | **Tavily web search** | ✅ live — real search results injected into specialists' prompts when tasks are research-shaped. |
 | **Read-only web fetch** | ✅ live — any URL mentioned in a task gets fetched (BeautifulSoup extract); top-2 Tavily URLs also get deep-read. |
@@ -73,10 +92,92 @@ approves, Units + specialists auto-hire).
 | **Vision Desktop Agent (full-system access)** | ❌ scoped, not yet built. Small Python/Electron daemon on the founder's machine, WebSocket to the backend, screenshot + click + type + allow-listed shell + arbitrary-folder file access with per-app approval on first use. Next major layer after the action MVP. |
 | **Company / CEO UI (org tree Canvas, universal chat router)** | ✅ live — Phase 3b rewrote the flow to be prompt-first. No mode toggle, no "create company" form, no "design hierarchy" textarea. Everything runs through **one** chat input. A universal router (`POST /api/chat`, backed by `UniversalChatRouter` in `backend/app/chat/`) sees the current selection state and classifies each message into one of: `create_company` (extracts name + purpose + auto-designs the hierarchy in the same turn), `design_hierarchy`, `apply_proposal` (say "yes" / "apply"), `discard_proposal`, `add_unit` (extends an existing Company with one new Unit — designed by the CEO to not duplicate existing scope, materialized immediately), `run_task_company` (kicked off in the background — chat returns in seconds with a `run_id` and the client polls `/api/runs/{id}` until done), `run_task_unit` (same async pattern; auto-creates a Unit if none is selected, so a founder who just says "run X" doesn't hit a dead-end), `casual_chat`. The proposal renders inline in the chat reply — the founder just types "yes" to hire everyone. Right sidebar keeps the Company selector + purpose + Unit count as **read-only status**. Middle panel has an **Org** tab that renders the full tree (CEO node on top, Unit cards below with Supervisor + specialists inside). Canvas auto-follows the router's selection (new Unit created → Canvas loads its team). |
 | **Memory system** | ✅ live at `backend/app/memory/`. Two tiers over the persisted `RunStore`: `memory_manager.py` recalls past **successful** deliverables, `mistake_repository.py` recalls past **failures**, both ranked by `retrieval.py` (Okapi BM25, dependency-free — no vector store, because a network call on the recall path is a new way to fail confidently and buys nothing at a 200-run corpus). Recall is deliberately conservative: a document must clear a normalized coverage threshold **and** match ≥2 discriminating terms, because a loose match hands an employee plausible material for a question it doesn't answer. Wired into `_build_clarifier_context` (relevance-matched deliverables of any age, alongside the recency feed) and `DynamicEmployee.build_objective` (cross-run recall, so a specialist can see work a *different* specialist did on an earlier run). Calibration was set from probing real run history, not from constructed fixtures — two false-positive classes only appeared there. Tests: `test_memory_recall.py`. |
-| **Test coverage** | ⚠️ partial — 17 test files. Covered: execution loop, browser automation (14 tests), memory recall (17), and as of Phase 5 the four subsystems that had nothing (`test_phase5_coverage.py`, 24 tests): the chat router's never-dead-end contract, the approval queue's **reject** path (approve was exercised constantly in development, reject never was), citation verification incl. the Phase 3a multi-URL and 3b DOI-paren regressions, and the connector layer incl. the security property that undeclared args are dropped rather than rerouted to the query string. Still uncovered: synthesis, critique/refinement loop, the clarifier's question-dropping heuristics. |
+| **Test coverage** | ⚠️ partial — 19 test files; the core four (`test_phase6_fixes` + `test_execution_loop` + `test_phase5_coverage` + `test_memory_recall`) are **77 passing**. Covered: execution loop, browser automation (14 tests), memory recall (17), and as of Phase 5 the four subsystems that had nothing (`test_phase5_coverage.py`, 24 tests): the chat router's never-dead-end contract, the approval queue's **reject** path (approve was exercised constantly in development, reject never was), citation verification incl. the Phase 3a multi-URL and 3b DOI-paren regressions, and the connector layer incl. the security property that undeclared args are dropped rather than rerouted to the query string. Still uncovered: synthesis, critique/refinement loop, the clarifier's question-dropping heuristics. |
 | **Deploy** | ❌ **not deployed.** `fly.toml` names `neutron-ai`; the app was never created and the name is unclaimed. Needs: `fly auth login`, a globally-unique app name, `fly volumes create data`, secrets (`OLLAMA_HOST`, `OLLAMA_API_KEY`, `TAVILY_API_KEY`), `fly deploy`. The Dockerfile was **broken for browser work** until Phase 5 — it pip-installed `playwright` but never ran `playwright install`, so Chromium would have been absent and every browser task would have failed in production while passing locally; now fixed with `--with-deps chromium`. Open risk: `memory = "512mb"` is likely too small for headless Chromium, and an OOM presents as the machine restarting mid-run rather than as a browser error. |
 | **AI hierarchy — Phase 2b** | ❌ deferred: multiple Teams per Unit + persistent CEO memory. |
 | **User accounts / auth** | ❌ deferred until we're ready to host. |
+
+---
+
+## Open problems (read this before planning work)
+
+### 1. It was never tool SELECTION — it's premature DONE
+
+**Status as of 2026-08-09: diagnosed, not yet fixed.** The old framing
+("the planner refuses to call `run_python`; is it scaffolding or the
+model?") is **falsified**. Both the model hypothesis and the
+tool-ranking hypothesis are dead.
+
+Measured with `run_test_model.py` — 11 runs, of which **7 were
+invalidated** by Ollama cloud HTTP 500s and 4 were valid:
+
+| Loop model | Step budget | `run_python` | Outcome |
+|---|---|---|---|
+| `nemotron-3-super:cloud` | 3000 | **1** | real **Sharpe 0.9329**, CAGR 11.26%, MaxDD −18.76% ✅ |
+| `gpt-oss:120b-cloud` | 3000 | **5** | real **Sharpe ≈0.70** ✅ |
+| `gpt-oss:120b-cloud` | 700 | 0 | DONE at step 2 ❌ |
+| `gpt-oss:120b-cloud` | 3000 | 0 | DONE at step 2 ❌ |
+
+What this shows:
+
+- **`run_python` DOES get called, and a real computed Sharpe DOES reach
+  the deliverable.** That is the success criterion the previous session
+  set, met twice. The prior "0 of 4" was a property of the old harness,
+  not of the planner.
+- **The model is not the variable.** `gpt-oss` — the model previously
+  blamed — produced the *most* tool calls of any run (5).
+- **The step token budget is not the variable either.** 3000 appears in
+  both a success and a failure.
+- **The actual variable is whether the loop accepts an early DONE.** In
+  both failing runs the trace is identical: *step 1 fetch the data →
+  step 2 declare DONE → loop ends*, having computed nothing. The
+  existing DONE-challenge fires, challenges **once**, and then accepts.
+  It worked in one run and was overridden in two.
+
+**The fix, and it is the one this codebase's own lessons predict:** a
+mechanical **required-outputs gate** on the loop. The objective asks for
+a Sharpe/CAGR/drawdown; the `ToolCallLedger` already records whether any
+compute tool ran; so DONE should be **refused** while that recorded fact
+is missing — not challenged once and then conceded. Guards that query a
+record hold; a single advisory challenge is a prompt rule wearing a
+guard's clothes.
+
+Reproduce or re-measure with:
+
+```bash
+py -3 run_test_model.py --model gpt-oss:120b-cloud --label baseline
+```
+
+The runner marks a run **INVALID** rather than reporting a confident zero
+when the loop silently fell back to another model, or when a step died on
+an HTTP 500 — both happened, and both would otherwise have manufactured a
+clean-looking wrong answer.
+
+⚠️ **Ollama cloud 500s are frequent under repeated runs.** Space runs out
+and check the exit code: `3` means the run was infrastructure-killed and
+its numbers mean nothing.
+
+### 2. Three lessons that should shape every fix here
+
+- **Guards that query a RECORD hold. Guards that match TEXT fail** —
+  every time, on a word missing from a list. The hand-back detector
+  failed 3 separate times ("loaded", then "judged"/"unavailable", then
+  "could not be retrieved"); each fix was adding another word, which is
+  the tell. Before writing a regex, ask *what recorded fact can I check?*
+- **Detection that only forces a rewrite is half a guard.** A run once
+  flagged contradictions, rejected a refinement that added 5 fabricated
+  claims, exhausted its retry budget, and shipped `status: done` anyway.
+- **Prompt rules are advisory to a weak model; mechanical checks are
+  not.** A prompt rule against stopping early did not hold. A mechanical
+  DONE-challenge did.
+
+### 3. Not shipped
+
+Zero design partners, zero paying customers, no demo video, not deployed.
+The nearest competitor (Vellum, vellum.ai) is hosted, paid, and shipping
+at $30–200/mo. Our four confirmed advantages over them — output
+verification, multi-user teams, Windows/Android support, and flat pricing
+— **count for nothing until this is deployed and demoable.**
 
 ---
 
@@ -395,6 +496,29 @@ Playground: [http://127.0.0.1:8000](http://127.0.0.1:8000).
 **Ollama** (default LLM): the code targets `gpt-oss:120b-cloud` on a
 local Ollama daemon.
 
+**Model gotchas — both cost real debugging time, don't rediscover them:**
+
+- `/api/tags` lists **retired** models. `qwen3-coder:480b-cloud` and
+  `deepseek-v3.1:671b-cloud` appear healthy and return **HTTP 410** on
+  first use. Check liveness with an actual generate call, not the tag
+  list.
+- **Thinking models spend `num_predict` on `thinking` before
+  `response`.** Exceed the budget and Ollama returns HTTP 200 with
+  `response: ""` and `done_reason: "length"`. That empty string used to
+  travel downstream as valid content — a swapped-in model would have
+  looked like "the planner never called the tool" when in fact it never
+  said anything at all. The adapter now **raises** on an empty 200 and
+  names the budget in the error. If you route a reasoning-heavy model
+  through the loop, raise `AGENT_STEP_MAX_TOKENS` (default 700) —
+  `run_test_model.py` defaults it to 3000 for exactly this reason.
+
+**Optional env for the agentic loop:**
+
+```bash
+AGENT_LOOP_MODEL=nemotron-3-super:cloud   # loop only; synthesis/critique unchanged
+AGENT_STEP_MAX_TOKENS=3000                # per-step budget (default 700)
+```
+
 ---
 
 ## Setting up connectors
@@ -482,14 +606,33 @@ single-call — **1/10 vs 3/10** across independent checks. The broader
 "is multi-agent smarter overall" question is still open. Next step
 whenever we return to it: absolute-scoring judge instead of pairwise.
 
+⚠️ **That benchmark is no longer reproducible as written** — the judge
+model `qwen3-coder:480b-cloud` was retired upstream (HTTP 410). Re-running
+it needs a new judge from a different family than the generator;
+`nemotron-3-super:cloud` is the free-tier candidate.
+
 ---
 
 ## Picking this back up
 
-1. Read this file — it's the ground truth as of the last push.
+1. Read this file — it's the ground truth as of the last push — then the
+   **Open problems** section above, which is where the actual work is.
 2. Check `HANDOFF.md` in the repo root — session-level details on
    what was in progress at the end of the previous work day.
-3. Sanity-check: `git status` (uncommitted work), `curl
-   http://127.0.0.1:8000/api/employees` (server up, hierarchy live).
-4. Standing rule: every `push` rewrites this README as a full state
+3. Sanity-check:
+   ```bash
+   git status && py -3 -m pytest test_phase6_fixes.py test_execution_loop.py test_phase5_coverage.py test_memory_recall.py -q
+   ```
+   Expect **77 passing**.
+4. Verify the models are actually alive before trusting any run — the tag
+   list lies:
+   ```bash
+   curl -s -o /dev/null -w "%{http_code}\n" http://localhost:11434/api/generate -d '{"model":"gpt-oss:120b-cloud","prompt":"hi","stream":false}'
+   ```
+5. **Run the server yourself in a terminal.** A background-started server
+   gets reaped between turns, and a stale one on `:8000` silently serves
+   the WRONG code — that nearly produced a fake benchmark result once.
+   Prefer `run_test_model.py`, which runs the pipeline in-process and so
+   cannot have this problem.
+6. Standing rule: every `push` rewrites this README as a full state
    snapshot, not just the changed diff. Keep that going.
