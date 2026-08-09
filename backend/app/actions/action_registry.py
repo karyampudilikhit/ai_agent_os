@@ -308,7 +308,7 @@ def _load_builtins(registry: ActionRegistry) -> None:
     from backend.app.actions.builtin import (
         send_email, post_slack, write_file, read_file, read_inbox, reply_email,
         create_pptx, create_docx, create_xlsx, browser_task, create_github_repo,
-        calculate, arc_game,
+        calculate, arc_game, run_python, fetch_market_data,
     )
     registry.register(send_email.SPEC)
     registry.register(reply_email.SPEC)
@@ -332,3 +332,5 @@ def _load_builtins(registry: ActionRegistry) -> None:
     registry.register(browser_task.BROWSER_SUBMIT_SPEC)
     registry.register(arc_game.ARC_RESET_SPEC)
     registry.register(arc_game.ARC_CLICK_SPEC)
+    registry.register(run_python.SPEC)
+    registry.register(fetch_market_data.SPEC)

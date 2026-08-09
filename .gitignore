@@ -73,3 +73,5 @@ browser_profile/
 # Persisted run history — holds full deliverable text (founder's work
 # product, and whatever the runs pulled off the web). Never source.
 runs.json
+workspace/market_data/
+workspace/python_runs/

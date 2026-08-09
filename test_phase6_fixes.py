@@ -272,6 +272,67 @@ def test_failed_run_can_carry_its_draft() -> None:
     assert "hands the work back" in rec["error"]
 
 
+# ======================================================================
+# The two capabilities Test 1 could not run without
+# ======================================================================
+
+def test_run_python_computes_real_numbers() -> None:
+    """The whole point: prose cannot produce a Sharpe ratio."""
+    from backend.app.actions.action_registry import get_registry
+    out = get_registry().call("action.run_python", {"code": (
+        "import numpy as np, pandas as pd\n"
+        "r = pd.Series([0.01, -0.02, 0.015, 0.004, -0.001])\n"
+        "print(f'mean={r.mean():.4f}')\n"
+    )})
+    assert "mean=0.0016" in out, out
+
+
+def test_run_python_blocks_the_network() -> None:
+    """Fetching belongs to the connectors, where every call is logged and
+    can be checked against a citation. Generated code computes."""
+    from backend.app.actions.action_registry import get_registry
+    out = get_registry().call(
+        "action.run_python", {"code": "import socket; socket.socket()"}
+    )
+    assert "network access is disabled" in out, out
+
+
+def test_run_python_does_not_inherit_credentials() -> None:
+    from backend.app.actions.action_registry import get_registry
+    out = get_registry().call("action.run_python", {"code": (
+        "import os\n"
+        "print(any(k in os.environ for k in "
+        "('TAVILY_API_KEY','OLLAMA_API_KEY','SMTP_PASS','GITHUB_OAUTH_CLIENT_SECRET')))\n"
+    )})
+    assert out.strip().endswith("False"), out
+
+
+def test_run_python_says_so_when_nothing_was_printed() -> None:
+    """A silent success reads as 'it worked' and produces a deliverable
+    with no numbers in it."""
+    from backend.app.actions.action_registry import get_registry
+    out = get_registry().call("action.run_python", {"code": "x = 2 + 2"})
+    assert "printed nothing" in out
+
+
+def test_run_python_marks_a_crash_as_not_run() -> None:
+    """The model must not report intended results from code that died."""
+    from backend.app.actions.action_registry import get_registry
+    out = get_registry().call("action.run_python", {"code": "1/0"})
+    assert "did NOT run successfully" in out
+    assert "ZeroDivisionError" in out
+
+
+def test_market_data_rejects_a_bad_range() -> None:
+    """Validated locally, so a typo costs no network round trip and the
+    error names the valid options."""
+    from backend.app.actions.action_registry import get_registry
+    out = get_registry().call(
+        "action.fetch_market_data", {"symbol": "SPY", "range": "7y"}
+    )
+    assert "not valid" in out and "5y" in out, out
+
+
 if __name__ == "__main__":
     passed = failed = 0
     for name, fn in sorted(list(globals().items())):
