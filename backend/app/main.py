@@ -96,8 +96,19 @@ def _build_adapter(model: str, use_mock: bool) -> Any:
     # failures back as ordinary strings, which is what let a 502 body end
     # up in a founder's deliverable; it raises now, so this fallback has
     # to catch instead of string-match or it would never fire.
+    #
+    # max_tokens=300, not 8. A thinking model (gpt-oss, nemotron) spends
+    # num_predict on <thinking> BEFORE it ever emits "ok" -- with 8 tokens
+    # the probe reliably burned its whole budget on reasoning and got
+    # done_reason="length" with an empty response. The adapter now
+    # correctly raises on that, which means THIS probe started raising
+    # too: a fully healthy Ollama was reported as unreachable and every
+    # request silently fell back to the mock model. Reproduced against a
+    # live, responding daemon. 50 tokens already survived most runs; 300
+    # gives margin against variance in thinking length without adding
+    # meaningful latency (this fires on every request).
     try:
-        adapter.chat_completion("Say 'ok' and nothing else.", max_tokens=8)
+        adapter.chat_completion("Say 'ok' and nothing else.", max_tokens=300)
     except Exception as exc:  # noqa: BLE001
         logging.warning(
             "Ollama unreachable at %s (%s). Falling back to MockAdapter.",

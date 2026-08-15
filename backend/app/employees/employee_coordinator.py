@@ -331,6 +331,59 @@ class EmployeeCoordinator:
                 )
         return "\n\n".join(blocks) if blocks else None
 
+    # Below this, a specialist's own critique score means "this is not
+    # real work" rather than "it's a bit thin". Deliberately looser than
+    # the 0.7 refinement-acceptance gate used elsewhere -- that gate asks
+    # "is this good enough to ship"; this one only asks "did anything
+    # usable happen at all". The two live failures that motivated it (a
+    # bare tool-call-JSON stub, and an explicit "I cannot produce this")
+    # scored 0.05 and 0.0; genuine partial work scores well above this.
+    TEAM_COMPLETENESS_FLOOR = 0.3
+
+    def _team_completeness_warning(self, contributions):
+        """Deterministic disclosure banner for the gap a live test found:
+        two specialists both failed their assigned work and the
+        Supervisor's synthesis produced a confident, polished business
+        report anyway, with nothing telling the founder the underlying
+        research never happened.
+
+        Reads the critique engine's own recorded completeness_score --
+        NOT the Supervisor's prose. A guard that pattern-matches the
+        narrative for a disclaimer is the shape that has failed every
+        time it has been tried in this codebase; a guard that checks a
+        recorded number is the shape that holds.
+
+        Also closes a second gap: synthesize() and _raw_concat() both
+        drop contributions with empty output, so a specialist that
+        returns nothing vanishes without trace. Checked here from the
+        SAME list, before that filtering happens.
+        """
+        failed = []
+        for c in contributions:
+            role = c.get("role") or "Teammate"
+            output = (c.get("output") or "").strip()
+            if not output:
+                failed.append((role, "produced no output at all"))
+                continue
+            crit = c.get("critique") or {}
+            score = crit.get("completeness_score")
+            if score is not None and score < self.TEAM_COMPLETENESS_FLOOR:
+                gaps = crit.get("gaps") or []
+                reason = gaps[0] if gaps else "did not complete the assigned work"
+                failed.append((role, "completeness %.2f/1.0 - %s" % (score, reason)))
+
+        if not failed:
+            return ""
+
+        lines = ["**Team completeness note (%d of %d specialist(s) did not "
+                 "complete their assigned work):**" % (len(failed), len(contributions))]
+        for role, reason in failed:
+            lines.append("- **%s** - %s" % (role, reason))
+        lines.append(
+            "The deliverable below may rely on general knowledge rather than "
+            "the specific research or computation that was actually requested.")
+        return chr(10).join(lines) + chr(10)*2 + "---" + chr(10)*2
+
     def _raw_concat(self, contributions: List[Dict[str, Any]]) -> str:
         parts = []
         for c in contributions:
@@ -493,6 +546,13 @@ class EmployeeCoordinator:
         merged = planner.synthesize(prompt, contributions) if contributions else None
         if not merged:
             merged = self._raw_concat(contributions)
+
+        # Checked against the SAME contributions list synthesize() saw --
+        # not against whatever prose it chose to write. Prepended so it is
+        # the first thing read, not something a founder has to scroll past
+        # a confident report to discover.
+        _warning = self._team_completeness_warning(contributions)
+        merged = (_warning + merged) if _warning else merged
 
         return {
             "team": [self._team_entry(c) for c in contributions],

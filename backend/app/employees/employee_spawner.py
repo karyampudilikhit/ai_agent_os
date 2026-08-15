@@ -62,6 +62,33 @@ Return JSON only:
 JSON only."""
 
 
+# A role NAME that names a file format AND an explicit production noun
+# is staffed for a job the agentic loop cannot perform: create_pdf/docx/
+# pptx/xlsx are all planner_excluded and fire automatically after
+# synthesis. Such a specialist has no path to produce the file, so its
+# only honest move is to ask the founder for assets -- which the
+# Supervisor then repeats as a "provide X" instruction, tripping the
+# hand-back gate on a run that had already shipped a working file.
+#
+# Reproduced live: a self-designed "PDF Production Specialist" did
+# exactly this. Matches on the role NAME only (not the mandate), because
+# role names are short and deliberate per SPAWN_PROMPT's own "1-3 words"
+# rule -- "Report Writer" and "Report Designer", both observed producing
+# real content in live runs, name no format and survive.
+_DOC_FORMAT_WORDS = ("pdf", "docx", "pptx", "xlsx", "powerpoint", "excel", "word doc")
+_DOC_PRODUCTION_ROLE_WORDS = (
+    "production", "producer", "formatting", "formatter", "assembly",
+    "assembler", "generation", "export", "publisher", "publishing",
+    "compiler", "compilation",
+)
+
+
+def _is_redundant_doc_production_role(role):
+    text = (role or "").lower()
+    return (any(w in text for w in _DOC_FORMAT_WORDS)
+            and any(w in text for w in _DOC_PRODUCTION_ROLE_WORDS))
+
+
 class EmployeeSpawner:
     def __init__(self, model_adapter: Any, max_tokens: int = DEFAULT_MAX_TOKENS):
         self.adapter = model_adapter
@@ -88,13 +115,24 @@ class EmployeeSpawner:
             return [self._fallback_generalist(prompt)]
 
         cleaned: List[Dict[str, str]] = []
+        dropped: List[str] = []
         for member in team[:MAX_TEAM_SIZE]:
             if not isinstance(member, dict):
                 continue
             role = str(member.get("role", "")).strip()
             mandate = str(member.get("mandate", "")).strip()
-            if role and mandate:
-                cleaned.append({"role": role, "mandate": mandate})
+            if not (role and mandate):
+                continue
+            if _is_redundant_doc_production_role(role):
+                dropped.append(role)
+                continue
+            cleaned.append({"role": role, "mandate": mandate})
+
+        if dropped:
+            logger.info(
+                "Dropped redundant document-production role(s) %s -- final-format "
+                "file generation is automatic; a specialist staffed for that job "
+                "cannot succeed and will hand back asking for assets.", dropped)
 
         if not cleaned:
             return [self._fallback_generalist(prompt)]

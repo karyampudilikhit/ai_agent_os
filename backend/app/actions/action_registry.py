@@ -307,7 +307,7 @@ def _load_builtins(registry: ActionRegistry) -> None:
     error in one built-in doesn't kill the whole module."""
     from backend.app.actions.builtin import (
         send_email, post_slack, write_file, read_file, read_inbox, reply_email,
-        create_pptx, create_docx, create_xlsx, browser_task, create_github_repo,
+        create_pptx, create_docx, create_xlsx, create_pdf, browser_task, create_github_repo,
         calculate, arc_game, run_python, fetch_market_data,
     )
     registry.register(send_email.SPEC)
@@ -319,6 +319,7 @@ def _load_builtins(registry: ActionRegistry) -> None:
     registry.register(create_pptx.SPEC)
     registry.register(create_docx.SPEC)
     registry.register(create_xlsx.SPEC)
+    registry.register(create_pdf.SPEC)
     registry.register(create_github_repo.SPEC)
     registry.register(calculate.SPEC)
     registry.register(browser_task.BROWSER_TASK_SPEC)

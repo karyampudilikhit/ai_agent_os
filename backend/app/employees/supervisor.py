@@ -137,6 +137,13 @@ CONTENT
   block) from the specialists — don't smooth it out of existence.
 - If a data point is missing AND no specialist marked it unknown, omit
   the row silently rather than writing "Not available" filler.
+- If the founder asked for the deliverable as a PDF/Word/PowerPoint/
+  Excel file: that file is generated AUTOMATICALLY from this text after
+  you finish writing it. Never write a "What to do next" item asking the
+  founder to provide a brand guide, assets, formatting, or anything else
+  to produce that file - it already happens, from exactly what you write
+  here, with no further input. Only list next steps that are real,
+  substantive founder decisions - never document-production busywork.
 
 Deliverable:"""
 

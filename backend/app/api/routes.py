@@ -1791,6 +1791,13 @@ def _dispatch_plan(
 PPTX_TRIGGER_WORDS = ("pptx", "powerpoint", "power point", "slide deck", "pitch deck")
 DOCX_TRIGGER_WORDS = ("docx", "word doc", "word document")
 XLSX_TRIGGER_WORDS = ("xlsx", "excel", "spreadsheet")
+# Missing until a live test asked for "a complete report... deliver the
+# whole thing as a PDF file" and got nothing back: no PDF_TRIGGER_WORDS
+# list existed, so "pdf" matched none of the three lists above and
+# _maybe_generate_document silently did nothing. Verified directly --
+# identical deliverable text produced a real .docx when the task said
+# "docx" and produced '' when it said "pdf".
+PDF_TRIGGER_WORDS = ("pdf",)
 
 
 def _slugify_filename(text: str, max_len: int = 40) -> str:
@@ -1802,7 +1809,7 @@ def _slugify_filename(text: str, max_len: int = 40) -> str:
 def _maybe_generate_document(task: str, final_output: str) -> str:
     """Deterministic post-synthesis conversion — no LLM call. If the
     task text asked for a specific file format, convert the ALREADY
-    -WRITTEN deliverable into a real pptx/docx/xlsx and append a
+    -WRITTEN deliverable into a real pptx/docx/xlsx/pdf and append a
     download link. Returns '' if no format was requested (the common
     case) so callers can blindly append the result.
 
@@ -1810,7 +1817,7 @@ def _maybe_generate_document(task: str, final_output: str) -> str:
     content inside the pre-flight tool-call step produced empty
     placeholder output (see ActionSpec.planner_excluded). Converting
     the finished, properly-reasoned text sidesteps that entirely."""
-    from backend.app.actions.builtin import create_pptx, create_docx, create_xlsx
+    from backend.app.actions.builtin import create_pptx, create_docx, create_xlsx, create_pdf
     from backend.app.actions.builtin._markdown_convert import (
         markdown_to_pptx_slides, markdown_to_xlsx_table,
     )
@@ -1832,6 +1839,12 @@ def _maybe_generate_document(task: str, final_output: str) -> str:
     if any(kw in task_lower for kw in DOCX_TRIGGER_WORDS):
         result = create_docx._handler({
             "filename": f"{base_name}.docx", "title": task[:80], "content": final_output,
+        })
+        notes.append(result)
+
+    if any(kw in task_lower for kw in PDF_TRIGGER_WORDS):
+        result = create_pdf._handler({
+            "filename": f"{base_name}.pdf", "title": task[:80], "content": final_output,
         })
         notes.append(result)
 
