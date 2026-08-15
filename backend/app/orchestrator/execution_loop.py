@@ -120,6 +120,13 @@ DEADLINE_SECONDS = _env_float("AGENT_DEADLINE_SECONDS", 240.0)  # wall-clock
 MAX_OBSERVATION_CHARS = _env_int("AGENT_MAX_OBSERVATION_CHARS", 1500)
 MAX_TRANSCRIPT_CHARS = _env_int("AGENT_MAX_TRANSCRIPT_CHARS", 9000)
 STEP_MAX_TOKENS = _env_int("AGENT_STEP_MAX_TOKENS", 700)
+# How many times to re-attempt a step's model call before giving up on
+# tool use. Ollama cloud 500s at random; without this, one unlucky
+# failure on the step that decides to run the backtest ends tool use for
+# the entire task and the run is then reported as "no computation was
+# ever run" -- blaming the model for an upstream outage.
+STEP_CALL_RETRIES = _env_int("AGENT_STEP_CALL_RETRIES", 3)
+STEP_CALL_RETRY_BACKOFF = float(os.environ.get("AGENT_STEP_CALL_RETRY_BACKOFF", "1.5"))
 
 
 def _loop_adapter(default: Any) -> Any:
@@ -360,21 +367,60 @@ class AgenticExecutor:
                 break
 
             transcript = self._render_transcript(steps)
-            try:
-                raw = self.adapter.chat_completion(
-                    STEP_PROMPT.format(
-                        role=role,
-                        task=task[:1200],
-                        tools_block=tools_block,
-                        transcript=transcript,
-                        steps_used=step_i,
-                        max_steps=self.max_steps,
-                    ),
-                    temperature=0.1,
-                    max_tokens=STEP_MAX_TOKENS,
+            # Retry the step call on a TRANSIENT backend failure instead of
+            # ending the loop.
+            #
+            # Ollama cloud 500s intermittently and at random -- not
+            # correlated with prompt size (verified: 1KB through 64KB all
+            # return 200), not with general availability (five consecutive
+            # short probes returned 200 while a real run was failing). A
+            # single break here meant one unlucky 500 on step 2 -- the call
+            # that decides whether to run the backtest -- silently ended
+            # tool use for the whole task. The run then reported "the task
+            # asked for computed figures but no computation was ever run",
+            # blaming the model for what was an upstream outage. That is the
+            # same failure shape this project keeps hitting: infrastructure
+            # presenting as a behavioural result.
+            #
+            # Bounded and backed off so a genuinely dead backend still ends
+            # the loop quickly rather than burning the time budget.
+            raw = None
+            last_exc = None
+            for attempt in range(STEP_CALL_RETRIES + 1):
+                try:
+                    raw = self.adapter.chat_completion(
+                        STEP_PROMPT.format(
+                            role=role,
+                            task=task[:1200],
+                            tools_block=tools_block,
+                            transcript=transcript,
+                            steps_used=step_i,
+                            max_steps=self.max_steps,
+                        ),
+                        temperature=0.1,
+                        max_tokens=STEP_MAX_TOKENS,
+                    )
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    last_exc = exc
+                    if attempt < STEP_CALL_RETRIES:
+                        delay = STEP_CALL_RETRY_BACKOFF * (2 ** attempt)
+                        logger.warning(
+                            "[%s] agentic step call failed (attempt %d/%d), "
+                            "retrying in %.1fs: %s",
+                            role, attempt + 1, STEP_CALL_RETRIES + 1, delay, exc,
+                        )
+                        time.sleep(delay)
+            if raw is None:
+                logger.warning(
+                    "[%s] agentic step call failed after %d attempts, ending "
+                    "tool use: %s", role, STEP_CALL_RETRIES + 1, last_exc,
                 )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("[%s] agentic step call failed: %s", role, exc)
+                steps.append({"note": (
+                    f"(stopped: the model backend failed {STEP_CALL_RETRIES + 1} "
+                    f"times in a row -- this is an infrastructure failure, not a "
+                    f"decision not to use tools)"
+                )})
                 break
 
             decision = _extract_json(raw) or {}
