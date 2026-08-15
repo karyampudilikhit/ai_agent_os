@@ -9,6 +9,7 @@ a later concern once there's real traffic to justify it.
 from __future__ import annotations
 
 import os
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -1878,17 +1879,18 @@ AUTO_UNIT_MAX_SPECIALISTS = 3
 # Deliberately narrow: these are results you can only get by running
 # something over a dataset, so their presence in the ask plus the
 # absence of any compute call is a provable gap rather than a guess.
-_COMPUTED_METRIC_WORDS = (
-    "sharpe", "cagr", "drawdown", "annualised return", "annualized return",
-    "win rate", "win-rate", "backtest", "back-test", "back‑test",
-    "volatility", "sortino", "alpha", "beta", "correlation matrix",
+# Canonical list now lives in critique/compute_gate.py so the delegation
+# guarantee and this gate can never drift apart.
+from backend.app.critique.compute_gate import (
+    COMPUTED_METRIC_WORDS as _COMPUTED_METRIC_WORDS,
+    COMPUTE_TOOLS as _COMPUTE_TOOLS,
 )
 
-# Tools that can actually produce such a number.
-_COMPUTE_TOOLS = ("run_python", "calculate")
 
 
-def _unused_compute_capability(task: str, output: str) -> Optional[str]:
+
+def _unused_compute_capability(task: str, output: str,
+                               since: Optional[float] = None) -> Optional[str]:
     """Block a deliverable that was asked to COMPUTE something and never
     ran anything.
 
@@ -1914,12 +1916,22 @@ def _unused_compute_capability(task: str, output: str) -> Optional[str]:
         return None
     try:
         from backend.app.tools.tool_call_ledger import get_call_ledger
-        calls = get_call_ledger().calls()
+        # `since` scopes this to THIS run. Without it the query asks
+        # 'has run_python ever run since server start', which one live
+        # run passed on a PREVIOUS run's call while its own text said
+        # 'no backtest executed'.
+        calls = get_call_ledger().calls(since=since)
     except Exception:  # noqa: BLE001
         return None
+    # Dataset metrics accept ONLY run_python: `calculate` evaluates a
+    # single arithmetic expression and cannot derive a Sharpe ratio
+    # from a price series, so accepting it lets a run pass this gate
+    # without ever backtesting anything.
+    from backend.app.critique.compute_gate import DATASET_COMPUTE_TOOLS
     ran = [
         c for c in calls
-        if c.get("ok") and any(t in str(c.get("tool") or "") for t in _COMPUTE_TOOLS)
+        if c.get("ok") and any(t in str(c.get("tool") or "")
+                               for t in DATASET_COMPUTE_TOOLS)
     ]
     if ran:
         return None
@@ -1930,7 +1942,8 @@ def _unused_compute_capability(task: str, output: str) -> Optional[str]:
     )
 
 
-def _gate_deliverable(output: str, task: str = "") -> str:
+def _gate_deliverable(output: str, task: str = "",
+                      since: Optional[float] = None) -> str:
     """Last check before a run is reported as succeeded.
 
     The refinement loop already forces a rewrite when it finds a
@@ -1984,9 +1997,24 @@ def _gate_deliverable(output: str, task: str = "") -> str:
     except Exception:  # noqa: BLE001
         pass
 
-    unused = _unused_compute_capability(task, text)
+    unused = _unused_compute_capability(task, text, since=since)
     if unused:
         problems.append(unused)
+
+    # Asked-for figures that never appear as an actual number. A run
+    # can call run_python, satisfy every provenance guard, and still
+    # ship 'the numbers are in the PDF' with no numbers anywhere.
+    try:
+        from backend.app.critique.compute_gate import missing_metric_values
+        missing = missing_metric_values(task, text)
+        if missing:
+            problems.append(
+                "the deliverable never states a value for: "
+                + ", ".join(missing)
+                + " -- it was asked for these figures and reports none of them"
+            )
+    except Exception:  # noqa: BLE001
+        pass
 
     if not problems:
         return output
@@ -2206,6 +2234,9 @@ def _dispatch_run(
         )
 
         def _company_work():
+            # Scopes the compute gate to this run -- see
+            # ToolCallLedger.calls(since=...) for why.
+            _run_started = time.time()
             result = run_task_on_company(company_id, CompanyRunRequest(task=effective_task))
             # Clear the plan once executed so it doesn't leak into the next task.
             plan_store.clear(PlanStore.key_for(company_id=company_id))
@@ -2214,7 +2245,7 @@ def _dispatch_run(
                 output += _maybe_generate_document(task, output)
             except Exception as exc:  # noqa: BLE001
                 print(f"[warn] document auto-generation failed: {exc}")
-            _gate_deliverable(output, effective_task)
+            _gate_deliverable(output, effective_task, since=_run_started)
             return (output, [e.model_dump() for e in (result.evidence or [])])
 
         submit_run(run_id, _company_work)
@@ -2262,6 +2293,7 @@ def _dispatch_run(
     _task = effective_task
 
     def _unit_work():
+        _run_started = time.time()
         result = run_task_on_team(_sid, RunTaskRequest(task=_task))
         plan_store.clear(PlanStore.key_for(session_id=_sid))
         output = result.final_output or ""
@@ -2269,7 +2301,7 @@ def _dispatch_run(
             output += _maybe_generate_document(task, output)
         except Exception as exc:  # noqa: BLE001
             print(f"[warn] document auto-generation failed: {exc}")
-        _gate_deliverable(output, _task)
+        _gate_deliverable(output, _task, since=_run_started)
         return (output, [e.model_dump() for e in (result.evidence or [])])
 
     submit_run(run_id, _unit_work)

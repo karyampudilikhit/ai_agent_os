@@ -88,9 +88,26 @@ class ToolCallLedger:
 
     # ---- querying ----------------------------------------------------
 
-    def calls(self, tool: Optional[str] = None) -> List[Dict[str, Any]]:
+    def calls(self, tool: Optional[str] = None,
+              since: Optional[float] = None) -> List[Dict[str, Any]]:
+        """`since` is a time.time() cutoff -- only calls recorded at or
+        after it are returned.
+
+        This parameter exists because omitting it was a real,
+        shipped bug. This ledger is a process-global singleton that
+        production deliberately never resets, so an unscoped query
+        answers 'did this tool run since the server started', not
+        'did it run during THIS run'. routes._unused_compute_capability
+        asked the unscoped question: once any single run called
+        run_python, the compute gate passed for every later run
+        forever. Observed live -- a run whose own deliverable said
+        'no backtest executed, Sharpe = unknown' sailed through the
+        gate on a previous run's run_python call.
+        """
         with self._lock:
             out = [dict(c) for c in self._calls]
+        if since is not None:
+            out = [c for c in out if (c.get("at") or 0) >= since]
         if tool:
             out = [c for c in out if c["tool"] == tool or c["tool"].endswith(f".{tool}")]
         return out

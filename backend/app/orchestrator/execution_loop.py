@@ -334,7 +334,8 @@ class AgenticExecutor:
         except Exception as exc:  # noqa: BLE001
             return f"(call failed: {exc})"
 
-    def run(self, task: str, role: str = "Specialist") -> Optional[str]:
+    def run(self, task: str, role: str = "Specialist",
+            original_task: Optional[str] = None) -> Optional[str]:
         task = (task or "").strip()
         if not task:
             return None
@@ -342,7 +343,15 @@ class AgenticExecutor:
         if not tools:
             return None
 
-        tools_block = self._render_tools(tools, task)
+        # Rank against the founder's ORIGINAL wording as well as this
+        # specialist's sub-task. A Supervisor's decomposition strips the
+        # words that make a tool relevant: a sub-task reading "retrieve
+        # the 10-year daily price history" ranked ONLY fetch_market_data
+        # and buried run_python, on a run whose founder-level ask was a
+        # backtest with CAGR/Sharpe/drawdown. Ranking on both keeps the
+        # compute tool visible to whoever ends up needing it.
+        ranking_text = task if not original_task else task + chr(10) + original_task
+        tools_block = self._render_tools(tools, ranking_text)
         known_names = {t["qualified_name"] for t in tools}
         # Tools marked pollable (browser_task_status) are MEANT to be
         # called again with identical arguments while something else

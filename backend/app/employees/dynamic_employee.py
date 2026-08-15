@@ -573,7 +573,7 @@ real one).{web_block}{teammates_block}{history_block}{recalled_block}"""
         if has_mcp or has_http or has_actions:
             try:
                 loop_context = AgenticExecutor(self.pipeline.adapter).run(
-                    task=task, role=self.role,
+                    task=task, role=self.role, original_task=original_task,
                 )
                 if loop_context:
                     web_context_parts.append(loop_context)

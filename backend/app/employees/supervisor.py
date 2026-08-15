@@ -25,6 +25,7 @@ import logging
 import re
 from typing import Any, Dict, List, Optional
 
+from backend.app.critique.compute_gate import ensure_compute_owner
 from backend.app.employees.playbooks import (
     classify_task_type,
     format_rules_for_prompt,
@@ -222,6 +223,11 @@ class SupervisorPlanner:
             cleaned.append(item)
         if not cleaned:
             return self._fallback_plan(task, specialists, task_type)
+        # Mechanical, not advisory: if the founder asked for computed
+        # figures and the decomposition left the computing to nobody,
+        # assign it explicitly. See compute_gate.ensure_compute_owner
+        # for the live failure this fixes.
+        cleaned = ensure_compute_owner(task, cleaned)
         return cleaned
 
     def synthesize(
