@@ -1964,6 +1964,31 @@ def _gate_deliverable(output: str, task: str = "",
     if not text.strip():
         return output
 
+    # An outage is not a bad answer. If the agentic loop gave up because
+    # the model backend was unreachable, say THAT -- do not hand the
+    # founder a critique of a deliverable that never had a chance to be
+    # written. Checked first so it wins over every downstream complaint.
+    try:
+        from backend.app.tools.tool_call_ledger import get_call_ledger
+        outages = [
+            c for c in get_call_ledger().calls(since=since)
+            if c.get("tool") == "backend.unavailable"
+        ]
+    except Exception:  # noqa: BLE001
+        outages = []
+    if outages:
+        from backend.app.chat.async_runs import DeliverableBlocked
+        roles = sorted({str(c.get("role") or "a specialist") for c in outages})
+        raise DeliverableBlocked(
+            "The model backend (Ollama) became unreachable mid-run, so "
+            + ", ".join(roles)
+            + " could not finish its work. This is an infrastructure "
+              "outage, not a problem with the answer -- the run stopped "
+              "early rather than guessing. Re-run it; nothing needs "
+              "changing. The partial draft is kept below.",
+            draft=text,
+        )
+
     problems = []
     try:
         from backend.app.critique.handback_detector import detect_handback

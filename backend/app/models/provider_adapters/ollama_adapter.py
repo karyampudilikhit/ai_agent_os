@@ -3,9 +3,29 @@
 
 import httpx
 import json
+import os
+import random
+import time
 from typing import Dict, Any, Optional
 from datetime import datetime
 import logging
+
+# Ollama cloud returns HTTP 500 intermittently and in bursts. Measured
+# during a live session: five short probes returned 200 while a real run
+# was failing, and prompt size was ruled out (1KB through 64KB all
+# returned 200). One specialist then took FOUR consecutive 500s across 36
+# seconds -- enough to exhaust the agentic loop's own retry and end its
+# tool use entirely, so run_python never ran and the founder was told
+# "no computation was ever run".
+#
+# Retrying HERE rather than at each call site covers every call in the
+# system -- synthesis, critique, task classification, evidence extraction
+# -- not just the loop's step call. Jittered because a team whose
+# specialists all back off in lockstep resends as a thundering herd,
+# which is a plausible contributor to the bursts.
+OLLAMA_HTTP_RETRIES = int(os.environ.get("OLLAMA_HTTP_RETRIES", "2"))
+OLLAMA_HTTP_RETRY_BACKOFF = float(os.environ.get("OLLAMA_HTTP_RETRY_BACKOFF", "2.0"))
+
 
 # Simple error classes for standalone operation
 class ErrorCode:
@@ -91,13 +111,28 @@ class OllamaAdapter:
                 }
             }
             
-            # Make API call
-            response = self.client.post(
-                f"{self.base_url}/api/generate",
-                json=payload,
-                timeout=kwargs.get("timeout", 300.0)
-            )
-            
+            # Make API call. Transient 5xx are retried here so a burst of
+            # backend errors doesn't surface as a content failure; every
+            # other status falls through to the handling below unchanged.
+            response = None
+            for _attempt in range(OLLAMA_HTTP_RETRIES + 1):
+                response = self.client.post(
+                    f"{self.base_url}/api/generate",
+                    json=payload,
+                    timeout=kwargs.get("timeout", 300.0)
+                )
+                if response.status_code < 500:
+                    break
+                if _attempt < OLLAMA_HTTP_RETRIES:
+                    delay = OLLAMA_HTTP_RETRY_BACKOFF * (2 ** _attempt)
+                    delay += random.uniform(0, delay * 0.25)  # jitter
+                    logging.getLogger(__name__).warning(
+                        "Ollama HTTP %s (attempt %d/%d), retrying in %.1fs",
+                        response.status_code, _attempt + 1,
+                        OLLAMA_HTTP_RETRIES + 1, delay,
+                    )
+                    time.sleep(delay)
+
             # Parse response
             if response.status_code == 200:
                 response_data = response.json()

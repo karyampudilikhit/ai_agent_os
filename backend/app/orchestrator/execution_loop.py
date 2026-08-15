@@ -425,6 +425,24 @@ class AgenticExecutor:
                     "[%s] agentic step call failed after %d attempts, ending "
                     "tool use: %s", role, STEP_CALL_RETRIES + 1, last_exc,
                 )
+                # Record it as a fact this run can be judged against.
+                # Without this the run proceeds to synthesis, reports
+                # 'unknown', and the founder is told their AI handed the
+                # work back -- when the real cause was the model backend
+                # being unreachable. Same lesson as everywhere else here:
+                # an infrastructure failure must not present as a
+                # behavioural one.
+                try:
+                    from backend.app.tools.tool_call_ledger import get_call_ledger
+                    get_call_ledger().record(
+                        "backend.unavailable",
+                        {"role": role, "attempts": STEP_CALL_RETRIES + 1},
+                        ok=False,
+                        result_preview=str(last_exc)[:400],
+                        role=role,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
                 steps.append({"note": (
                     f"(stopped: the model backend failed {STEP_CALL_RETRIES + 1} "
                     f"times in a row -- this is an infrastructure failure, not a "
