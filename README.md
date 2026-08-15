@@ -74,7 +74,7 @@ approves, Units + specialists auto-hire).
 | **Verification / no-fabrication** | ✅ live — critique/refine loop, measured working (multi-agent 1/10 vs single-call 3/10 in the independent-judge benchmarks). |
 | **Agentic execution loop** | ✅ live — `orchestrator/execution_loop.py`, THINK → ACT → OBSERVE, bounded (10 steps / 240s / repeat-guard). Replaced the old single-shot `MCPPlanner` that picked 4 tools blind before seeing any result. This is what makes dependent work possible ("read the file, then email the person named in it"). `AGENT_LOOP_MODEL` routes the loop to a different model than synthesis/critique; `AGENT_STEP_MAX_TOKENS` (default 700) sizes each step. |
 | **Browser automation** | ✅ live, including inside the agentic loop. Real visible Chrome, persistent profile, founder logs in themselves (no password ever enters the codebase). Async dispatch via `action.browser_task_async` + pollable status. Screenshot-on-failure, consent-banner dismissal, classified open-failures. **One shared Playwright instance on one dedicated thread** — never start/stop per session, and marshal all `Page`/`Locator` access through `run_on_browser_thread()`. |
-| **Compute + real market data** | ✅ live — `action.run_python` (separate isolated interpreter, wall-clock timeout, scratch cwd, sockets disabled, credentials stripped) and `action.fetch_market_data`. Verified composing on real data end to end **through the agentic loop**: SPY daily bars → SMA-50/200 crossover → **CAGR 11.26%, Sharpe 0.9329, MaxDD −18.76%**, computed by executed code and carried into the deliverable with a citation to the execution step. ⚠️ Reaches this outcome in **2 of 4** valid runs — see "Open problems" #1. |
+| **Compute + real market data** | ✅ live — `action.run_python` (separate isolated interpreter, wall-clock timeout, scratch cwd, sockets disabled, credentials stripped) and `action.fetch_market_data`. Verified composing on real data end to end **through the agentic loop**: SPY daily bars → SMA-50/200 crossover → **CAGR 11.26%, Sharpe 0.9329, MaxDD −18.76%**, computed by executed code and carried into the deliverable with a citation to the execution step. ⚠️ Reaches this outcome in **2 of 4** valid runs — see "Open problems" #1. ⚠️ **Solo only.** As of 2026-08-15 the *team* path has never produced real computed numbers (0 of 5) while the solo path is 2 of 2 — see "Open problems" §0. |
 | **Guard layer (record-checking)** | ✅ live and load-bearing. `SourceLedger` (asks the network "was this URL actually fetched?" — caught 2 fabricated citations), `ToolCallLedger` + `claim_checker` (asks the call log "was this value ever sent?" — caught a deliverable blaming a `game_id` the run never sent), per-tool consecutive-failure guard, argument type validation, refinement-can't-ship-a-worse-draft, DONE-challenge when a specialist quits with ≤1 successful call, and `_gate_deliverable` — **detection can fail a run**, not merely force a rewrite, with the draft preserved on the failed record. |
 | **Model dependency** | 🔴 **single point of failure.** Only `gpt-oss:120b-cloud` and `nemotron-3-super:cloud` are alive on the free Ollama tier. `qwen3-coder:480b` and `deepseek-v3.1:671b` were **retired upstream 2026-07-15 and now return HTTP 410** — they still appear in `/api/tags`, so a run looks healthy right up to the first model call. The current top-tier cloud models (`kimi-k2.7-code`, `deepseek-v4-pro`, `glm-5.2`, `minimax-m2.7`) all return **HTTP 403 — paid subscription required**. If `gpt-oss:120b-cloud` retires the same way, the product stops working with no warning. |
 | **Playbook library (premium output on weaker models)** | ✅ live — Supervisor classifies each task (`validation`, `research`, `writing`, `analysis`, `strategy`, `general`), pulls task-specific quality rules ("mark unknown," "cite verbatim," "prove absence," adversarial paragraph, etc.), and composes a task-tailored briefing for each specialist. This is the mechanism that closes ~70% of the gap vs premium hosted models on local `gpt-oss:120b` — output quality moved from 6.5/10 → 7.5/10 in the validation-task A/B. Reflection-loop-driven mutations of the playbook are Phase 2. |
@@ -92,7 +92,8 @@ approves, Units + specialists auto-hire).
 | **Vision Desktop Agent (full-system access)** | ❌ scoped, not yet built. Small Python/Electron daemon on the founder's machine, WebSocket to the backend, screenshot + click + type + allow-listed shell + arbitrary-folder file access with per-app approval on first use. Next major layer after the action MVP. |
 | **Company / CEO UI (org tree Canvas, universal chat router)** | ✅ live — Phase 3b rewrote the flow to be prompt-first. No mode toggle, no "create company" form, no "design hierarchy" textarea. Everything runs through **one** chat input. A universal router (`POST /api/chat`, backed by `UniversalChatRouter` in `backend/app/chat/`) sees the current selection state and classifies each message into one of: `create_company` (extracts name + purpose + auto-designs the hierarchy in the same turn), `design_hierarchy`, `apply_proposal` (say "yes" / "apply"), `discard_proposal`, `add_unit` (extends an existing Company with one new Unit — designed by the CEO to not duplicate existing scope, materialized immediately), `run_task_company` (kicked off in the background — chat returns in seconds with a `run_id` and the client polls `/api/runs/{id}` until done), `run_task_unit` (same async pattern; auto-creates a Unit if none is selected, so a founder who just says "run X" doesn't hit a dead-end), `casual_chat`. The proposal renders inline in the chat reply — the founder just types "yes" to hire everyone. Right sidebar keeps the Company selector + purpose + Unit count as **read-only status**. Middle panel has an **Org** tab that renders the full tree (CEO node on top, Unit cards below with Supervisor + specialists inside). Canvas auto-follows the router's selection (new Unit created → Canvas loads its team). |
 | **Memory system** | ✅ live at `backend/app/memory/`. Two tiers over the persisted `RunStore`: `memory_manager.py` recalls past **successful** deliverables, `mistake_repository.py` recalls past **failures**, both ranked by `retrieval.py` (Okapi BM25, dependency-free — no vector store, because a network call on the recall path is a new way to fail confidently and buys nothing at a 200-run corpus). Recall is deliberately conservative: a document must clear a normalized coverage threshold **and** match ≥2 discriminating terms, because a loose match hands an employee plausible material for a question it doesn't answer. Wired into `_build_clarifier_context` (relevance-matched deliverables of any age, alongside the recency feed) and `DynamicEmployee.build_objective` (cross-run recall, so a specialist can see work a *different* specialist did on an earlier run). Calibration was set from probing real run history, not from constructed fixtures — two false-positive classes only appeared there. Tests: `test_memory_recall.py`. |
-| **Test coverage** | ⚠️ partial — 19 test files; the core four (`test_phase6_fixes` + `test_execution_loop` + `test_phase5_coverage` + `test_memory_recall`) are **77 passing**. Covered: execution loop, browser automation (14 tests), memory recall (17), and as of Phase 5 the four subsystems that had nothing (`test_phase5_coverage.py`, 24 tests): the chat router's never-dead-end contract, the approval queue's **reject** path (approve was exercised constantly in development, reject never was), citation verification incl. the Phase 3a multi-URL and 3b DOI-paren regressions, and the connector layer incl. the security property that undeclared args are dropped rather than rerouted to the query string. Still uncovered: synthesis, critique/refinement loop, the clarifier's question-dropping heuristics. |
+| **Outage resilience** | ✅ live as of 2026-08-15 — three layers. (1) `ollama_adapter` retries HTTP 5xx with jittered exponential backoff on **every** call in the system. (2) `execution_loop` records `backend.unavailable` in the `ToolCallLedger` when it gives up, so the gate reports an **outage** rather than critiquing a deliverable that never had a chance to be written. (3) `employee_coordinator` re-runs a **single** dead specialist (1 retry each, 2 per run, 5s delay) when the ledger shows the backend died during its turn — and refuses to retry when there is no such record, so a genuine refusal is never looped. See Open problems §0. |
+| **Test coverage** | ⚠️ partial — 20 test files; the core five (`test_phase6_fixes` + `test_execution_loop` + `test_phase5_coverage` + `test_memory_recall` + `test_specialist_outage_retry`) are **82 passing**. Covered: execution loop, browser automation (14 tests), memory recall (17), and as of Phase 5 the four subsystems that had nothing (`test_phase5_coverage.py`, 24 tests): the chat router's never-dead-end contract, the approval queue's **reject** path (approve was exercised constantly in development, reject never was), citation verification incl. the Phase 3a multi-URL and 3b DOI-paren regressions, and the connector layer incl. the security property that undeclared args are dropped rather than rerouted to the query string. Still uncovered: synthesis, critique/refinement loop, the clarifier's question-dropping heuristics. |
 | **Deploy** | ❌ **not deployed.** `fly.toml` names `neutron-ai`; the app was never created and the name is unclaimed. Needs: `fly auth login`, a globally-unique app name, `fly volumes create data`, secrets (`OLLAMA_HOST`, `OLLAMA_API_KEY`, `TAVILY_API_KEY`), `fly deploy`. The Dockerfile was **broken for browser work** until Phase 5 — it pip-installed `playwright` but never ran `playwright install`, so Chromium would have been absent and every browser task would have failed in production while passing locally; now fixed with `--with-deps chromium`. Open risk: `memory = "512mb"` is likely too small for headless Chromium, and an OOM presents as the machine restarting mid-run rather than as a browser error. |
 | **AI hierarchy — Phase 2b** | ❌ deferred: multiple Teams per Unit + persistent CEO memory. |
 | **User accounts / auth** | ❌ deferred until we're ready to host. |
@@ -101,12 +102,79 @@ approves, Units + specialists auto-hire).
 
 ## Open problems (read this before planning work)
 
+### 0. The team path is less reliable than one specialist (2026-08-15)
+
+**This is now the #1 open problem, and it displaced the one below.**
+
+Seven runs on 2026-08-15. The two that delivered real computed numbers
+were both **single-specialist**; all five **team** runs failed, and no two
+failed the same way. Full write-up:
+`Vision_AI_Run_Failure_Incident_Report.pdf` (built from server logs, not
+from prose). Six distinct defects were found, in three families:
+
+| | Defect | Family | Status |
+|---|---|---|---|
+| D1 | Ollama cloud returns HTTP 500 in bursts (≥11 in a 25-min window; four consecutive 500s killed one specialist's whole turn) | infrastructure | absorbed, not fixable by us |
+| D2 | Nobody was assigned to do the computation — Supervisor split fetch → design → write-up and the backtest belonged to no one | decomposition | ✅ fixed |
+| D3 | Tool ranking ran on the Supervisor's *paraphrase*, so the Data Engineer was offered `fetch_market_data` and nothing else — `run_python` wasn't deprioritised, it was **not offered** | decomposition | ✅ fixed |
+| D4 | Compute gate queried the process-global ledger **unscoped**, so it passed on a *previous* run's `run_python`. After the first success in any server session it was effectively disabled | guard bug | ✅ fixed |
+| D5 | A run passed every guard and stated no numbers at all — "the figures are in the PDF at `<path>`", and the path did not exist | guard bug | ✅ fixed |
+| D6 | `calculate` (single-expression AST walker) counted as evidence a backtest ran | guard bug | ✅ fixed |
+
+**The framing that matters:** four of the six were infrastructure faults
+or bugs in the guards themselves — not the model failing to do the work.
+
+**Why teams fail where solo works** — three penalties compound:
+
+1. **~4× the model calls** (~20–30 vs ~5–8, estimated from log volume)
+   against a backend that fails randomly. More calls means a higher
+   chance the one *critical* call — the decision to run the backtest —
+   is the one that dies.
+2. **Decomposition can orphan a required step** (D2). One specialist,
+   one prompt, no seams.
+3. **Specialists cannot hand files to each other.** There is no shared
+   artifact convention, so they *guess* filenames (`data.csv`,
+   `chosen_etf.txt`, `market_analysis.json`). In one run a specialist
+   that could not find its input **emailed
+   `dataengineer@example.com`** asking a colleague who does not exist.
+   That is a correct inference from the role fiction it was given, with
+   no mechanism behind it.
+
+**Fixed since (all on this branch, `178505f` → HEAD):**
+
+- Adapter-level 5xx retry with jittered backoff, so **every** call
+  survives a blip — not just the agentic loop's step call.
+- Outages are reported **as outages**. `execution_loop` records
+  `backend.unavailable` in the ledger when it gives up; the deliverable
+  gate checks that first and says "the backend became unreachable,
+  re-run it" instead of critiquing a draft that never had a chance.
+- **Turn-level recovery** (`employee_coordinator.py`): a specialist that
+  produces nothing *and* has a recorded `backend.unavailable` in its turn
+  is **re-run alone** — not the whole team, not the roles that already
+  succeeded. Bounded: 1 retry per specialist, 2 per run, 5s delay
+  (the 500s arrive in bursts, so retrying instantly hits the same one).
+  No ledger evidence → **no retry**, so a genuine refusal is never
+  looped. Tests: `test_specialist_outage_retry.py`.
+- `ledger.calls(since=…)` + run-start timestamps, so the compute gate
+  asks about *this* run.
+- Substance check: a requested metric must appear **with an actual
+  number** in the prose (fenced code stripped first — source code is a
+  claim about what *would* be computed).
+- Compute ownership assigned mechanically, weighted so it lands on the
+  Quant Analyst rather than the Data Engineer.
+
+**Still open, in priority order:** an artifact-passing convention with a
+per-run manifest (kills the filename guessing *and* the invented
+colleagues at the root); verifying that a file a deliverable references
+actually exists; auditability (tool-call args are truncated to ~110–300
+chars, so verifying *what* ran means inferring from output).
+
 ### 1. It was never tool SELECTION — it's premature DONE
 
-**Status as of 2026-08-09: diagnosed, not yet fixed.** The old framing
-("the planner refuses to call `run_python`; is it scaffolding or the
-model?") is **falsified**. Both the model hypothesis and the
-tool-ranking hypothesis are dead.
+**Status as of 2026-08-09: diagnosed.** Superseded in priority by §0
+above, but the analysis stands. The old framing ("the planner refuses to
+call `run_python`; is it scaffolding or the model?") is **falsified**.
+Both the model hypothesis and the tool-ranking hypothesis are dead.
 
 Measured with `run_test_model.py` — 11 runs, of which **7 were
 invalidated** by Ollama cloud HTTP 500s and 4 were valid:
@@ -621,9 +689,9 @@ it needs a new judge from a different family than the generator;
    what was in progress at the end of the previous work day.
 3. Sanity-check:
    ```bash
-   git status && py -3 -m pytest test_phase6_fixes.py test_execution_loop.py test_phase5_coverage.py test_memory_recall.py -q
+   git status && py -3 -m pytest test_phase6_fixes.py test_execution_loop.py test_phase5_coverage.py test_memory_recall.py test_specialist_outage_retry.py -q
    ```
-   Expect **77 passing**.
+   Expect **82 passing**.
 4. Verify the models are actually alive before trusting any run — the tag
    list lies:
    ```bash

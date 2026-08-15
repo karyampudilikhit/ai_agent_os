@@ -20,6 +20,7 @@ the API/CLI (which asks *what did the team produce*).
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 from backend.app.critique.evidence_extractor import EvidenceExtractor
@@ -37,6 +38,29 @@ TEAMMATE_SUMMARY_CHARS = 2000  # bound how much of each teammate's PROSE is quot
 # and losing it is what made downstream specialists invent data.
 TEAMMATE_FACTS_CHARS = 5000
 TOTAL_FACTS_CHARS = 12000  # ceiling across all teammates, so the prompt stays bounded
+
+# One dead specialist should cost the run 40 seconds, not the whole run.
+#
+# THE FAILURE THIS FIXES, observed live. The Quant Analyst took four
+# consecutive HTTP 500s from Ollama cloud across 36 seconds, the agentic
+# loop exhausted its own retry budget and ended tool use, and the
+# specialist returned nothing. Every downstream role then had no numbers
+# to work with, and the founder was told the team "did not complete its
+# assigned work" -- for a task the team was perfectly capable of, on a
+# day the backend was dropping a fraction of requests in bursts.
+#
+# The adapter already retries INSIDE a single call. That does not help
+# when the whole turn is lost, because the loop gives up and the
+# coordinator moves on to the next role with a hole where the work
+# should be. This is the recovery at the turn level.
+#
+# Bounded three ways: one retry per specialist, a budget across the whole
+# run so a genuinely dead backend cannot triple the wall-clock, and a
+# delay before re-running because the 500s arrive in bursts -- retrying
+# instantly is the most likely moment to hit the same burst.
+SPECIALIST_OUTAGE_RETRIES = 1
+SPECIALIST_OUTAGE_RETRY_BUDGET = 2
+SPECIALIST_RETRY_DELAY = 5.0
 
 
 def _successful_call_count() -> int:
@@ -363,7 +387,21 @@ class EmployeeCoordinator:
             role = c.get("role") or "Teammate"
             output = (c.get("output") or "").strip()
             if not output:
-                failed.append((role, "produced no output at all"))
+                # An outage is not a refusal. Saying "produced no output
+                # at all" for a specialist whose model backend was
+                # unreachable reads as the AI declining the work, and
+                # sends the founder looking for a prompt problem that
+                # does not exist. Same rule the deliverable gate follows:
+                # infrastructure failures must not present as behavioural
+                # ones.
+                if c.get("blocked_by_outage"):
+                    failed.append((role,
+                                   "never ran - the model backend was unreachable "
+                                   "for its whole turn, including a retry. This is "
+                                   "an infrastructure outage, not a refusal; "
+                                   "re-running usually clears it"))
+                else:
+                    failed.append((role, "produced no output at all"))
                 continue
             crit = c.get("critique") or {}
             score = crit.get("completeness_score")
@@ -392,6 +430,33 @@ class EmployeeCoordinator:
                 continue
             parts.append(f"## {c.get('role') or 'Teammate'}\n\n{out}")
         return "\n\n---\n\n".join(parts)
+
+    def _outage_during(self, since: float) -> bool:
+        """Did the model backend go unreachable during this window?
+
+        Reads the RECORDED fact -- execution_loop writes a
+        `backend.unavailable` ledger entry when it gives up on a step
+        call -- rather than sniffing the specialist's text for words like
+        "error" or "unavailable". Every text-matching guard tried in this
+        codebase has failed; every ledger-backed one has held.
+
+        Deliberately NOT filtered by role. Specialists run sequentially
+        here, so anything recorded inside one specialist's turn belongs to
+        that specialist (same reasoning as `_successful_call_count`), and
+        matching on the role string would silently stop working the first
+        time a role name is rewritten between the plan and the loop.
+
+        Never raises: failing to read the receipt must not fail the run,
+        and returning False simply means no retry rather than a wrong one.
+        """
+        try:
+            from backend.app.tools.tool_call_ledger import get_call_ledger
+            return any(
+                c.get("tool") == "backend.unavailable"
+                for c in get_call_ledger().calls(since=since)
+            )
+        except Exception:  # noqa: BLE001
+            return False
 
     def _team_entry(self, contribution: Dict[str, Any]) -> Dict[str, Any]:
         crit = contribution.get("critique") or {}
@@ -511,6 +576,7 @@ class EmployeeCoordinator:
         by_role = {s.role: s for s in specialists}
 
         contributions: List[Dict[str, Any]] = []
+        outage_retries_left = SPECIALIST_OUTAGE_RETRY_BUDGET
         for assignment in plan:
             role = assignment.get("role")
             sub_task = assignment.get("sub_task") or prompt
@@ -523,12 +589,51 @@ class EmployeeCoordinator:
                 try: on_role_working(role)
                 except Exception: pass  # noqa: BLE001
             logger.info("Supervisor delegating '%s' to %s", sub_task[:60], role)
-            result = employee.run_task(
-                sub_task,
-                teammates_context=teammates_context,
-                task_brief=task_brief,
-                original_task=effective_founder_task,
-            )
+
+            def _run_turn():
+                return employee.run_task(
+                    sub_task,
+                    teammates_context=teammates_context,
+                    task_brief=task_brief,
+                    original_task=effective_founder_task,
+                )
+
+            turn_started = time.time()
+            result = _run_turn()
+
+            # Re-run THIS specialist only -- not the whole team, and not
+            # the roles that already succeeded. `teammates_context` is
+            # deliberately not recomputed: nothing was appended to
+            # `contributions`, so the retry sees exactly the inputs the
+            # first attempt saw.
+            retries_used = 0
+            while (
+                retries_used < SPECIALIST_OUTAGE_RETRIES
+                and outage_retries_left > 0
+                and not (result.get("output") or "").strip()
+                and self._outage_during(turn_started)
+            ):
+                retries_used += 1
+                outage_retries_left -= 1
+                logger.warning(
+                    "[%s] produced nothing and the model backend was recorded "
+                    "unavailable during its turn - re-running this specialist "
+                    "alone in %.0fs (retry %d, %d left for this run)",
+                    role, SPECIALIST_RETRY_DELAY, retries_used, outage_retries_left,
+                )
+                time.sleep(SPECIALIST_RETRY_DELAY)
+                turn_started = time.time()
+                result = _run_turn()
+
+            # Distinguish "the backend was down" from "this specialist
+            # failed", so the disclosure banner can tell the founder which
+            # one happened instead of blaming the work either way.
+            if not (result.get("output") or "").strip() and self._outage_during(turn_started):
+                result["blocked_by_outage"] = True
+            elif retries_used:
+                logger.info("[%s] recovered after %d outage retry(ies)", role, retries_used)
+                result["recovered_after_outage"] = True
+
             # Track under the specialist's role name for progress/UI
             result["role"] = role
             contributions.append(result)
