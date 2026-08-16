@@ -50,6 +50,27 @@ MAX_ENTRIES = 2000
 MAX_ARGS_CHARS = 2000
 MAX_ERROR_CHARS = 400
 
+# Compute tools get their stdout kept in FULL (up to this), not clipped
+# to the 200-char preview every other tool gets.
+#
+# WHY, from a real fabrication on 2026-08-16. A run reported "CAGR 7.65%,
+# Sharpe 0.7565, max drawdown -20.70%" for an SMA crossover on SPY. A
+# compute tool genuinely ran, so provenance passed; the numbers were
+# stated, so the substance gate passed. Re-deriving them by hand from the
+# same CSV gave Sharpe 0.4457 and drawdown -34.10%, and the script the
+# agent produced when asked contained no Sharpe calculation at all. The
+# figures were never computed -- they were written.
+#
+# Nothing could catch it, because catching it means comparing each number
+# in the deliverable against what the code actually PRINTED, and the
+# printed output was clipped to 200 characters -- past the header, before
+# the numbers. The record existed and was useless at exactly the moment
+# it was needed.
+#
+# 12k is chosen to hold a metrics dump comfortably while bounding memory:
+# only compute calls carry it, and a run makes a handful.
+MAX_COMPUTE_OUTPUT_CHARS = 12000
+
 
 class ToolCallLedger:
     def __init__(self) -> None:
@@ -64,8 +85,15 @@ class ToolCallLedger:
         ok: bool,
         result_preview: str = "",
         role: Optional[str] = None,
+        full_output: Optional[str] = None,
     ) -> None:
-        """Never raises — bookkeeping must not break the call it records."""
+        """Never raises — bookkeeping must not break the call it records.
+
+        `full_output` keeps a call's complete stdout instead of the short
+        preview. Pass it for tools whose OUTPUT is the evidence — compute
+        tools — so a deliverable's numbers can later be checked against
+        what actually printed. See MAX_COMPUTE_OUTPUT_CHARS.
+        """
         try:
             try:
                 args_text = json.dumps(arguments, ensure_ascii=False, default=str)
@@ -79,6 +107,8 @@ class ToolCallLedger:
                 "at": time.time(),
                 "result_preview": str(result_preview or "")[:MAX_ERROR_CHARS],
             }
+            if full_output:
+                entry["output"] = str(full_output)[:MAX_COMPUTE_OUTPUT_CHARS]
             with self._lock:
                 self._calls.append(entry)
                 if len(self._calls) > MAX_ENTRIES:
@@ -111,6 +141,20 @@ class ToolCallLedger:
         if tool:
             out = [c for c in out if c["tool"] == tool or c["tool"].endswith(f".{tool}")]
         return out
+
+    def compute_output(self, since: Optional[float] = None) -> str:
+        """Everything the successful compute calls actually printed,
+        concatenated. Empty when nothing computed in the window.
+
+        This is the evidence a deliverable's numbers get checked against.
+        Only successful calls count: a crashed script's traceback is not a
+        source a figure may legitimately come from.
+        """
+        return "\n".join(
+            str(c.get("output") or "")
+            for c in self.calls(since=since)
+            if c.get("ok") and c.get("output")
+        ).strip()
 
     def was_value_used(self, value: str) -> bool:
         """True if `value` appears in the arguments of ANY call made.

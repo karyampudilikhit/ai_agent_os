@@ -140,13 +140,25 @@ class ToolRegistry:
         # failed: ...)" as TEXT rather than raising, so success cannot be
         # inferred from the absence of an exception.
         try:
+            from backend.app.critique.compute_gate import DATASET_COMPUTE_TOOLS
             from backend.app.tools.tool_call_ledger import get_call_ledger
             text = str(result)
+            # A compute tool's OUTPUT is the evidence, so it is kept whole
+            # rather than clipped to the 200-char preview. Clipping it hid
+            # a real fabrication: the numbers a deliverable reported could
+            # not be compared against what the code printed, because the
+            # print was cut off before reaching them. See
+            # MAX_COMPUTE_OUTPUT_CHARS in tool_call_ledger.
+            is_compute = any(
+                qualified_name.endswith(f".{name}") or qualified_name == name
+                for name in DATASET_COMPUTE_TOOLS
+            )
             get_call_ledger().record(
                 qualified_name,
                 arguments,
                 ok=not text.lstrip().startswith("(call failed"),
                 result_preview=text[:200],
+                full_output=text if is_compute else None,
             )
         except Exception:  # noqa: BLE001
             pass  # bookkeeping must never break the call it records

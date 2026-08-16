@@ -255,3 +255,113 @@ def missing_metric_values(task: str, output: str) -> List[str]:
         if not any(has_value(alias) for alias in group):
             missing.append(group[0])
     return missing
+
+
+# ---------------------------------------------------------------------
+# Do the stated numbers TRACE to what the code actually printed?
+# ---------------------------------------------------------------------
+#
+# The third failure class, and the one the other two gates cannot see.
+#
+#   provenance  -- did a compute tool run?           _unused_compute_capability
+#   substance   -- are numbers stated at all?        missing_metric_values
+#   correctness -- are they THE numbers it computed?  <- this
+#
+# Observed 2026-08-16. A run reported "CAGR 7.65%, Sharpe 0.7565, max
+# drawdown -20.70%" for a 50/200 SMA crossover on SPY. run_python
+# genuinely ran and real figures appeared, so both gates above passed.
+# Re-deriving from the same CSV gave Sharpe 0.4457 and drawdown -34.10%
+# under every variant tried -- and the script the agent produced when
+# asked for its code contained no Sharpe calculation anywhere, used 20/50
+# windows over 5 years rather than 50/200 over 10, and applied none of
+# the costs it quoted. The numbers were not computed. They were written.
+#
+# A founder acting on a fabricated Sharpe ratio is the worst thing this
+# system can produce, and it is worse than a loud failure precisely
+# because it arrives dressed as success.
+
+_NUMBER_RE = re.compile(r"[-+]?\d[\d,]*(?:\.\d+)?")
+
+
+def _numbers_in(text: str) -> List[float]:
+    out: List[float] = []
+    for m in _NUMBER_RE.finditer(text or ""):
+        try:
+            out.append(float(m.group(0).replace(",", "")))
+        except ValueError:
+            continue
+    return out
+
+
+def _traceable(claimed: str, candidates: List[float]) -> bool:
+    """Does a claimed figure match something the code printed?
+
+    Deliberately forgiving, because accusing a truthful deliverable is
+    far worse than missing one -- the same bias SourceLedger takes.
+    Three allowances, none of which lets a wrong number through:
+
+      - ROUNDING. Tolerance is half the claimed value's last decimal
+        place, so "7.65" matches a printed 7.6523.
+      - SCALE. A percentage may be printed as a fraction, so 7.65 also
+        matches 0.0765.
+      - SIGN. Drawdown is printed positive about as often as negative,
+        so magnitudes are compared.
+
+    What it does not forgive is a figure that appears nowhere at any
+    scale -- which is what a fabricated number looks like.
+    """
+    try:
+        value = float(claimed.replace(",", ""))
+    except ValueError:
+        return True  # unparseable: do not accuse
+    decimals = len(claimed.split(".")[1]) if "." in claimed else 0
+    tol = 0.5 * (10.0 ** -decimals)
+    mag = abs(value)
+    variants = ((mag, tol), (mag / 100.0, tol / 100.0), (mag * 100.0, tol * 100.0))
+    for cand in candidates:
+        a = abs(cand)
+        if any(abs(a - v) <= t + 1e-12 for v, t in variants):
+            return True
+    return False
+
+
+def untraceable_metric_values(task: str, output: str,
+                              computed_text: str) -> List[str]:
+    """Figures the deliverable states that appear nowhere in the compute
+    tool's real output, formatted as "metric = value".
+
+    Returns [] when `computed_text` is empty: with nothing captured there
+    is nothing to check against, and the provenance gate already covers
+    "nothing ever computed". Never accuse on absence of evidence.
+    """
+    if not (computed_text or "").strip():
+        return []
+
+    ask = (task or "").lower()
+    body = _prose_only(output)
+    printed = _numbers_in(computed_text)
+    if not printed:
+        return []
+
+    bad: List[str] = []
+    for group in METRIC_VALUE_GROUPS:
+        if not any(alias in ask for alias in group):
+            continue
+        for alias in group:
+            found = False
+            for m in re.finditer(re.escape(alias), body, re.IGNORECASE):
+                window = body[m.end(): m.end() + 60]
+                if any(mk in window.lower() for mk in _NO_VALUE_MARKERS):
+                    continue
+                num = _NUMBER_RE.search(window)
+                if not num:
+                    continue
+                found = True
+                if not _traceable(num.group(0), printed):
+                    claim = "%s = %s" % (group[0], num.group(0).strip())
+                    if claim not in bad:
+                        bad.append(claim)
+                break  # the first stated value for this alias is enough
+            if found:
+                break
+    return bad
