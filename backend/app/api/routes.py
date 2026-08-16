@@ -78,6 +78,10 @@ from backend.app.employees.supervisor import SupervisorPlanner, default_supervis
 from backend.app.employees.team_store import TeamStore
 from backend.app.employees.company_store import CompanyStoreError
 from backend.app.employees.company_store import get_store as get_company_store
+from backend.app.employees.employee_config import (
+    EmployeeConfigError,
+    resolve_with_provenance,
+)
 from backend.app.employees.employee_registry import EmployeeRegistryError
 from backend.app.employees.employee_registry import get_registry as get_employee_registry
 from backend.app.tools.http_tool_store import HTTPToolStoreError
@@ -635,6 +639,7 @@ def _employee_to_response(spec: dict) -> EmployeeResponse:
         tags=list(spec.get("tags", [])),
         is_supervisor=bool(spec.get("is_supervisor", False)),
         created_at=spec.get("created_at"),
+        config=spec.get("config") or {},
     )
 
 
@@ -664,7 +669,10 @@ def create_employee(req: EmployeeCreateRequest) -> EmployeeResponse:
             mandate=req.mandate,
             is_supervisor=req.is_supervisor,
             tags=req.tags,
+            config=req.config.model_dump(exclude_unset=True) if req.config else None,
         )
+    except EmployeeConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except EmployeeRegistryError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _employee_to_response(spec)
@@ -672,13 +680,35 @@ def create_employee(req: EmployeeCreateRequest) -> EmployeeResponse:
 
 @router.patch("/employees/{employee_id}", response_model=EmployeeResponse)
 def update_employee(employee_id: str, req: EmployeeUpdateRequest) -> EmployeeResponse:
+    # exclude_unset, NOT exclude_none. An explicit null means "clear this
+    # setting back to inherited", and exclude_none cannot tell that apart
+    # from "field not sent" -- so a founder could set a value but never
+    # un-set it. The flat-field loop in EmployeeRegistry.update already
+    # skips None, so this does not change role/mandate/tags behaviour.
+    patch = req.model_dump(exclude_unset=True)
     try:
-        spec = get_employee_registry().update(
-            employee_id, req.model_dump(exclude_none=True)
-        )
+        spec = get_employee_registry().update(employee_id, patch)
+    except EmployeeConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except EmployeeRegistryError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return _employee_to_response(spec)
+
+
+@router.get("/employees/{employee_id}/effective-config")
+def employee_effective_config(employee_id: str) -> Dict[str, Any]:
+    """Every setting this employee actually runs with, and WHERE each
+    came from — default, role template, or set on the employee.
+
+    Without provenance an Advanced panel is a wall of blank boxes: a
+    founder cannot tell an unset field from one deliberately set to the
+    same value as the default, nor see which employees are inheriting a
+    desk-wide rule.
+    """
+    spec = get_employee_registry().get(employee_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail=f"No Employee with id {employee_id!r}.")
+    return {"employee_id": employee_id, "settings": resolve_with_provenance(spec)}
 
 
 @router.delete("/employees/{employee_id}")
@@ -2037,6 +2067,26 @@ def _gate_deliverable(output: str, task: str = "",
                 "the deliverable never states a value for: "
                 + ", ".join(missing)
                 + " -- it was asked for these figures and reports none of them"
+            )
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Figures that ARE stated but appear nowhere in what the code
+    # actually printed. The gate above proves a number is PRESENT; this
+    # one proves it was COMPUTED. A run cleared both checks above while
+    # reporting a Sharpe ratio its own script had no code to calculate --
+    # see compute_gate.untraceable_metric_values for that run.
+    try:
+        from backend.app.critique.compute_gate import untraceable_metric_values
+        from backend.app.tools.tool_call_ledger import get_call_ledger
+        computed_text = get_call_ledger().compute_output(since=since)
+        untraceable = untraceable_metric_values(task, text, computed_text)
+        if untraceable:
+            problems.append(
+                "these figures appear nowhere in what the code actually "
+                "printed: " + "; ".join(untraceable)
+                + " -- a compute tool did run, but these are not the numbers "
+                "it produced, so they cannot be trusted"
             )
     except Exception:  # noqa: BLE001
         pass

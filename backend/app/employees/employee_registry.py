@@ -54,6 +54,23 @@ def _now_iso() -> str:
     return datetime.utcnow().isoformat()
 
 
+# Config validation and merging live in employee_config, imported lazily
+# so this module stays a plain record store: employee_config reaches into
+# the orchestrator for its budget defaults, and the registry has no
+# business pulling the whole execution loop in just to read a JSON file.
+def _validate_config(patch: Dict[str, Any]) -> Dict[str, Any]:
+    from backend.app.employees.employee_config import validate
+    out = validate(patch)
+    if out:
+        out["updated_at"] = _now_iso()
+    return out
+
+
+def _merge_config(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
+    from backend.app.employees.employee_config import merge_config
+    return merge_config(base, patch)
+
+
 class EmployeeRegistryError(Exception):
     pass
 
@@ -91,10 +108,19 @@ class EmployeeRegistry:
             return None
         try:
             with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                spec = json.load(f)
         except (json.JSONDecodeError, OSError) as exc:
             logger.warning("Could not read employee %s: %s", employee_id, exc)
             return None
+        # Lazy, READ-TIME ONLY migration. Every record written before
+        # per-employee config existed has 7 keys and no `config`; giving
+        # it an empty one here means it resolves to exactly today's
+        # behaviour. Deliberately not persisted -- rewriting ~40 files on
+        # first read would churn the whole registry to record that
+        # nothing has been configured.
+        if isinstance(spec, dict):
+            spec.setdefault("config", {})
+        return spec
 
     def _write(self, spec: Dict[str, Any]) -> None:
         path = self._path(spec["id"])
@@ -118,6 +144,7 @@ class EmployeeRegistry:
         is_supervisor: bool = False,
         tags: Optional[List[str]] = None,
         employee_id: Optional[str] = None,
+        config: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Create a new Employee record. Returns the persisted spec.
         Pass `employee_id` to adopt a legacy id (used during migration
@@ -140,6 +167,7 @@ class EmployeeRegistry:
                 "tags": list(tags or []),
                 "is_supervisor": bool(is_supervisor),
                 "created_at": _now_iso(),
+                "config": _validate_config(config or {}),
             }
             self._write(spec)
             return dict(spec)
@@ -188,7 +216,7 @@ class EmployeeRegistry:
 
     def update(self, employee_id: str, patch: Dict[str, Any]) -> Dict[str, Any]:
         """Partial update on mutable fields (role, mandate, tags,
-        is_supervisor). id and created_at are immutable."""
+        is_supervisor, config). id and created_at are immutable."""
         with self._lock:
             spec = self._read(employee_id)
             if not spec:
@@ -196,6 +224,18 @@ class EmployeeRegistry:
             for field in ("role", "mandate", "tags", "is_supervisor"):
                 if field in patch and patch[field] is not None:
                     spec[field] = patch[field]
+            # `config` gets its own branch because it MERGES rather than
+            # replaces. Assigning it wholesale would let a UI that sends
+            # only {"collaboration": "solo"} silently wipe the founder's
+            # required_outputs and every budget they had set -- a
+            # settings page that quietly discards settings is worse than
+            # no settings page. A leaf of None deletes the key, which is
+            # how "clear this back to inherit" is expressed over JSON.
+            if "config" in patch and patch["config"] is not None:
+                spec["config"] = _merge_config(
+                    spec.get("config") or {},
+                    _validate_config(patch["config"]),
+                )
             if "role" in patch:
                 spec["avatar_seed"] = _slugify(spec["role"])
             self._write(spec)

@@ -18,6 +18,11 @@ import logging
 from typing import Optional
 
 from backend.app.employees.employee import Employee
+from backend.app.employees.employee_config import (
+    ResolvedConfig,
+    format_domain_rules,
+    resolve,
+)
 from backend.app.employees.memory_store import EmployeeMemoryStore
 from backend.app.orchestrator.execution_loop import AgenticExecutor
 from backend.app.orchestrator.pipeline_controller import Pipeline
@@ -37,6 +42,34 @@ _web_search = TavilySearchTool()
 _web_fetch = WebFetchTool()
 _reddit = RedditReader()
 _deep_research = DeepResearchTool()
+
+
+class _PromptVars(dict):
+    """Renders an unknown {placeholder} as itself instead of raising.
+
+    A founder's prompt override is free text. If it contains {ticker} or
+    a stray brace from pasted JSON, `format_map` would raise KeyError
+    mid-run and fail the task — punishing them at execution time for an
+    edit that looked fine when saved.
+    """
+
+    def __missing__(self, key: str) -> str:
+        return "{" + key + "}"
+
+
+def _resolve_config(employee_id: str) -> ResolvedConfig:
+    """This employee's settings, or today's defaults if it has none.
+
+    Falls back cleanly for the legacy `session_id__role_slug` ids that
+    predate the registry — those employees are real and must keep
+    working, they simply have nothing configured.
+    """
+    try:
+        from backend.app.employees.employee_registry import get_registry
+        return resolve(get_registry().get(employee_id) or {})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("config lookup failed for %s, using defaults: %s", employee_id, exc)
+        return resolve({})
 
 # Competitor/comparison-shaped tasks get a deep multi-page site crawl
 # instead of a flat single-page fetch — a subset of web_search's
@@ -105,6 +138,7 @@ class DynamicEmployee(Employee):
         pipeline: Pipeline,
         memory_store: Optional[EmployeeMemoryStore] = None,
         min_tier: Optional[str] = None,
+        config: Optional["ResolvedConfig"] = None,
     ):
         super().__init__(employee_id=employee_id, pipeline=pipeline, memory_store=memory_store)
         # Instance-level overrides of the class attributes:
@@ -112,6 +146,12 @@ class DynamicEmployee(Employee):
         self.mandate = mandate
         if min_tier:
             self.min_tier = min_tier
+        # Belt and braces: config can never be silently absent. The
+        # spawner normally resolves and passes it, but this class is
+        # constructed directly in tests and scripts, and an employee
+        # running with no config at all would silently lose its budgets
+        # and its output contract.
+        self.config = config if config is not None else _resolve_config(employee_id)
 
     def build_objective(
         self,
@@ -192,22 +232,66 @@ class DynamicEmployee(Employee):
             if task_brief
             else ""
         )
+        cfg = self.config
+
+        # Standing rules for this employee, rendered right after the
+        # mandate so they read as part of who this specialist is rather
+        # than as advice about one task.
+        rules_block = (
+            "\n\nSTANDING RULES FOR YOUR WORK — they apply to every task:\n"
+            + format_domain_rules(cfg.domain_rules)
+            if cfg.domain_rules
+            else ""
+        )
+
+        # The runtime blocks are DATA, not persona, so they are appended
+        # outside the override. An employee that cannot see its fetched
+        # pages or its teammates' work is broken, not customized.
+        appended = f"{web_block}{teammates_block}{history_block}{recalled_block}"
+
+        if cfg.prompt_override:
+            # Full override, nothing protected — including the
+            # anti-fabrication paragraph. That is a deliberate product
+            # decision, and a test asserts the paragraph is genuinely
+            # gone so nobody "fixes" it back later.
+            #
+            # Worth knowing what this does NOT do: the mechanical guards
+            # (compute gate, number-provenance check, source ledger,
+            # hand-back detector) read the ledger, not the prompt, and
+            # are unaffected by anything written here.
+            #
+            # format_map over a defaulting dict so an unknown {foo} in a
+            # founder's template renders literally instead of raising
+            # mid-run — a KeyError here would fail the task, not the edit.
+            persona = cfg.prompt_override.format_map(_PromptVars({
+                "role": self.role,
+                "mandate": self.mandate,
+                "task": task,
+                "domain_rules": format_domain_rules(cfg.domain_rules),
+                "lane": cfg.lane_text,
+            }))
+            # The one structural guard, and it is not a content guard: an
+            # override that forgets {task} would hand the employee no
+            # task at all. Appending it is a footgun with no upside to
+            # preserve; refusing to save the edit would be.
+            if "{task}" not in cfg.prompt_override:
+                persona += f"\n\nTask the whole team is working on:\n{task}"
+            return f"{brief_block}{persona}{appended}"
+
         return f"""{brief_block}You are the {self.role} on this project team.
 
 Your mandate — what only you are responsible for:
-{self.mandate}
+{self.mandate}{rules_block}
 
 Task the whole team is working on:
 {task}
 
-Do the part of this task that belongs to your role, and only your part.
-If a piece of the task belongs to a different role on this team, say so
-briefly and skip it — do not do work outside your mandate.
+{cfg.lane_text}
 
 Do not fabricate specific statistics, survey results, or claims that
 work has already been completed. If you don't know a real number,
 describe things qualitatively (unless the web results below give you a
-real one).{web_block}{teammates_block}{history_block}{recalled_block}"""
+real one).{appended}"""
 
     # Cheap LLM gate deciding whether a task genuinely needs external /
     # current data before we fire Tavily. The benchmark exposed the bug
@@ -572,7 +656,14 @@ real one).{web_block}{teammates_block}{history_block}{recalled_block}"""
         has_actions = bool(_get_actions().known_names())
         if has_mcp or has_http or has_actions:
             try:
-                loop_context = AgenticExecutor(self.pipeline.adapter).run(
+                loop_context = AgenticExecutor(
+                    self.pipeline.adapter,
+                    max_steps=self.config.max_steps,
+                    deadline_seconds=self.config.deadline_seconds,
+                    step_max_tokens=self.config.step_max_tokens,
+                    required_outputs=self.config.required_outputs,
+                    standing_rules=self.config.domain_rules,
+                ).run(
                     task=task, role=self.role, original_task=original_task,
                 )
                 if loop_context:

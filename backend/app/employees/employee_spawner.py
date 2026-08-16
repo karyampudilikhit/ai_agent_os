@@ -167,17 +167,33 @@ class EmployeeSpawner:
         registry-backed TeamStore, so this same Employee's memory file
         is what the task run reads/writes to. Falls back to the legacy
         `session_id__role_slug` for ad-hoc spec dicts that don't carry
-        an id (e.g. a fresh design_team() output not yet persisted)."""
+        an id (e.g. a fresh design_team() output not yet persisted).
+
+        This is the only production construction site of DynamicEmployee,
+        which makes it the one seam per-employee config has to flow
+        through. An employee built anywhere else resolves its own config
+        from the registry (see DynamicEmployee.__init__), so a missing
+        lookup here degrades to defaults rather than to nothing."""
+        from backend.app.employees.employee_config import resolve
+        from backend.app.employees.employee_registry import get_registry
+
+        registry = get_registry()
         employees: List[DynamicEmployee] = []
         for member in team_spec:
             eid = member.get("employee_id") or (
                 f"{session_id}__{self._slugify(member['role'])}"
             )
+            try:
+                config = resolve(registry.get(eid) or {})
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("config lookup failed for %s: %s", eid, exc)
+                config = resolve({})
             employees.append(DynamicEmployee(
                 employee_id=eid,
                 role=member["role"],
                 mandate=member["mandate"],
                 pipeline=pipeline,
+                config=config,
             ))
         return employees
 

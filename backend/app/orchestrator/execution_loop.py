@@ -51,13 +51,38 @@ import logging
 import os
 import re
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from backend.app.actions.action_registry import get_registry as get_action_registry
+from backend.app.critique.compute_gate import (
+    DATASET_COMPUTE_TOOLS,
+    task_requires_computation,
+)
+from backend.app.orchestrator.output_contract import (
+    EXECUTED_CODE,
+    REFUSAL_TEXT,
+    unsatisfied_kinds,
+)
 from backend.app.tools.http_tool_runner import HTTPToolRunner
 from backend.app.tools.tool_registry import get_registry as get_tool_registry
 
 logger = logging.getLogger(__name__)
+
+# The loop sees NAMESPACED tool names ("action.run_python"); compute_gate
+# names the bare tools. Derived rather than written out twice so adding a
+# compute tool in one place cannot silently fail to register in the other
+# -- this codebase has been bitten repeatedly by one list living in two
+# files and drifting apart.
+DATASET_COMPUTE_TOOLS_QUALIFIED = tuple(
+    f"action.{name}" for name in DATASET_COMPUTE_TOOLS
+)
+
+# How many times DONE may be refused for missing computation before the
+# loop lets the specialist stop anyway. Refusing forever would trap a
+# specialist whose data is genuinely unusable in an argument until the
+# step budget is gone, burning quota to reach the same failure -- and
+# _gate_deliverable still fails the run truthfully either way.
+MAX_DONE_REFUSALS = 3
 
 # _http_runner / _action_registry are kept as module-level singletons
 # (not just imported inline) because a few things still reach into them
@@ -176,7 +201,7 @@ def _loop_adapter(default: Any) -> Any:
 STEP_PROMPT = """You are {role}, working on a task. You can call tools one at a time.
 After each call you SEE the result, then decide the next action. Work
 step by step until the task is genuinely done.
-
+{standing_rules}
 YOUR TASK:
 "{task}"
 
@@ -236,10 +261,19 @@ class AgenticExecutor:
         model_adapter: Any,
         max_steps: int = MAX_STEPS,
         deadline_seconds: float = DEADLINE_SECONDS,
+        step_max_tokens: int = STEP_MAX_TOKENS,
+        required_outputs: Sequence[str] = (),
+        standing_rules: Sequence[str] = (),
     ):
+        # Every one of these is defaulted, so `AgenticExecutor(adapter)`
+        # anywhere else in the repo -- and in every test -- behaves
+        # exactly as it did before per-employee config existed.
         self.adapter = _loop_adapter(model_adapter)
         self.max_steps = max_steps
         self.deadline_seconds = deadline_seconds
+        self.step_max_tokens = step_max_tokens
+        self.required_outputs = tuple(required_outputs or ())
+        self.standing_rules = tuple(standing_rules or ())
 
     # ---- tool surface -------------------------------------------------
 
@@ -366,8 +400,59 @@ class AgenticExecutor:
         repeat_counts: Dict[Any, int] = {}  # how often each call has been repeated
         consecutive_failures: Dict[str, int] = {}  # per-tool failure streak
         successful_calls = 0   # real work done, used to challenge an early DONE
+        succeeded_tools: set = set()  # qualified names that returned without error
+        computed = False       # a compute tool ran AND printed something
         done_challenged = False
+        done_refusals = 0      # times DONE was refused for missing computation
         acted = False
+
+        # What must this turn actually CONTAIN before DONE is accepted?
+        #
+        # Two independent sources, ORed. The employee's own contract says
+        # what this role always owes; the task text says what this
+        # particular ask needs. Union, never intersection -- configuring
+        # an employee must not be able to WEAKEN a requirement the task
+        # itself established, or a settings page becomes a way to switch
+        # the guards off.
+        required = set(self.required_outputs)
+        if task_requires_computation(ranking_text):
+            # Computed from the same text the tools were ranked on, so the
+            # founder's original wording counts even when the Supervisor's
+            # paraphrase dropped the metric names.
+            required.add(EXECUTED_CODE)
+        needs_compute = EXECUTED_CODE in required
+
+        # Standing rules reach the LOOP, not just the prose writer.
+        #
+        # This is the half that matters for correctness. "Always use
+        # adjusted close", "execute on T+1, never same-bar", "252 trading
+        # days" are rules about the CODE the loop writes -- and until now
+        # the loop saw only `role` and `task`, never the employee's
+        # mandate. A domain rule that reaches build_objective alone
+        # arrives after the arithmetic is already wrong.
+        standing_block = ""
+        if self.standing_rules:
+            standing_block = (
+                "\nSTANDING RULES FOR YOUR WORK — they apply to every task and\n"
+                "override generic guidance. Follow them in the code you write:\n"
+                + "\n".join(f"- {r}" for r in self.standing_rules)
+                + "\n"
+            )
+
+        # Scoped to THIS loop, so a file written by an earlier run cannot
+        # satisfy this turn's file_written contract. Same lesson as the
+        # compute gate's `since=` parameter: the ledger is a process-wide
+        # singleton, and an unscoped query answers the wrong question.
+        loop_started = time.time()
+
+        def _ledger_calls() -> List[Dict[str, Any]]:
+            """Never raises: a missing receipt must not break the loop, and
+            an empty list simply means a kind stays unsatisfied."""
+            try:
+                from backend.app.tools.tool_call_ledger import get_call_ledger
+                return get_call_ledger().calls(since=loop_started)
+            except Exception:  # noqa: BLE001
+                return []
 
         for step_i in range(self.max_steps):
             if time.monotonic() > deadline:
@@ -405,9 +490,10 @@ class AgenticExecutor:
                             transcript=transcript,
                             steps_used=step_i,
                             max_steps=self.max_steps,
+                            standing_rules=standing_block,
                         ),
                         temperature=0.1,
-                        max_tokens=STEP_MAX_TOKENS,
+                        max_tokens=self.step_max_tokens,
                     )
                     break
                 except Exception as exc:  # noqa: BLE001
@@ -455,6 +541,52 @@ class AgenticExecutor:
             thought = str(decision.get("thought") or "").strip()
 
             if not action or action.upper() == "DONE":
+                # REFUSE a DONE that leaves a required output unproduced.
+                #
+                # Checked BEFORE the advisory challenge below, and it is a
+                # different kind of thing: the challenge asks the model to
+                # reconsider and accepts whatever it says next; this one
+                # queries a RECORDED FACT -- did a compute tool really
+                # succeed, was a page really fetched, does the file really
+                # exist -- and will not accept DONE while one is missing.
+                #
+                # THE FAILURE THIS FIXES, seen live on 2026-08-15. Asked to
+                # backtest SPY and report CAGR/Sharpe/max drawdown, the
+                # Quant Analyst called fetch_market_data at step 1, then
+                # returned DONE at step 2. The challenge fired, the model
+                # said DONE again, and the loop conceded -- having computed
+                # nothing, with 8 steps still unused and run_python ranked
+                # FIRST in its tool list. The deliverable then reported no
+                # figures at all.
+                #
+                # This is the shape this codebase keeps relearning: a
+                # single advisory challenge is a prompt rule wearing a
+                # guard's clothes. Guards that query a record hold; guards
+                # that ask the model to think again do not.
+                #
+                # Bounded so a specialist that genuinely cannot compute
+                # (bad data, tool broken) is not trapped arguing until the
+                # step budget is gone -- after MAX_DONE_REFUSALS it is let
+                # go, and _gate_deliverable still fails the run honestly.
+                missing_kinds = unsatisfied_kinds(
+                    required, succeeded_tools, computed, _ledger_calls(),
+                ) if required else []
+                if (
+                    missing_kinds
+                    and done_refusals < MAX_DONE_REFUSALS
+                    and step_i + 1 < self.max_steps
+                ):
+                    done_refusals += 1
+                    logger.warning(
+                        "[%s] refused DONE at step %d - required output(s) not "
+                        "produced yet: %s (refusal %d/%d)",
+                        role, step_i + 1, ", ".join(missing_kinds),
+                        done_refusals, MAX_DONE_REFUSALS,
+                    )
+                    for kind in missing_kinds:
+                        steps.append({"note": REFUSAL_TEXT[kind]})
+                    continue
+
                 # Challenge a DONE that arrives with nothing achieved.
                 #
                 # A prompt rule was tried first and did not hold: a Game
@@ -573,6 +705,12 @@ class AgenticExecutor:
             else:
                 consecutive_failures[action] = 0
                 successful_calls += 1
+                succeeded_tools.add(action)
+                if (
+                    action in DATASET_COMPUTE_TOOLS_QUALIFIED
+                    and _computation_produced_output(result)
+                ):
+                    computed = True
 
         _release_browser_sessions(role)
 
@@ -667,7 +805,35 @@ def _call_failed(result: Any) -> bool:
         "(invalid tool name",
         "(not an action tool",
         "(could not enqueue",
+        # run_python does NOT use the parenthesised marker -- it hands
+        # back the traceback whole, on purpose, so the model can fix its
+        # own code. That made a crashed script read as a successful call
+        # everywhere this function is consulted: the degenerate-sweep
+        # guard never fired on broken Python, and it counted toward
+        # `successful_calls`, which is what the DONE-challenge measures.
+        "python exited with code",
     ))
+
+
+def _computation_produced_output(result: Any) -> bool:
+    """True when a compute call actually returned a computed figure.
+
+    Stricter than "the call did not fail", because two run_python
+    outcomes are technically successful and have still computed nothing
+    the deliverable can quote:
+
+      - the script crashed (caught by `_call_failed` above);
+      - the script ran and printed nothing, which run_python reports
+        explicitly. Exit code 0, no number anywhere.
+
+    Letting either satisfy the required-outputs gate would rebuild D6 in
+    a new place -- a run passing "yes, it computed" on a call that
+    produced no number.
+    """
+    text = str(result or "").strip().lower()
+    if not text or _call_failed(result):
+        return False
+    return not text.startswith("python ran successfully but printed nothing")
 
 
 def _truncate(text: str, limit: int) -> str:

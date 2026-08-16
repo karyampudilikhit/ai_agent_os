@@ -93,7 +93,8 @@ approves, Units + specialists auto-hire).
 | **Company / CEO UI (org tree Canvas, universal chat router)** | ✅ live — Phase 3b rewrote the flow to be prompt-first. No mode toggle, no "create company" form, no "design hierarchy" textarea. Everything runs through **one** chat input. A universal router (`POST /api/chat`, backed by `UniversalChatRouter` in `backend/app/chat/`) sees the current selection state and classifies each message into one of: `create_company` (extracts name + purpose + auto-designs the hierarchy in the same turn), `design_hierarchy`, `apply_proposal` (say "yes" / "apply"), `discard_proposal`, `add_unit` (extends an existing Company with one new Unit — designed by the CEO to not duplicate existing scope, materialized immediately), `run_task_company` (kicked off in the background — chat returns in seconds with a `run_id` and the client polls `/api/runs/{id}` until done), `run_task_unit` (same async pattern; auto-creates a Unit if none is selected, so a founder who just says "run X" doesn't hit a dead-end), `casual_chat`. The proposal renders inline in the chat reply — the founder just types "yes" to hire everyone. Right sidebar keeps the Company selector + purpose + Unit count as **read-only status**. Middle panel has an **Org** tab that renders the full tree (CEO node on top, Unit cards below with Supervisor + specialists inside). Canvas auto-follows the router's selection (new Unit created → Canvas loads its team). |
 | **Memory system** | ✅ live at `backend/app/memory/`. Two tiers over the persisted `RunStore`: `memory_manager.py` recalls past **successful** deliverables, `mistake_repository.py` recalls past **failures**, both ranked by `retrieval.py` (Okapi BM25, dependency-free — no vector store, because a network call on the recall path is a new way to fail confidently and buys nothing at a 200-run corpus). Recall is deliberately conservative: a document must clear a normalized coverage threshold **and** match ≥2 discriminating terms, because a loose match hands an employee plausible material for a question it doesn't answer. Wired into `_build_clarifier_context` (relevance-matched deliverables of any age, alongside the recency feed) and `DynamicEmployee.build_objective` (cross-run recall, so a specialist can see work a *different* specialist did on an earlier run). Calibration was set from probing real run history, not from constructed fixtures — two false-positive classes only appeared there. Tests: `test_memory_recall.py`. |
 | **Outage resilience** | ✅ live as of 2026-08-15 — three layers. (1) `ollama_adapter` retries HTTP 5xx with jittered exponential backoff on **every** call in the system. (2) `execution_loop` records `backend.unavailable` in the `ToolCallLedger` when it gives up, so the gate reports an **outage** rather than critiquing a deliverable that never had a chance to be written. (3) `employee_coordinator` re-runs a **single** dead specialist (1 retry each, 2 per run, 5s delay) when the ledger shows the backend died during its turn — and refuses to retry when there is no such record, so a genuine refusal is never looped. See Open problems §0. |
-| **Test coverage** | ⚠️ partial — 20 test files; the core five (`test_phase6_fixes` + `test_execution_loop` + `test_phase5_coverage` + `test_memory_recall` + `test_specialist_outage_retry`) are **82 passing**. Covered: execution loop, browser automation (14 tests), memory recall (17), and as of Phase 5 the four subsystems that had nothing (`test_phase5_coverage.py`, 24 tests): the chat router's never-dead-end contract, the approval queue's **reject** path (approve was exercised constantly in development, reject never was), citation verification incl. the Phase 3a multi-URL and 3b DOI-paren regressions, and the connector layer incl. the security property that undeclared args are dropped rather than rerouted to the query string. Still uncovered: synthesis, critique/refinement loop, the clarifier's question-dropping heuristics. |
+| **Per-employee configuration** | ✅ live as of 2026-08-16 — click any employee in the Canvas or Org tree and configure how it behaves. **Collaboration posture** (team / flexible / solo) makes the previously-hardcoded "do only your part" instruction a setting, and auto-promotes `team`→`flexible` when the employee owes a required output — that contradiction is what made a Data Engineer refuse the compute gate three times. **Required outputs** (`executed_code` / `fetched_url` / `file_written`) let a role own a guarantee instead of re-earning it from the task wording each run; `file_written` stats the disk. **Standing domain rules** reach the *agentic loop*, not just the prose writer — the loop never saw an employee's mandate before, so a rule about the code arrived after the arithmetic was already wrong. Plus per-employee step / time / token budgets and a **full prompt override with nothing protected** (a deliberate product decision — the ledger-based guards run outside the prompt and are unaffected). Storage: a nested `config` dict on the registry record, merged not replaced, with `null` meaning "clear back to inherit". `GET /api/employees/{id}/effective-config` returns every setting with its provenance. Role templates + per-employee override are designed and stubbed; increment 2. |
+| **Test coverage** | ⚠️ partial — 26 test files; the canonical suite is **152 passing** (`test_phase6_fixes` + `test_execution_loop` + `test_phase5_coverage` + `test_memory_recall` + `test_specialist_outage_retry` + `test_done_refusal` + `test_number_provenance` + `test_ollama_empty_retry` + `test_output_contract` + `test_employee_config` + `test_dynamic_employee_prompt`). Covered: execution loop, browser automation (14 tests), memory recall (17), and as of Phase 5 the four subsystems that had nothing (`test_phase5_coverage.py`, 24 tests): the chat router's never-dead-end contract, the approval queue's **reject** path (approve was exercised constantly in development, reject never was), citation verification incl. the Phase 3a multi-URL and 3b DOI-paren regressions, and the connector layer incl. the security property that undeclared args are dropped rather than rerouted to the query string. Still uncovered: synthesis, critique/refinement loop, the clarifier's question-dropping heuristics. |
 | **Deploy** | ❌ **not deployed.** `fly.toml` names `neutron-ai`; the app was never created and the name is unclaimed. Needs: `fly auth login`, a globally-unique app name, `fly volumes create data`, secrets (`OLLAMA_HOST`, `OLLAMA_API_KEY`, `TAVILY_API_KEY`), `fly deploy`. The Dockerfile was **broken for browser work** until Phase 5 — it pip-installed `playwright` but never ran `playwright install`, so Chromium would have been absent and every browser task would have failed in production while passing locally; now fixed with `--with-deps chromium`. Open risk: `memory = "512mb"` is likely too small for headless Chromium, and an OOM presents as the machine restarting mid-run rather than as a browser error. |
 | **AI hierarchy — Phase 2b** | ❌ deferred: multiple Teams per Unit + persistent CEO memory. |
 | **User accounts / auth** | ❌ deferred until we're ready to host. |
@@ -163,11 +164,50 @@ or bugs in the guards themselves — not the model failing to do the work.
 - Compute ownership assigned mechanically, weighted so it lands on the
   Quant Analyst rather than the Data Engineer.
 
+**D7 — the third failure class, found 2026-08-16.** A run reported
+"CAGR 7.65%, Sharpe 0.7565, max drawdown −20.70%" for an SMA crossover on
+SPY. `run_python` genuinely ran and real figures appeared, so **both
+existing gates passed**. Re-deriving from the same CSV gave Sharpe 0.4457
+and drawdown −34.10% under all eight variants tried; the script the agent
+supplied when asked for its code contained **no Sharpe calculation at
+all**, used 20/50 windows over 5 years instead of 50/200 over 10, and
+applied none of the costs it quoted. The numbers were never computed —
+they were written.
+
+Nothing could catch it, because catching it means comparing each figure
+against what the code actually *printed*, and `tool_registry` clipped
+every result to 200 characters — past the header, before the numbers.
+
+So there are now **three** gates, each asking a different question:
+
+| Gate | Question | Where |
+|---|---|---|
+| provenance | did a compute tool run? | `routes._unused_compute_capability` |
+| substance | are numbers stated at all? | `compute_gate.missing_metric_values` |
+| **correctness** | **are they the numbers it computed?** | `compute_gate.untraceable_metric_values` |
+
+The correctness gate matches every claimed figure against the compute
+tool's real stdout (now kept whole, `MAX_COMPUTE_OUTPUT_CHARS`), forgiving
+rounding, percent-vs-fraction scale, and sign — but not a number that
+appears nowhere at any scale. Run-scoped, same lesson as D4.
+
+**Also fixed since:** `run_python` reports failure as prose ("Python
+exited with code 1…") which `_call_failed` did not recognise, so a
+**crashed script counted as a successful call** system-wide — the
+degenerate-sweep guard never fired on broken Python and it counted toward
+the DONE-challenge tally. And the adapter now retries an **empty HTTP
+200** with a *larger token budget* rather than the same request again:
+the cause is reasoning consuming `num_predict` before `response` gets
+any, so an identical retry reproduces it. Fires on `done_reason='stop'`,
+not just `'length'` — the live failure that motivated it reported `stop`.
+
 **Still open, in priority order:** an artifact-passing convention with a
 per-run manifest (kills the filename guessing *and* the invented
 colleagues at the root); verifying that a file a deliverable references
-actually exists; auditability (tool-call args are truncated to ~110–300
-chars, so verifying *what* ran means inferring from output).
+actually exists (the `file_written` output contract does this per-turn,
+but the deliverable gate does not); DONE refusals consuming the step
+budget (a Quant Analyst spent 3 of 5 steps arguing); role templates and
+the management tier from the config plan (increment 2).
 
 ### 1. It was never tool SELECTION — it's premature DONE
 
@@ -689,9 +729,9 @@ it needs a new judge from a different family than the generator;
    what was in progress at the end of the previous work day.
 3. Sanity-check:
    ```bash
-   git status && py -3 -m pytest test_phase6_fixes.py test_execution_loop.py test_phase5_coverage.py test_memory_recall.py test_specialist_outage_retry.py -q
+   git status && py -3 -m pytest test_phase6_fixes.py test_execution_loop.py test_phase5_coverage.py test_memory_recall.py test_specialist_outage_retry.py test_done_refusal.py test_number_provenance.py test_ollama_empty_retry.py test_output_contract.py test_employee_config.py test_dynamic_employee_prompt.py -q
    ```
-   Expect **82 passing**.
+   Expect **152 passing**.
 4. Verify the models are actually alive before trusting any run — the tag
    list lies:
    ```bash

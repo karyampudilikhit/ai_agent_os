@@ -220,11 +220,49 @@ class HTTPToolListResponse(BaseModel):
 
 # --- Hierarchy: Employee registry + Company (Phase 1 of AI hierarchy) ---
 
+class EmployeeBudget(BaseModel):
+    """Per-employee limits on the agentic loop. Every field optional:
+    absent inherits, explicit null clears back to inheriting."""
+
+    max_steps: Optional[int] = Field(None, description="THINK->ACT ceiling, 1-60.")
+    deadline_seconds: Optional[float] = Field(None, description="Wall-clock, 10-900.")
+    step_max_tokens: Optional[int] = Field(None, description="Tokens per step, 100-4000.")
+
+
+class EmployeeModelCfg(BaseModel):
+    loop_model: Optional[str] = Field(
+        None, description="Model for this employee's agentic loop. Reserved.")
+
+
+class EmployeeConfigSpec(BaseModel):
+    """Behavioural settings for one employee.
+
+    Sent as a partial patch: the registry MERGES it over what is already
+    stored rather than replacing, so a UI that sends one field cannot
+    wipe the others. A field set to null is a deliberate clear.
+    """
+
+    collaboration: Optional[str] = Field(
+        None, description="team | solo | flexible — how strictly it stays in its lane.")
+    required_outputs: Optional[List[str]] = Field(
+        None, description="executed_code | fetched_url | file_written.")
+    domain_rules: Optional[List[str]] = Field(
+        None, description="Standing rules applied to every task this employee runs.")
+    domain_rules_replace: Optional[bool] = Field(
+        None, description="If true, ignore the role template's rules instead of adding to them.")
+    prompt_override: Optional[str] = Field(
+        None, description="Replaces the whole persona block. Nothing is protected.")
+    template_id: Optional[str] = None
+    budget: Optional[EmployeeBudget] = None
+    model: Optional[EmployeeModelCfg] = None
+
+
 class EmployeeCreateRequest(BaseModel):
     role: str = Field(..., min_length=1)
     mandate: str = Field(..., min_length=1)
     is_supervisor: bool = False
     tags: List[str] = Field(default_factory=list)
+    config: Optional[EmployeeConfigSpec] = None
 
 
 class EmployeeUpdateRequest(BaseModel):
@@ -232,6 +270,7 @@ class EmployeeUpdateRequest(BaseModel):
     mandate: Optional[str] = None
     is_supervisor: Optional[bool] = None
     tags: Optional[List[str]] = None
+    config: Optional[EmployeeConfigSpec] = None
 
 
 class EmployeeResponse(BaseModel):
@@ -242,6 +281,7 @@ class EmployeeResponse(BaseModel):
     tags: List[str] = Field(default_factory=list)
     is_supervisor: bool = False
     created_at: Optional[str] = None
+    config: Dict[str, Any] = Field(default_factory=dict)
 
 
 class EmployeeListResponse(BaseModel):

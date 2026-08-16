@@ -1416,6 +1416,102 @@
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
   ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+
+  /* ---- Employee configuration modal ---- */
+  .tree-node.is-configurable { cursor: pointer; }
+  .tree-node.is-configurable:hover { border-color: var(--accent); }
+
+  .emp-modal-backdrop {
+    position: fixed; inset: 0; z-index: 200;
+    background: rgba(0, 0, 0, 0.44);
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  .emp-modal-backdrop[hidden] { display: none; }
+  .emp-modal {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; box-shadow: var(--shadow-lg, 0 12px 40px rgba(0,0,0,.22));
+    width: min(680px, 100%); max-height: 90vh;
+    display: flex; flex-direction: column;
+  }
+  .emp-modal-head {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 12px; padding: 18px 20px 14px; border-bottom: 1px solid var(--border);
+  }
+  .emp-modal-title { font-size: 15px; font-weight: 650; color: var(--text); }
+  .emp-modal-sub { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
+  .emp-x {
+    background: none; border: none; color: var(--text-dim);
+    font-size: 22px; line-height: 1; cursor: pointer; padding: 0 4px;
+  }
+  .emp-x:hover { color: var(--text); }
+
+  .emp-modal-body { padding: 16px 20px; overflow-y: auto; }
+  .emp-label {
+    display: block; font-size: 11.5px; font-weight: 600;
+    color: var(--text-muted); margin: 14px 0 5px;
+  }
+  .emp-modal-body > .emp-label:first-child { margin-top: 0; }
+  .emp-input {
+    width: 100%; box-sizing: border-box; margin-top: 5px;
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 7px; padding: 8px 10px;
+    font: inherit; font-size: 12.5px; color: var(--text);
+  }
+  .emp-input:focus {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .emp-ta { resize: vertical; line-height: 1.5; }
+  .emp-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+  .emp-hint { font-size: 11px; color: var(--text-dim); margin-top: 5px; line-height: 1.5; }
+
+  .emp-radios, .emp-checks { display: flex; flex-direction: column; gap: 7px; margin-top: 4px; }
+  .emp-radios label, .emp-checks label {
+    display: flex; align-items: flex-start; gap: 8px;
+    font-size: 12px; color: var(--text); line-height: 1.45; cursor: pointer;
+  }
+  .emp-radios b, .emp-checks b { font-weight: 620; }
+
+  .emp-adv-toggle {
+    margin-top: 18px; background: none; border: none; padding: 0;
+    color: var(--accent-2); font: inherit; font-size: 12px;
+    font-weight: 600; cursor: pointer;
+  }
+  .emp-advanced {
+    margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--border);
+  }
+  .emp-advanced[hidden] { display: none; }
+  .emp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .emp-prov {
+    font-weight: 500; font-size: 10px; color: var(--text-dim);
+    background: var(--panel-3); border-radius: 4px; padding: 1px 5px;
+  }
+  .emp-actions-inline { display: flex; align-items: center; gap: 12px; margin-top: 6px; }
+  .emp-warn {
+    margin-top: 12px; padding: 10px 12px; border-radius: 7px;
+    background: var(--accent-soft); border: 1px solid var(--border);
+    font-size: 11px; line-height: 1.55; color: var(--text-muted);
+  }
+
+  .emp-modal-foot {
+    display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+    padding: 13px 20px; border-top: 1px solid var(--border);
+  }
+  .emp-status { margin-right: auto; font-size: 11.5px; color: var(--text-muted); }
+  .emp-btn {
+    background: var(--accent); color: var(--accent-fg);
+    border: none; border-radius: 7px; padding: 8px 16px;
+    font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+  }
+  .emp-btn:hover { background: var(--accent-2); }
+  .emp-btn:disabled { opacity: .55; cursor: default; }
+  .emp-btn-ghost {
+    background: none; border: 1px solid var(--border);
+    color: var(--text-muted); border-radius: 7px; padding: 8px 14px;
+    font: inherit; font-size: 12.5px; cursor: pointer;
+  }
+  .emp-btn-ghost:hover { color: var(--text); border-color: var(--border-strong); }
 </style>
 </head>
 <body>
@@ -1514,6 +1610,89 @@
       </div>
     </div>
   </main>
+
+  <!-- Employee configuration. Appended to body-level markup rather than
+       inside a tab, so a progress poll that re-renders a tree can never
+       tear the open modal out from under the founder. -->
+  <div class="emp-modal-backdrop" id="emp-modal" hidden>
+    <div class="emp-modal" role="dialog" aria-modal="true" aria-labelledby="emp-modal-title">
+      <div class="emp-modal-head">
+        <div>
+          <div class="emp-modal-title" id="emp-modal-title">Employee</div>
+          <div class="emp-modal-sub" id="emp-modal-sub"></div>
+        </div>
+        <button class="emp-x" id="emp-close" type="button" title="Close">×</button>
+      </div>
+
+      <div class="emp-modal-body" id="emp-modal-body">
+        <label class="emp-label">Role
+          <input class="emp-input" id="emp-role" type="text" />
+        </label>
+        <div class="emp-hint">Role text also decides which specialist is assigned computation
+          and which tools rank first. Renaming changes behaviour.</div>
+
+        <label class="emp-label">Mandate — what only this employee owns
+          <textarea class="emp-input emp-ta" id="emp-mandate" rows="3"></textarea>
+        </label>
+
+        <div class="emp-label">How strictly it stays in its lane</div>
+        <div class="emp-radios" id="emp-collab">
+          <label><input type="radio" name="collab" value="team">
+            <b>Team</b> — do only its own part, skip work that belongs to another role</label>
+          <label><input type="radio" name="collab" value="flexible">
+            <b>Flexible</b> — stay in lane, but never refuse work its required outputs demand</label>
+          <label><input type="radio" name="collab" value="solo">
+            <b>Solo</b> — no teammates exist; do the whole job itself</label>
+        </div>
+
+        <div class="emp-label">Required outputs — refuses to finish without these</div>
+        <div class="emp-checks" id="emp-required">
+          <label><input type="checkbox" value="executed_code"> must actually execute code and print a result</label>
+          <label><input type="checkbox" value="fetched_url"> must actually fetch a live page or dataset</label>
+          <label><input type="checkbox" value="file_written"> must actually produce a file that exists on disk</label>
+        </div>
+
+        <button class="emp-adv-toggle" id="emp-adv-toggle" type="button">Advanced ▸</button>
+
+        <div class="emp-advanced" id="emp-advanced" hidden>
+          <label class="emp-label">Standing rules — one per line, applied to every task
+            <textarea class="emp-input emp-ta" id="emp-rules" rows="4"
+              placeholder="always use adjusted close&#10;execute on T+1, never same-bar&#10;252 trading days"></textarea>
+          </label>
+
+          <div class="emp-grid">
+            <label class="emp-label">Max steps <span class="emp-prov" id="prov-max_steps"></span>
+              <input class="emp-input" id="emp-max-steps" type="number" min="1" max="60" />
+            </label>
+            <label class="emp-label">Time budget (s) <span class="emp-prov" id="prov-deadline_seconds"></span>
+              <input class="emp-input" id="emp-deadline" type="number" min="10" max="900" />
+            </label>
+            <label class="emp-label">Tokens per step <span class="emp-prov" id="prov-step_max_tokens"></span>
+              <input class="emp-input" id="emp-step-tokens" type="number" min="100" max="4000" />
+            </label>
+          </div>
+
+          <label class="emp-label">Full prompt override
+            <textarea class="emp-input emp-ta emp-mono" id="emp-prompt" rows="12"></textarea>
+          </label>
+          <div class="emp-actions-inline">
+            <button class="emp-btn-ghost" id="emp-prompt-reset" type="button">Reset to default</button>
+            <span class="emp-hint">Placeholders: {role} {mandate} {task} {domain_rules}</span>
+          </div>
+          <div class="emp-warn">Editing this replaces the entire instruction block, including the
+            do-not-fabricate line. The mechanical guards — compute gate, source ledger,
+            number-provenance and hand-back checks — run outside the prompt and are
+            unaffected by anything you write here.</div>
+        </div>
+      </div>
+
+      <div class="emp-modal-foot">
+        <span class="emp-status" id="emp-status"></span>
+        <button class="emp-btn-ghost" id="emp-cancel" type="button">Cancel</button>
+        <button class="emp-btn" id="emp-save" type="button">Save</button>
+      </div>
+    </div>
+  </div>
 
   <!-- RIGHT: Edit / manage employees -->
   <aside class="right">
@@ -2152,6 +2331,16 @@ function renderTreeInto(container, tree) {
     el.style.top  = n._y + '%';
     el.dataset.role = n.role;
     if (n.meta) el.title = n.meta;
+    // Click-to-configure. Only nodes backed by a real Employee record
+    // are clickable — a pseudo-root or a node whose id didn't survive
+    // the tree mapping would open a modal onto nothing.
+    // The delete button above stops propagation, so removing an
+    // employee never also opens its settings.
+    if (n.employee_id) {
+      el.dataset.employeeId = n.employee_id;
+      el.classList.add('is-configurable');
+      el.addEventListener('click', () => openEmployeeConfig(n.employee_id, n.role));
+    }
 
     const dot = document.createElement('span'); dot.className = 'tn-dot';
     const name = document.createElement('span'); name.className = 'tn-name'; name.textContent = n.role;
@@ -2227,11 +2416,13 @@ function renderTeam(members) {
           kind: 'root',
           tag: 'Supervisor',
           meta: supervisor.mandate,
+          employee_id: supervisor.employee_id,
           stateClasses: stateFor(supervisor.role),
           children: specialists.map(s => ({
             role: s.role,
             tag: '',
             meta: s.mandate + (metaFor(s.role) ? ' · ' + metaFor(s.role) : ''),
+            employee_id: s.employee_id,
             stateClasses: stateFor(s.role),
             onDelete: () => removeMember(s.role),
           })),
@@ -2676,6 +2867,205 @@ async function removeMember(role) {
   } finally { setBusy(false); }
 }
 
+/* ---------------- Employee configuration modal ----------------
+   Settings that change how one employee behaves at run time. Every
+   field here maps to an observed failure, not a hypothetical knob:
+   the lane posture resolves a contradiction where the prompt told a
+   specialist to skip work the compute gate demanded; required outputs
+   let a role own a guarantee instead of re-earning it from the task
+   wording each run; standing rules put domain standards where the
+   agentic loop can see them, since the loop never sees the mandate. */
+
+let empModalState = null;   // { id, role, dirty }
+
+const EMP_DEFAULT_PROMPT_HINT =
+  'You are the {role} on this project team.\n\n' +
+  'Your mandate — what only you are responsible for:\n{mandate}\n\n' +
+  'Task the whole team is working on:\n{task}\n\n' +
+  'Do the part of this task that belongs to your role, and only your part.\n' +
+  'If a piece of the task belongs to a different role on this team, say so\n' +
+  'briefly and skip it — do not do work outside your mandate.\n\n' +
+  'Do not fabricate specific statistics, survey results, or claims that\n' +
+  'work has already been completed. If you don\'t know a real number,\n' +
+  'describe things qualitatively (unless the web results below give you a\n' +
+  'real one).';
+
+function empSetStatus(msg, isError) {
+  const el = $('emp-status');
+  el.textContent = msg || '';
+  el.style.color = isError ? 'var(--danger)' : 'var(--text-muted)';
+}
+
+async function openEmployeeConfig(employeeId, roleHint) {
+  empModalState = { id: employeeId, role: roleHint || '', dirty: false };
+  $('emp-modal').hidden = false;
+  $('emp-modal-title').textContent = roleHint || 'Employee';
+  $('emp-modal-sub').textContent = 'Loading…';
+  empSetStatus('');
+  $('emp-advanced').hidden = true;
+  $('emp-adv-toggle').textContent = 'Advanced ▸';
+
+  let emp, eff;
+  try {
+    [emp, eff] = await Promise.all([
+      api('GET', `/api/employees/${encodeURIComponent(employeeId)}`),
+      api('GET', `/api/employees/${encodeURIComponent(employeeId)}/effective-config`),
+    ]);
+  } catch (e) {
+    $('emp-modal-sub').textContent = '';
+    empSetStatus('Could not load: ' + e.message, true);
+    return;
+  }
+
+  const s = (eff && eff.settings) || {};
+  const cfg = emp.config || {};
+  empModalState.role = emp.role;
+  $('emp-modal-title').textContent = emp.role;
+  $('emp-modal-sub').textContent =
+    (emp.is_supervisor ? 'Supervisor · ' : '') + employeeId;
+
+  $('emp-role').value = emp.role || '';
+  $('emp-mandate').value = emp.mandate || '';
+
+  // The RESOLVED posture, so a founder sees what it actually runs with.
+  // When required outputs promoted team->flexible, showing the stored
+  // "team" would misrepresent their own employee.
+  const collab = (s.effective_collaboration && s.effective_collaboration.value) || 'team';
+  document.querySelectorAll('#emp-collab input').forEach(r => {
+    r.checked = (r.value === collab);
+  });
+
+  const required = (s.required_outputs && s.required_outputs.value) || [];
+  document.querySelectorAll('#emp-required input').forEach(c => {
+    c.checked = required.includes(c.value);
+  });
+
+  $('emp-rules').value = ((s.domain_rules && s.domain_rules.value) || []).join('\n');
+  $('emp-max-steps').value = s.max_steps ? s.max_steps.value : '';
+  $('emp-deadline').value = s.deadline_seconds ? s.deadline_seconds.value : '';
+  $('emp-step-tokens').value = s.step_max_tokens ? s.step_max_tokens.value : '';
+
+  // Remember what was LOADED and where it came from, so save can tell a
+  // value the founder actually chose from one merely displayed. The
+  // budget inputs are pre-filled with resolved values; without this,
+  // opening the modal and pressing Save would pin all three as explicit
+  // overrides and the employee would silently stop tracking future
+  // changes to the shared defaults.
+  empModalState.loaded = {
+    max_steps: { value: $('emp-max-steps').value, from: (s.max_steps || {}).from },
+    deadline_seconds: { value: $('emp-deadline').value, from: (s.deadline_seconds || {}).from },
+    step_max_tokens: { value: $('emp-step-tokens').value, from: (s.step_max_tokens || {}).from },
+  };
+
+  // Pre-fill with the rendered default so editing is the path of least
+  // resistance. A blank box invites writing a prompt from scratch, which
+  // is how the anti-fabrication line gets dropped by accident rather
+  // than on purpose.
+  $('emp-prompt').value = cfg.prompt_override || EMP_DEFAULT_PROMPT_HINT;
+
+  ['max_steps', 'deadline_seconds', 'step_max_tokens'].forEach(k => {
+    const chip = $('prov-' + k);
+    if (!chip) return;
+    const from = (s[k] && s[k].from) || 'default';
+    chip.textContent = from === 'employee' ? 'set here'
+      : from === 'default' ? 'default'
+      : from.replace('template:', 'from ');
+  });
+}
+
+function closeEmployeeConfig(force) {
+  if (!force && empModalState && empModalState.dirty) {
+    if (!confirm('Discard unsaved changes to this employee?')) return;
+  }
+  $('emp-modal').hidden = true;
+  empModalState = null;
+}
+
+async function saveEmployeeConfig() {
+  if (!empModalState) return;
+  const id = empModalState.id;
+  const collabEl = document.querySelector('#emp-collab input:checked');
+  const required = [...document.querySelectorAll('#emp-required input:checked')]
+    .map(c => c.value);
+  const rules = $('emp-rules').value.split('\n')
+    .map(r => r.trim()).filter(Boolean);
+  const promptVal = $('emp-prompt').value.trim();
+
+  // A budget field is only SET if the founder changed it, or if it was
+  // already set on this employee. Left exactly as loaded from a default
+  // or a template, it is sent as null — "keep inheriting" — so the
+  // employee keeps tracking the shared value instead of freezing a copy.
+  const num = (el, key) => {
+    const v = $(el).value.trim();
+    const was = (empModalState.loaded || {})[key] || {};
+    if (v === '') return null;
+    if (v === was.value && was.from !== 'employee') return null;
+    return Number(v);
+  };
+
+  const body = {
+    role: $('emp-role').value.trim(),
+    mandate: $('emp-mandate').value.trim(),
+    config: {
+      collaboration: collabEl ? collabEl.value : 'team',
+      required_outputs: required,
+      domain_rules: rules,
+      // Storing the unedited default as an override would freeze a copy
+      // of today's wording onto this employee forever — it would stop
+      // tracking every future improvement to the shared prompt.
+      prompt_override: (promptVal && promptVal !== EMP_DEFAULT_PROMPT_HINT.trim())
+        ? promptVal : null,
+      budget: {
+        max_steps: num('emp-max-steps', 'max_steps'),
+        deadline_seconds: num('emp-deadline', 'deadline_seconds'),
+        step_max_tokens: num('emp-step-tokens', 'step_max_tokens'),
+      },
+    },
+  };
+
+  $('emp-save').disabled = true;
+  empSetStatus('Saving…');
+  try {
+    await api('PATCH', `/api/employees/${encodeURIComponent(id)}`, body);
+    empModalState.dirty = false;
+    empSetStatus('Saved');
+    if (currentSessionId) await loadTeam(currentSessionId);
+    if (!$('tab-org').classList.contains('hidden')) await refreshOrgTree();
+    setTimeout(() => closeEmployeeConfig(true), 350);
+  } catch (e) {
+    empSetStatus(e.message, true);
+  } finally {
+    $('emp-save').disabled = false;
+  }
+}
+
+function wireEmployeeModal() {
+  $('emp-close').onclick = () => closeEmployeeConfig();
+  $('emp-cancel').onclick = () => closeEmployeeConfig();
+  $('emp-save').onclick = saveEmployeeConfig;
+  $('emp-adv-toggle').onclick = () => {
+    const adv = $('emp-advanced');
+    adv.hidden = !adv.hidden;
+    $('emp-adv-toggle').textContent = adv.hidden ? 'Advanced ▸' : 'Advanced ▾';
+  };
+  $('emp-prompt-reset').onclick = () => {
+    $('emp-prompt').value = EMP_DEFAULT_PROMPT_HINT;
+    if (empModalState) empModalState.dirty = true;
+  };
+  $('emp-modal').addEventListener('click', (ev) => {
+    if (ev.target === $('emp-modal')) closeEmployeeConfig();
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && !$('emp-modal').hidden) closeEmployeeConfig();
+  });
+  $('emp-modal-body').addEventListener('input', () => {
+    if (empModalState) empModalState.dirty = true;
+  });
+  $('emp-modal-body').addEventListener('change', () => {
+    if (empModalState) empModalState.dirty = true;
+  });
+}
+
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach(t => {
     t.classList.toggle('active', t.dataset.tab === name);
@@ -2987,9 +3377,11 @@ async function refreshOrgTree() {
       kind: 'supervisor',
       tag: unitLabel,
       meta: sup?.mandate || '',
+      employee_id: sup?.employee_id,
       children: specialists.map(s => ({
         role: s.role,
         meta: s.mandate || '',
+        employee_id: s.employee_id,
       })),
     };
   });
@@ -3002,6 +3394,7 @@ async function refreshOrgTree() {
       kind: 'root',
       tag: 'CEO',
       meta: rootMeta,
+      employee_id: co.ceo_employee_id,
       children: supervisorNodes,
     },
   });
@@ -3301,6 +3694,7 @@ $('connectors-toggle').onclick = toggleConnectorsForm;
 $('conn-add-btn').onclick = addConnector;
 sessionSelector.onchange = () => { if (sessionSelector.value) selectSession(sessionSelector.value); };
 document.querySelectorAll('.tab').forEach(t => { t.onclick = () => switchTab(t.dataset.tab); });
+wireEmployeeModal();
 
 (async function init() {
   const sessions = await refreshSessions();
