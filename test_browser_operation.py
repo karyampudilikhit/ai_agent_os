@@ -160,9 +160,11 @@ def test_repeated_ineffective_clicks_escalate_to_changing_tactics():
          "action.browser_click_element": DEFAULT_VIEW},
     )
     out = ex.run(BROWSE_TASK, role="Web Operator") or ""
-    assert "THE PAGE IS STILL UNCHANGED" in out
+    # Wording moved from "the page is unchanged" to "the ANSWER has not
+    # changed" once the data fingerprint landed: on a page whose rows are
+    # the point, the page moving is not the thing worth reporting.
+    assert "THE ANSWER HAS STILL NOT CHANGED" in out
     assert "browser_find" in out
-    assert "URL" in out
     assert "default view, not the" in out
 
 

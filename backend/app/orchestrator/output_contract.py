@@ -269,9 +269,107 @@ def satisfied_kinds(
     if _verified_a_result_url(ledger_calls):
         done.add(URL_VERIFIED)
 
-    if _changed_the_page_before_reading(ledger_calls):
+    if _produced_a_ranking(ledger_calls):
         done.add(RANKED_RESULT)
     return done
+
+
+def _browser_views(ledger_calls: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Successful browser results in time order, with their page text."""
+    out = []
+    for call in ledger_calls or ():
+        if not call.get("ok"):
+            continue
+        view = str(call.get("output") or call.get("result_preview") or "")
+        if not view:
+            continue
+        out.append({"tool": str(call.get("tool") or ""),
+                    "at": float(call.get("at") or 0), "view": view})
+    out.sort(key=lambda c: c["at"])
+    return out
+
+
+def run_saw_a_data_table(ledger_calls: Iterable[Dict[str, Any]]) -> bool:
+    """Did this run ever look at a page with a data table on it?
+
+    Guards against demanding a ranking of work that has no rows to rank.
+    `task_wants_ranking` matches "top " and "best ", so "write the best
+    headline" and "summarise the top findings" are ranking-shaped tasks
+    about no table at all -- and a gate that fails honest work is worse
+    than the bug it prevents.
+    """
+    try:
+        from backend.app.browser.observation import parse_data_keys
+    except Exception:  # noqa: BLE001
+        return False
+    for call in _browser_views(ledger_calls):
+        if parse_data_keys(call["view"]):
+            return True
+    return False
+
+
+def _produced_a_ranking(ledger_calls: Iterable[Dict[str, Any]]) -> bool:
+    """True when THIS RUN changed how the data is ordered, then read it.
+
+    NOT "is some column sorted". That question was measured against the
+    live TradingView screener and answers YES ON THE DEFAULT VIEW -- it
+    arrives sorted by market cap descending. Requiring only "something is
+    sorted" would pass the exact run this contract exists to reject, where
+    the agent read the default market-cap list and reported it as the top
+    weekly gainers.
+
+    A page arriving sorted is not the agent's doing. What proves a ranking
+    was produced is that the ordering being read DIFFERS from the one the
+    page handed over. Verified end to end: "Mkt cap descending" -> "Chg %
+    descending", rows NVDA/AAPL/GOOG -> TREVQ/ETBI/IOBTQ.
+
+    Falls back to the older page-comparison check when the run never
+    recorded a sort measurement at all -- an older transcript, or a
+    ranking produced by filtering rather than sorting -- so this is
+    strictly additive and cannot make a previously-passing honest run
+    start failing for want of a field that did not exist.
+    """
+    try:
+        from backend.app.browser.observation import parse_sorted_columns
+    except Exception:  # noqa: BLE001
+        return _changed_the_page_before_reading(ledger_calls)
+
+    first_sig = None
+    changed_at = 0.0
+    measured = False
+    for call in _browser_views(ledger_calls):
+        cols = parse_sorted_columns(call["view"])
+        if cols is None:
+            continue
+        measured = True
+        sig = frozenset((c["column"], c["direction"]) for c in cols)
+        if first_sig is None:
+            first_sig = sig
+        elif sig != first_sig and not changed_at:
+            # The FIRST moment the order differed, not the last. Taking
+            # the last meant the very call that revealed the new order
+            # also moved the goalpost past itself, so the read could never
+            # be "after" the change and a genuine sort scored zero.
+            changed_at = call["at"]
+
+    if not measured:
+        return _changed_the_page_before_reading(ledger_calls)
+    if not changed_at:
+        return False
+
+    # The rows have to be READ at or after the moment the order changed.
+    # Reading first and sorting afterwards answers a question nobody
+    # asked -- the failed run's reported figures came from an extract
+    # taken before anything was touched.
+    #
+    # ">=" rather than ">": every browser primitive re-observes as part
+    # of acting, so the call that changes the order also returns the
+    # reordered page. Requiring a strictly later read would refuse a run
+    # that sorted and read in one step.
+    for call in _browser_views(ledger_calls):
+        if call["at"] >= changed_at and _tool_matches(call["tool"], _READ_TOOLS):
+            return True
+    return False
 
 
 def _normalise(text: str) -> str:

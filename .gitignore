@@ -85,3 +85,5 @@ workspace/python_runs/
 # embeds a full page dump including whatever the live site was showing.
 browser_trace.json
 browser_trace*.log
+server_run*.log
+verify_outcome_check.py.log

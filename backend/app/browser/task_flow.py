@@ -886,6 +886,26 @@ def _resolve_clickable_locator(page, hint: str):
     return None
 
 
+# The fingerprint has to travel on THESE four too.
+#
+# browser_navigate, browser_extract, browser_extract_table and
+# browser_click build their own output and never call observe_page, so
+# they carried no DATA line at all -- while every one of them is a
+# page-view tool by the loop's own predicates. It mattered most for
+# navigate: going to a sort parameter the site ignores is precisely the
+# failure the fingerprint exists to catch, and it happens entirely
+# inside that tool, so the check would have been blind to its own
+# motivating case.
+#
+# Placed high in each result, immediately after the header line, for the
+# same reason it sits third in an observation: the model only ever sees
+# the first MAX_OBSERVATION_CHARS of a tool result.
+def _fp(page) -> str:
+    from backend.app.browser.observation import fingerprint_lines
+    line = fingerprint_lines(page)
+    return (line + "\n") if line else ""
+
+
 def _browser_navigate_handler(args: Dict[str, Any]) -> str:
     return _on_browser_thread(_browser_navigate_impl, args, "browser_navigate")
 
@@ -965,6 +985,7 @@ def _browser_navigate_impl(args: Dict[str, Any]) -> str:
     return (
         f"[browser session: session_token={session.token}]\n"
         f"Now on: \"{snapshot.get('title', '')}\" ({snapshot.get('url', url)})\n"
+        f"{_fp(session.page)}"
         f"Fillable fields:\n{_fields_block(snapshot.get('fields') or [])}\n"
         f"Clickable buttons:\n{_buttons_block(snapshot.get('buttons') or [])}\n"
         f"Use action.browser_extract_table(session_token) if you need DATA "
@@ -1017,7 +1038,8 @@ def _browser_extract_impl(args: Dict[str, Any]) -> str:
         )
     else:
         suffix = ""
-    return f"[page text — {page_url}]{table_hint}\n{text[:_MAX_EXTRACT_CHARS]}{suffix}"
+    return (f"[page text — {page_url}]{table_hint}\n{_fp(session.page)}"
+            f"{text[:_MAX_EXTRACT_CHARS]}{suffix}")
 
 
 def _browser_extract_table_handler(args: Dict[str, Any]) -> str:
@@ -1058,6 +1080,7 @@ def _browser_extract_table_impl(args: Dict[str, Any]) -> str:
 
     return (
         f"[tables — {page_url}]\n"
+        f"{_fp(session.page)}"
         f"(Cells are pipe-separated and empty cells are shown as (blank). Every "
         f"row has the same number of columns. Read values by COLUMN POSITION; "
         f"never shift a value across a (blank) to fill a gap, and never infer a "
@@ -1129,6 +1152,7 @@ def _browser_click_impl(args: Dict[str, Any]) -> str:
         f"[browser session: session_token={token}]\n"
         f"Clicked {target!r}. Now on: \"{snapshot.get('title', '')}\" "
         f"({snapshot.get('url', '')})\n"
+        f"{_fp(session.page)}"
         f"Fillable fields:\n{_fields_block(snapshot.get('fields') or [])}\n"
         f"Clickable buttons:\n{_buttons_block(snapshot.get('buttons') or [])}"
     )

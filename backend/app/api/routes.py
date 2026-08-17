@@ -116,7 +116,13 @@ from backend.app.critique.critique_agent import CritiqueEngine
 
 router = APIRouter()
 
-DEFAULT_MODEL = "gpt-oss:120b-cloud"
+# The model the whole pipeline uses -- synthesis, critique, and each
+# specialist's writing. Overridable because it was not, and that made the
+# product's biggest risk unfixable from outside: two live models on the
+# free Ollama tier and no way to point anywhere else. AGENT_LOOP_MODEL
+# still overrides this for the agentic loop alone, so tool-selection and
+# prose can run on different models.
+DEFAULT_MODEL = os.environ.get("PIPELINE_MODEL", "").strip() or "gpt-oss:120b-cloud"
 
 
 def _build_pipeline() -> Pipeline:
@@ -2247,19 +2253,54 @@ def _gate_deliverable(output: str, task: str = "",
     # protects the loop, not the founder.
     try:
         from backend.app.orchestrator.output_contract import (
-            RANKED_RESULT, satisfied_kinds, task_wants_ranking,
+            RANKED_RESULT, run_saw_a_data_table, satisfied_kinds, task_wants_ranking,
         )
         from backend.app.tools.tool_call_ledger import get_call_ledger
         if task_wants_ranking(task):
             calls = get_call_ledger().calls(since=since)
             browsed = any("browser" in str(c.get("tool") or "") for c in calls)
-            if browsed and RANKED_RESULT not in satisfied_kinds(set(), False, calls):
+            # Only demand a ranking of work that HAS rows to rank.
+            # task_wants_ranking matches "top " and "best ", so "write the
+            # best headline" and "summarise the top findings" are
+            # ranking-shaped tasks about no table at all -- and a gate
+            # that fails honest work is worse than the bug it prevents.
+            if (browsed and run_saw_a_data_table(calls)
+                    and RANKED_RESULT not in satisfied_kinds(set(), False, calls)):
                 problems.append(
                     "this task asked for a ranked result (top/best/worst/sorted) "
-                    "but the page was never actually sorted or filtered -- the "
-                    "figures reported are whatever the site displayed by default, "
-                    "which is not the ranking that was asked for"
+                    "but the table was never actually reordered -- it is still in "
+                    "the order the site served it in, so the rows reported are the "
+                    "default view rather than the ranking that was asked for"
                 )
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Rows the deliverable reports that appear in nothing this run read.
+    #
+    # Number provenance above proves a FIGURE was computed. This proves a
+    # ROW was seen. A live run reported ten tickers with weekly
+    # percentages where every ticker and price was real and five of the
+    # percentages had been altered to read as gainers -- the figures were
+    # checkable, the records were not, because a row never had to come
+    # from anywhere.
+    try:
+        from backend.app.critique.compute_gate import unbacked_row_labels
+        from backend.app.tools.tool_call_ledger import get_call_ledger
+        captured = "\n".join(
+            str(c.get("output") or c.get("result_preview") or "")
+            for c in get_call_ledger().calls(since=since)
+            if c.get("ok")
+        )
+        unbacked = unbacked_row_labels(text, captured)
+        # Two, not one: a single unmatched label is more likely a
+        # formatting artefact than a fabrication, and this check must not
+        # be the reason an honest run fails.
+        if len(unbacked) >= 2:
+            problems.append(
+                "the deliverable reports rows that appear nowhere in what this "
+                "run actually read: " + ", ".join(unbacked[:6])
+                + " -- these records were not on any page it opened"
+            )
     except Exception:  # noqa: BLE001
         pass
 

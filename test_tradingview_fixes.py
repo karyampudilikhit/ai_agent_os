@@ -236,4 +236,7 @@ def test_the_gate_blocks_a_ranking_that_was_never_sorted():
     src = inspect.getsource(routes._gate_deliverable)
     assert "task_wants_ranking" in src
     assert "RANKED_RESULT" in src
-    assert "never actually sorted or filtered" in src
+    # Reworded once the outcome check landed: the claim is now about the
+    # table's ORDER rather than about whether a control was operated,
+    # because operating a control turned out to prove nothing.
+    assert "never actually reordered" in src

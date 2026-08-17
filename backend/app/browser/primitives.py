@@ -192,8 +192,33 @@ def _find_impl(args: Dict[str, Any]) -> str:
 _HOVER_REVEALED = "button, [role='button'], [aria-label*='ort'], svg"
 
 
-def _click_locator(session, locator) -> None:
-    """Click, falling back to hover-then-force for revealed controls."""
+def _click_locator(session, locator, role: str = "") -> None:
+    """Click, falling back to hover-then-force for revealed controls.
+
+    `role` matters for one case, and it is not a special case so much as
+    the general shape of a container control: a COLUMN HEADER holds its
+    sort handler on the button INSIDE the cell, not on the cell. Clicking
+    the cell SUCCEEDS and does nothing — so the fallback below never
+    fired, because it only triggers on failure.
+
+    That bug survived being written, reviewed and tested, and was caught
+    by the outcome check measuring a live page: rows identical, sort
+    identical, click reported successful. It is precisely the failure this
+    layer exists to make impossible, reproduced inside the fix for it.
+    """
+    if role == "columnheader":
+        try:
+            inner = locator.locator(_HOVER_REVEALED).first
+            if inner.count():
+                locator.scroll_into_view_if_needed(timeout=ACTION_TIMEOUT_MS)
+                locator.hover(timeout=ACTION_TIMEOUT_MS, force=True)
+                session.page.wait_for_timeout(150)
+                inner.click(timeout=ACTION_TIMEOUT_MS, force=True)
+                return
+        except Exception as exc:  # noqa: BLE001
+            logger.info("column-header inner click failed, falling back: %s",
+                        str(exc)[:120])
+
     try:
         locator.click(timeout=ACTION_TIMEOUT_MS)
         return
@@ -238,7 +263,7 @@ def _click_impl(args: Dict[str, Any]) -> str:
 
     url_before = session.page.url
     try:
-        _click_locator(session, locator)
+        _click_locator(session, locator, role=str(el.get("role") or ""))
         session.page.wait_for_load_state("domcontentloaded", timeout=ACTION_TIMEOUT_MS)
     except Exception as exc:  # noqa: BLE001
         return f"(click on {element_id} failed: {exc})"

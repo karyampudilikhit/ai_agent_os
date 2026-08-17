@@ -883,8 +883,32 @@ class AgenticExecutor:
                         )
 
                     comparable = is_page_view_tool(action)
-                    changed = (comparable and bool(last_page_view)
-                               and page_view_changed(last_page_view, result))
+                    page_moved = (comparable and bool(last_page_view)
+                                  and page_view_changed(last_page_view, result))
+
+                    # DID THE DATA MOVE? A different question from "did the
+                    # page change", and the only one that matters when the
+                    # task is about rows.
+                    #
+                    # Three-valued. None means this page carries no data
+                    # table, so the question does not apply and the page
+                    # comparison stands on its own. It must never collapse
+                    # into False -- "there were no rows to move" and "the
+                    # rows did not move" are different facts, and treating
+                    # missing evidence as failing evidence would nag every
+                    # honest run on a form or a dashboard.
+                    data_moved = None
+                    if comparable and last_page_view:
+                        try:
+                            from backend.app.browser.observation import rows_changed
+                            data_moved = rows_changed(last_page_view, result)
+                        except Exception:  # noqa: BLE001
+                            data_moved = None
+
+                    # ONE resolution, so the model never gets two notes
+                    # that contradict each other. Where there are rows,
+                    # the rows are the truth; elsewhere, the page is.
+                    changed = data_moved if data_moved is not None else page_moved
 
                     # THE FEEDBACK THAT WAS MISSING.
                     #
@@ -898,28 +922,51 @@ class AgenticExecutor:
                     # four TradingView runs never once learned that the
                     # screener had not moved. Same comparison, run at the
                     # moment the model can still act on it.
-                    if is_interaction_tool(action) and last_page_view:
+                    # Navigations count as acting on the page, not just
+                    # clicks. The single most misleading result seen live
+                    # was a navigate to an invented sort parameter: the
+                    # page loaded, the address bar read as sorted, the
+                    # rows were the defaults. Judged as an interaction it
+                    # was invisible; judged on its data it is obvious.
+                    acted_on_page = (is_interaction_tool(action)
+                                     or "browser_navigate" in action)
+                    if acted_on_page and last_page_view:
                         if changed:
                             ineffective_interactions = 0
                         else:
                             ineffective_interactions += 1
                             logger.info(
-                                "[%s] %s left the page unchanged (%d in a row)",
-                                role, action, ineffective_interactions,
+                                "[%s] %s changed nothing that matters "
+                                "(page_moved=%s data_moved=%s, %d in a row)",
+                                role, action, page_moved, data_moved,
+                                ineffective_interactions,
                             )
                             if ineffective_interactions >= MAX_INEFFECTIVE_INTERACTIONS:
                                 steps.append({"note": (
-                                    f"(THE PAGE IS STILL UNCHANGED. That is "
-                                    f"{ineffective_interactions} interactions in a row "
-                                    f"that did nothing — the elements you are choosing "
-                                    f"are not the control you need, and trying a third "
-                                    f"is unlikely to differ. CHANGE TACTICS NOW: either "
-                                    f"put what you want in the URL and navigate there "
-                                    f"directly, or call action.browser_find to search "
-                                    f"the whole page for the control by description. Do "
-                                    f"not report anything you have read so far as the "
-                                    f"answer — it is the page's default view, not the "
-                                    f"result you were asked for.)"
+                                    f"(THE ANSWER HAS STILL NOT CHANGED. That is "
+                                    f"{ineffective_interactions} actions in a row that "
+                                    f"did nothing to the data — the elements you are "
+                                    f"choosing are not the control you need, and trying "
+                                    f"a third is unlikely to differ. CHANGE TACTICS NOW: "
+                                    f"call action.browser_find to search the whole page "
+                                    f"for the control by description, or switch the view "
+                                    f"— a column you cannot see often lives under a "
+                                    f"different tab or preset. Do not report anything "
+                                    f"you have read so far as the answer: it is the "
+                                    f"page's default view, not the result you were "
+                                    f"asked for.)"
+                                )})
+                            elif data_moved is False and page_moved:
+                                # The case that used to read as success.
+                                steps.append({"note": (
+                                    "(NOTE: the page changed but THE ROWS DID NOT. The "
+                                    "table is showing exactly the same records in "
+                                    "exactly the same order as before. You opened or "
+                                    "closed something — a filter panel, a menu, a page "
+                                    "that ignored the parameter you put in the URL — "
+                                    "but you did not change the answer. Reading these "
+                                    "rows now would report the default view. Find the "
+                                    "control that actually reorders the table.)"
                                 )})
                             else:
                                 steps.append({"note": (
@@ -927,8 +974,8 @@ class AgenticExecutor:
                                     "before that action. It succeeded, but the element "
                                     "you picked was not the control — nothing sorted, "
                                     "filtered or opened. Do not treat this as done. "
-                                    "Pick a different element, or set the option in the "
-                                    "URL and navigate there instead.)"
+                                    "Pick a different element, or use action.browser_find "
+                                    "to locate the right one by description.)"
                                 )})
                     elif changed:
                         # A navigation or scroll moved the page; whatever

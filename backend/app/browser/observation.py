@@ -68,6 +68,135 @@ MAX_TEXT_CHARS = int(__import__("os").environ.get("BROWSER_MAX_TEXT_CHARS", "300
 FIND_SCAN_LIMIT = int(__import__("os").environ.get("BROWSER_FIND_SCAN_LIMIT", "600"))
 FIND_RESULTS = int(__import__("os").environ.get("BROWSER_FIND_RESULTS", "12"))
 
+# The data fingerprint, as a self-contained JS function.
+#
+# ONE definition, used two ways: interpolated into _OBSERVE_JS so an
+# observation computes it in the same DOM read as everything else, and
+# exposed as _DATA_JS so the four tools that build their own output
+# (navigate, extract, extract_table, click) can carry it too. Copying it
+# would have been simpler and is exactly the "one list living in two
+# files and drifting apart" that this codebase keeps getting bitten by.
+_DATA_FN_JS = r"""
+(() => {
+  const clean = (s) => (s || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+  // Strip the separator the fingerprint line uses: a key containing it
+  // would split into two on the way back and make an untouched page look
+  // like it had changed. Collapse whitespace too — real headers carry
+  // non-breaking spaces ("Chg %"), and a column name differing only by
+  // an invisible character reads as a DIFFERENT column.
+  const key = (s) => (s || '').replace(/·/g, ' ').replace(/\s+/g, ' ')
+                              .trim().slice(0, 18);
+
+  // Real cells this has to survive, from a live extraction:
+  //   "225.16 USD"  "−0.06%"  "75.68 M"  "5.45 T USD"  "1,180.16 USD"
+  //   "—"  ""  "+697.29%"  "755,570.01 USD"
+  // The minus is U+2212, not a hyphen; missing values are an em dash.
+  const MULT = { k: 1e3, m: 1e6, b: 1e9, t: 1e12 };
+  const num = (s) => {
+    if (!s) return null;
+    const t = String(s).replace(/−/g, '-').replace(/,/g, '').trim();
+    const m = t.match(/^[^\d\-+.]*([-+]?\d*\.?\d+)\s*([kmbt])?\b/i);
+    if (!m) return null;
+    let v = parseFloat(m[1]);
+    if (!isFinite(v)) return null;
+    if (m[2]) v *= MULT[m[2].toLowerCase()];
+    return v;
+  };
+
+  // A POSITION, not a measurement. A rank or row-number column reads
+  // 1,2,3... whatever order the rows are in — so it is invariant under
+  // sorting, which makes it both a useless row key (the fingerprint
+  // never changes) and a fake sort signal (it is always "ascending",
+  // even on a table nobody has touched). Measured live: a screener with
+  // a "#" column reported rows_changed=False across a genuine re-sort
+  // AND SORTED: # ascending on the untouched default view.
+  const isOrdinal = (cells) => {
+    const ns = cells.map(num);
+    if (ns.length < 3 || ns.some(v => v === null || !Number.isInteger(v))) return false;
+    const s = ns.slice().sort((a, b) => a - b);
+    for (let i = 1; i < s.length; i++) if (s[i] !== s[i - 1] + 1) return false;
+    return true;
+  };
+
+  let best = null, bestCells = 0;
+  document.querySelectorAll('table').forEach((tbl) => {
+    const trs = Array.from(tbl.querySelectorAll('tr'));
+    if (trs.length < 2) return;                 // layout markup, not data
+    const cells = trs.reduce((n, tr) => n + tr.querySelectorAll('th,td').length, 0);
+    if (cells > bestCells) { bestCells = cells; best = trs; }
+  });
+  if (!best) return null;
+
+  // Drop a pure header row — constant, so it would spend a slot and
+  // never contribute to change detection.
+  const body = best.filter(tr => tr.querySelector('td'));
+  const use = body.length ? body : best;
+  const rows = use.slice(0, 14).map(
+    tr => Array.from(tr.querySelectorAll('th,td')).map(c => clean(c.innerText))
+  );
+  if (!rows.length) return null;
+
+  const width = Math.max.apply(null, rows.map(r => r.length).concat([0]));
+  const column = (c) => rows.map(r => r[c] || '');
+
+  // CHOOSE THE KEY COLUMN by scanning left to right for the first one
+  // that actually identifies a row. The old rule took column 0 unless it
+  // failed a DISTINCTNESS test — and a rank column is maximally
+  // distinct, so it was never rejected.
+  let keyCol = -1;
+  for (let c = 0; c < width; c++) {
+    const cells = column(c);
+    const filled = cells.filter(Boolean);
+    if (filled.length < rows.length * 0.8) continue;   // checkbox / icon column
+    if (new Set(filled.map(key)).size < Math.max(2, Math.ceil(rows.length * 0.6))) continue;
+    if (isOrdinal(cells)) continue;                     // a position, not an identity
+    keyCol = c;
+    break;
+  }
+  // No column identifies a row — say UNKNOWN rather than invent a
+  // positional key, which would be constant and therefore a guard that
+  // can never fail.
+  if (keyCol < 0) return null;
+
+  const keys = rows.map(r => key(r[keyCol]));
+
+  // IS ANY COLUMN ACTUALLY IN ORDER? Measured from the numbers on the
+  // page, never inferred from what the agent believes it did. A click
+  // that opened a filter and a URL parameter the site ignored both leave
+  // every column unsorted, and both previously read as success.
+  const header = best.find(tr => tr.querySelector('th'));
+  const names = header
+    ? Array.from(header.querySelectorAll('th,td')).map(c => key(c.innerText))
+    : [];
+  const sorted = [];
+  for (let c = 0; c < width; c++) {
+    if (c === keyCol) continue;
+    const cells = column(c);
+    if (isOrdinal(cells)) continue;      // same rule, one definition
+    const known = cells.map(num).filter(v => v !== null);
+    // Enough of the column must be numeric to call it a number column,
+    // and enough rows must exist for "in order" to mean anything —
+    // three rows ascending is a coincidence.
+    if (known.length < 4 || known.length < rows.length * 0.8) continue;
+    if (new Set(known).size < 2) continue;            // all equal is not sorted
+    let asc = true, desc = true;
+    for (let i = 1; i < known.length; i++) {
+      if (known[i] > known[i - 1]) desc = false;
+      if (known[i] < known[i - 1]) asc = false;
+    }
+    if (asc === desc) continue;                        // neither, or constant
+    sorted.push({ column: names[c] || ('column ' + (c + 1)),
+                  direction: desc ? 'descending' : 'ascending' });
+  }
+
+  return { keys: keys, total: use.length, sorted: sorted };
+})
+"""
+
+# Standalone form, for the tools that build their own output.
+_DATA_JS = "() => (" + _DATA_FN_JS + ")()"
+
+
 _OBSERVE_JS = r"""
 (args) => {
   const GEN = args.gen;
@@ -228,6 +357,19 @@ _OBSERVE_JS = r"""
     elements.push(item);
   });
 
+  // THE DATA FINGERPRINT — the answer to "did the ROWS move", which is a
+  // different question from "did the page change" and the only one that
+  // matters for a task about data.
+  //
+  // Row KEYS, not cell values, deliberately. A screener's prices tick
+  // every second, so comparing values would report "changed" on every
+  // single observation and quietly disable every check built on it. A
+  // ticker does not move unless something sorted or filtered the table.
+  const rowKeys = __DATA_FN__;
+
+  let data = null;
+  try { data = rowKeys(); } catch (e) { data = null; }
+
   return {
     gen: GEN,
     url: window.location.href,
@@ -235,15 +377,19 @@ _OBSERVE_JS = r"""
     text: (document.body ? document.body.innerText : '').replace(/\n{3,}/g, '\n\n'),
     elements,
     truncated_elements: document.querySelectorAll(SEL).length > LIMIT,
+    data_keys: data ? data.keys : null,
+    data_total: data ? data.total : 0,
+    sorted_columns: data ? data.sorted : null,
   };
 }
-"""
+""".replace("__DATA_FN__", _DATA_FN_JS)
 
 
 class Observation:
     """One snapshot of a page, and the generation its ids belong to."""
 
-    __slots__ = ("gen", "url", "title", "text", "elements", "truncated")
+    __slots__ = ("gen", "url", "title", "text", "elements", "truncated",
+                 "data_keys", "data_total", "sorted_columns")
 
     def __init__(self, raw: Dict[str, Any], gen: int) -> None:
         self.gen = gen
@@ -252,6 +398,17 @@ class Observation:
         self.text = str(raw.get("text") or "")[:MAX_TEXT_CHARS]
         self.elements: List[Dict[str, Any]] = list(raw.get("elements") or [])
         self.truncated = bool(raw.get("truncated_elements"))
+        # None means "this page has no data table", which is a different
+        # state from "it has one and it is empty". Callers must be able to
+        # tell them apart -- see rows_changed, which answers UNKNOWN rather
+        # than guessing.
+        keys = raw.get("data_keys")
+        self.data_keys: Optional[List[str]] = (
+            [str(k) for k in keys] if isinstance(keys, list) else None)
+        self.data_total = int(raw.get("data_total") or 0)
+        cols = raw.get("sorted_columns")
+        self.sorted_columns: List[Dict[str, str]] = (
+            [c for c in cols if isinstance(c, dict)] if isinstance(cols, list) else [])
 
     def find(self, element_id: str) -> Optional[Dict[str, Any]]:
         for el in self.elements:
@@ -266,7 +423,21 @@ class Observation:
         data costs roughly three times the tokens and reads no better at a
         glance, and the step budget is the scarce resource in this loop.
         """
-        lines = [f"URL: {self.url}", f"TITLE: {self.title}", "", "INTERACTIVE ELEMENTS:"]
+        # THE FINGERPRINT GOES THIRD, before the element list.
+        #
+        # It was last, and on a dense page that put it out of reach of
+        # every cap that has to see it. Measured on a 120-element page it
+        # landed at character 7068, while the model is only ever shown
+        # the first MAX_OBSERVATION_CHARS (1500) of a tool result. So the
+        # loop could tell a model "the rows did not move" while the
+        # evidence for it was truncated away -- and the check would have
+        # worked on sparse pages and silently stopped on dense ones,
+        # which is the worst possible failure profile given that dense
+        # pages are the reason this layer exists.
+        #
+        # At offset ~60 it clears every cap at once and needs none raised.
+        lines = [f"URL: {self.url}", f"TITLE: {self.title}",
+                 self.data_line(), "", "INTERACTIVE ELEMENTS:"]
         if not self.elements:
             lines.append("  (none found — the page may still be loading; try browser_wait)")
         for el in self.elements:
@@ -292,6 +463,174 @@ class Observation:
         if include_text and self.text.strip():
             lines += ["", "PAGE TEXT:", self.text]
         return "\n".join(lines)
+
+    def data_line(self) -> str:
+        """The fingerprint, as one line the model reads and the loop parses.
+
+        It goes in the TOOL'S TEXT OUTPUT rather than travelling as a
+        separate structured field, and that is the load-bearing choice:
+        the ledger already records tool output whole, and the loop already
+        compares it. One definition of "the data changed", shared by the
+        loop and the gate, instead of two that can drift apart.
+        """
+        if self.data_keys is None:
+            return f"{DATA_PREFIX} {_NO_TABLE}"
+        if not self.data_keys:
+            return f"{DATA_PREFIX} {_EMPTY_TABLE}"
+        shown = " · ".join(self.data_keys)
+        if self.sorted_columns:
+            order = "; ".join(f"{c.get('column')} {c.get('direction')}"
+                              for c in self.sorted_columns)
+        else:
+            order = _NO_SORT
+        return (f"{DATA_PREFIX} {self.data_total} row(s) | {shown}\n"
+                f"{SORTED_PREFIX} {order}")
+
+
+DATA_PREFIX = "DATA:"
+_NO_TABLE = "(no data table on this page)"
+_EMPTY_TABLE = "(table present but empty)"
+_DATA_LINE = re.compile(
+    rf"^{re.escape(DATA_PREFIX)}\s*(?:(\d+) row\(s\) \| )?(.*)$", re.MULTILINE)
+
+
+def parse_data_keys(text: str) -> Optional[List[str]]:
+    """The row keys recorded in a tool result, or None if there were none.
+
+    None means UNKNOWN -- either the output predates the fingerprint, or
+    the page had no table. It must never be read as "the rows did not
+    change": a check that treats missing evidence as passing evidence is
+    the shape of every guard this codebase has had to rewrite.
+    """
+    m = _DATA_LINE.search(text or "")
+    if not m:
+        return None
+    body = (m.group(2) or "").strip()
+    if not body or body in (_NO_TABLE, _EMPTY_TABLE):
+        return [] if body == _EMPTY_TABLE else None
+    return [k.strip() for k in body.split("·") if k.strip()]
+
+
+def rows_changed(before: str, after: str) -> Optional[bool]:
+    """Did the DATA move between two tool results?
+
+    Three-valued on purpose. None means "cannot tell" -- no fingerprint on
+    one side, or no table at all -- and every caller has to handle it
+    explicitly rather than collapsing it into True or False. The
+    difference between "the rows did not move" and "there were no rows to
+    move" is exactly the difference between a failed action and an
+    inapplicable check.
+    """
+    a, b = parse_data_keys(before), parse_data_keys(after)
+    if a is None or b is None:
+        return None
+    return a != b
+
+
+SORTED_PREFIX = "SORTED:"
+_NO_SORT = "(no column is in order)"
+_SORTED_LINE = re.compile(rf"^{re.escape(SORTED_PREFIX)}\s*(.*)$", re.MULTILINE)
+
+
+def parse_sorted_columns(text: str) -> Optional[List[Dict[str, str]]]:
+    """Which columns a recorded page reported as being in order.
+
+    None when the output carries no SORTED line at all -- unknown, not
+    "nothing is sorted". [] means the page was checked and no column was
+    monotonic, which is a real and useful answer.
+
+    WHY THIS IS MEASURED AT THE PAGE rather than inferred from row keys.
+    The obvious test -- "did the same rows come back in a different
+    order?" -- fails on exactly the tables that matter. Measured live on
+    TradingView: sorting a 100-row screener whose fingerprint samples the
+    top 14 replaces every sampled row, so a genuine sort and a filter look
+    identical. Monotonicity of the numbers is what a sort actually means.
+    """
+    m = _SORTED_LINE.search(text or "")
+    if not m:
+        return None
+    body = (m.group(1) or "").strip()
+    if not body or body == _NO_SORT:
+        return []
+    out: List[Dict[str, str]] = []
+    for part in body.split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        name, _, direction = part.rpartition(" ")
+        if name and direction in ("ascending", "descending"):
+            out.append({"column": name.strip(), "direction": direction})
+    return out
+
+
+def fingerprint_lines(page) -> str:
+    """The DATA/SORTED lines for a page, without a full observation.
+
+    For the four tools that build their own output and never call
+    observe_page: browser_navigate, browser_extract, browser_extract_table
+    and browser_click. Every one of them is a page-view tool by the loop's
+    own predicates, and every one was carrying no fingerprint at all --
+    which mattered most for browser_navigate, since navigating to a sort
+    parameter the site ignores is the exact failure the fingerprint exists
+    to catch, and it happens entirely inside that tool.
+
+    MUST be called on the browser thread. Never raises: a page that
+    cannot be measured yields no line, and no line means UNKNOWN.
+    """
+    try:
+        raw = page.evaluate(_DATA_JS)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("fingerprint unavailable: %s", exc)
+        return ""
+    raw = raw or {}
+    return Observation({"data_keys": raw.get("keys"),
+                        "data_total": raw.get("total") or 0,
+                        "sorted_columns": raw.get("sorted")}, 0).data_line()
+
+
+def is_sorted_somehow(text: str) -> bool:
+    """True when the page reported at least one column genuinely in order.
+
+    Kept as a named predicate precisely BECAUSE it is not the right test
+    on its own: it returns True on TradingView's default view, which
+    arrives sorted by market cap. Use sort_changed to decide whether the
+    agent produced a ranking. This one only answers "is this table in
+    some order at all".
+    """
+    return bool(parse_sorted_columns(text))
+
+
+def _sort_signature(text: str) -> Optional[frozenset]:
+    cols = parse_sorted_columns(text)
+    if cols is None:
+        return None
+    return frozenset((c["column"], c["direction"]) for c in cols)
+
+
+def sort_changed(before: str, after: str) -> Optional[bool]:
+    """Did THIS RUN change how the table is ordered?
+
+    THE CORRECTION THAT MAKES THIS CHECK WORTH ANYTHING. The obvious test
+    -- "is some column in order?" -- was measured live and returns TRUE ON
+    THE DEFAULT VIEW: TradingView's screener arrives sorted by market cap
+    descending. So "something is sorted" would have passed the exact run
+    this exists to reject, where the agent read the default list and
+    called it the top weekly gainers.
+
+    A page arriving sorted is not the agent's doing. What proves the agent
+    produced a ranking is that the ordering it is reading is DIFFERENT
+    from the one the page handed it.
+
+    Verified end to end on the live screener: "Mkt cap descending" ->
+    "Chg % descending", rows NVDA/AAPL/GOOG -> TREVQ/ETBI/IOBTQ.
+
+    None when either side carries no measurement -- unknown, never
+    silently "no".
+    """
+    a, b = _sort_signature(before), _sort_signature(after)
+    if a is None or b is None:
+        return None
+    return a != b
 
 
 _STOPWORDS = frozenset({

@@ -32,6 +32,58 @@ COMPUTED_METRIC_WORDS = (
 COMPUTE_TOOLS = ("run_python", "calculate")
 
 
+_MD_ROW = re.compile(r"^\s*\|(?P<first>[^|]{1,60})\|", re.MULTILINE)
+_MD_SEPARATOR = re.compile(r"^[\s|:\-—–]+$")
+# A row label worth checking: an identifier, not prose and not a number.
+# "TREVQ", "BRK.A", "AAPL" qualify; "Ticker", "1", "the top five" do not.
+_ROW_LABEL = re.compile(r"^[A-Z][A-Z0-9./\-]{1,14}$")
+_ROW_HEADERS = frozenset({
+    "TICKER", "SYMBOL", "STOCK", "NAME", "COMPANY", "RANK", "ITEM", "N/A",
+})
+
+
+def reported_row_labels(text: str) -> List[str]:
+    """Row identifiers a deliverable presents as data it read off a page.
+
+    Deliberately narrow: it takes the FIRST cell of each markdown table
+    row and keeps only what is shaped like an identifier. The cost of a
+    false accusation here is a blocked honest run, and a check that fires
+    on prose is worth less than no check at all.
+    """
+    out: List[str] = []
+    for m in _MD_ROW.finditer(text or ""):
+        cell = m.group("first").strip().strip("*`_ ").strip()
+        if not cell or _MD_SEPARATOR.match(cell):
+            continue
+        parts = cell.split()
+        token = parts[0].strip("*`_,:;") if parts else ""
+        if not _ROW_LABEL.match(token) or token.upper() in _ROW_HEADERS:
+            continue
+        if token not in out:
+            out.append(token)
+    return out
+
+
+def unbacked_row_labels(text: str, captured: str) -> List[str]:
+    """Row labels the deliverable reports that appear NOWHERE this run read.
+
+    THE FAILURE THIS ANSWERS. A live run reported a ten-row table of
+    tickers with weekly percentages. Every ticker was real and every price
+    was real -- and the percentages had been altered so that five of them
+    read as gainers. Number provenance catches an invented FIGURE; nothing
+    caught an invented ROW, because a row never had to come from anywhere.
+
+    The same shape as untraceable_metric_values, one level up: a
+    deliverable may only report records that appear in what the run
+    actually captured.
+    """
+    if not text or not captured:
+        return []
+    haystack = captured.upper()
+    return [label for label in reported_row_labels(text)
+            if label.upper() not in haystack]
+
+
 def task_requires_computation(task: str) -> bool:
     """True when the ask names a figure you can only get by executing
     something over data."""
