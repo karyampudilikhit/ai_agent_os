@@ -60,7 +60,13 @@ from backend.app.critique.compute_gate import (
 )
 from backend.app.orchestrator.output_contract import (
     EXECUTED_CODE,
+    RANKED_RESULT,
     REFUSAL_TEXT,
+    is_browser_tool,
+    is_interaction_tool,
+    is_page_view_tool,
+    page_view_changed,
+    task_wants_ranking,
     unsatisfied_kinds,
 )
 from backend.app.tools.http_tool_runner import HTTPToolRunner
@@ -153,8 +159,63 @@ STEP_MAX_TOKENS = _env_int("AGENT_STEP_MAX_TOKENS", 700)
 STEP_CALL_RETRIES = _env_int("AGENT_STEP_CALL_RETRIES", 3)
 STEP_CALL_RETRY_BACKOFF = float(os.environ.get("AGENT_STEP_CALL_RETRY_BACKOFF", "1.5"))
 
+# Budgets for a run that turns out to be driving a BROWSER.
+#
+# Operating a web UI costs three steps per attempt -- find the control,
+# use it, check that the page moved -- so the ordinary budget of 10 buys
+# barely three attempts, and a slow app spends much of the 240s on page
+# loads rather than thinking. Four TradingView runs each ran out with
+# the screener still unsorted.
+#
+# The token budget is the one with recorded evidence behind it.
+# run_test_model.py measured the SAME model failing at 700 tokens per
+# step and succeeding at 3000 -- the step budget flipped the outcome
+# where the model choice did not (README.md, "the model is not the
+# variable"). A reasoning model makes this sharper still: thinking
+# tokens are spent from the same budget BEFORE any response, so a
+# thinking model at 700 returns an empty string and looks like a model
+# that refused to act.
+#
+# Applied only when a browser tool actually succeeds, and only when the
+# founder has not set a budget of their own -- see _maybe_widen_budget.
+BROWSER_MAX_STEPS = _env_int("AGENT_BROWSER_MAX_STEPS", 22)
+BROWSER_DEADLINE_SECONDS = _env_float("AGENT_BROWSER_DEADLINE_SECONDS", 600.0)
+BROWSER_STEP_MAX_TOKENS = _env_int("AGENT_BROWSER_STEP_MAX_TOKENS", 3000)
 
-def _loop_adapter(default: Any) -> Any:
+# How many times an interaction may leave the page unchanged before the
+# loop stops nudging and tells the model to change tactics entirely.
+# Two is enough to rule out a mis-click without spending the budget
+# proving the same control does nothing.
+MAX_INEFFECTIVE_INTERACTIONS = _env_int("AGENT_MAX_INEFFECTIVE_INTERACTIONS", 2)
+
+# Guidance that only makes sense once a browser is involved, and only
+# added to the prompt then -- an ordinary research task should not pay
+# tokens for advice about sort controls.
+#
+# The first rule is the one that would have saved all four TradingView
+# runs. Every one of them tried to operate the screener's UI; none tried
+# the URL, which encodes the sort directly and cannot mis-click.
+BROWSER_RULES = """
+WORKING IN A BROWSER — read these before your next action:
+- PREFER A URL OVER CLICKING. If a sort, filter, search, date range or
+  page number can be written in the address, navigate straight to it
+  instead of operating controls. Look at the current URL for the
+  parameters the site already uses and change them. One navigation
+  cannot mis-click; six clicks can, and a click that lands wrong still
+  reports success.
+- Use browser_find to locate a control by description. browser_observe
+  lists the first elements it finds and stops, so on a busy page the
+  control you need may not be in it at all — that is not the same as it
+  being absent.
+- After any click or select, CHECK the page actually changed before you
+  believe it. If you are told the page is unchanged, that control did
+  nothing: do not click it again with different hopes.
+- Read the rows LAST. Anything you extract before sorting is the site's
+  default view, not the answer to the question you were asked.
+"""
+
+
+def _loop_adapter(default: Any, configured: Optional[str] = None) -> Any:
     """Optionally run the AGENTIC LOOP on a different model than the rest
     of the pipeline.
 
@@ -177,31 +238,29 @@ def _loop_adapter(default: Any) -> Any:
     If a stronger model does pick the right tool, this stops being a
     diagnostic and becomes the fix — route tool-selection to a
     tool-capable model, keep the cheaper one for prose.
+
+    `configured` is the per-employee `model.loop_model` setting, so one
+    employee can drive a browser on a stronger model while the rest of
+    the company stays on the cheap one. AGENT_LOOP_MODEL still outranks
+    it: a process-wide diagnostic knob has to beat configuration, or
+    changing one variable to answer a question means auditing every
+    employee first.
+
+    Adapters come from a pool rather than being built here, because this
+    now runs per employee per run rather than once per process, and
+    every construction used to cost a health probe.
     """
-    name = os.environ.get("AGENT_LOOP_MODEL", "").strip()
+    name = os.environ.get("AGENT_LOOP_MODEL", "").strip() or (configured or "").strip()
     if not name:
         return default
-    try:
-        from backend.app.models.provider_adapters.ollama_adapter import OllamaAdapter
-        adapter = OllamaAdapter(
-            base_url=os.environ.get("OLLAMA_HOST", "http://localhost:11434"),
-            model=name,
-            api_key=os.environ.get("OLLAMA_API_KEY") or None,
-        )
-        logger.info("agentic loop using override model: %s", name)
-        return adapter
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "AGENT_LOOP_MODEL=%s could not be built (%s) — falling back to the "
-            "pipeline adapter", name, exc,
-        )
-        return default
+    from backend.app.models.adapter_pool import get_adapter
+    return get_adapter(name, default)
 
 
 STEP_PROMPT = """You are {role}, working on a task. You can call tools one at a time.
 After each call you SEE the result, then decide the next action. Work
 step by step until the task is genuinely done.
-{standing_rules}
+{standing_rules}{browser_rules}
 YOUR TASK:
 "{task}"
 
@@ -264,16 +323,28 @@ class AgenticExecutor:
         step_max_tokens: int = STEP_MAX_TOKENS,
         required_outputs: Sequence[str] = (),
         standing_rules: Sequence[str] = (),
+        loop_model: Optional[str] = None,
     ):
         # Every one of these is defaulted, so `AgenticExecutor(adapter)`
         # anywhere else in the repo -- and in every test -- behaves
         # exactly as it did before per-employee config existed.
-        self.adapter = _loop_adapter(model_adapter)
+        self.adapter = _loop_adapter(model_adapter, loop_model)
         self.max_steps = max_steps
         self.deadline_seconds = deadline_seconds
         self.step_max_tokens = step_max_tokens
         self.required_outputs = tuple(required_outputs or ())
         self.standing_rules = tuple(standing_rules or ())
+
+        # Whether the CALLER chose these, or they are simply the module
+        # defaults. Only defaults get widened for browser work: a founder
+        # who set max_steps=4 meant 4, and silently spending 22 would
+        # make the settings page a suggestion box.
+        self._budget_is_default = (
+            max_steps == MAX_STEPS
+            and deadline_seconds == DEADLINE_SECONDS
+            and step_max_tokens == STEP_MAX_TOKENS
+        )
+        self._budget_widened = False
 
     # ---- tool surface -------------------------------------------------
 
@@ -284,9 +355,20 @@ class AgenticExecutor:
         deliverable (create_pptx/docx/xlsx — those fire post-synthesis
         from finished text) and tools that block on a human. Delegated
         to ToolRegistry (tool_registry.py) so this three-way union lives
-        in exactly one place instead of being reimplemented per caller."""
+        in exactly one place instead of being reimplemented per caller.
+
+        The task hint travels on `self._task_hint` rather than as a
+        parameter, deliberately: this method is overridden by every test
+        that needs a deterministic tool surface, and widening its
+        signature broke all of them at once. A method others substitute
+        should keep the shape they substituted.
+
+        The hint drops niche tools the task never mentions, so they
+        cannot crowd the ranking -- `arc_click` beat every browser tool
+        on a TradingView task purely by matching the word "click"."""
         try:
-            return _tool_registry.list_tools(for_planner=True)
+            return _tool_registry.list_tools(
+                for_planner=True, task_hint=getattr(self, "_task_hint", ""))
         except Exception:  # noqa: BLE001
             return []
 
@@ -373,6 +455,9 @@ class AgenticExecutor:
         task = (task or "").strip()
         if not task:
             return None
+        # Set before listing so niche tools the task never mentions are
+        # dropped BEFORE ranking rather than competing in it.
+        self._task_hint = task if not original_task else task + chr(10) + original_task
         tools = self._available_tools()
         if not tools:
             return None
@@ -393,10 +478,23 @@ class AgenticExecutor:
         # guard below, which exists to stop a model stuck calling the
         # same thing hoping for a different answer, not to stop a poll.
         pollable_names = {t["qualified_name"] for t in tools if t.get("pollable")}
-        deadline = time.monotonic() + self.deadline_seconds
+
+        # Budgets are LOCAL to this run, not attributes, so widening them
+        # for a browser task cannot leak into the next run of a reused
+        # executor.
+        max_steps = self.max_steps
+        step_tokens = self.step_max_tokens
+        started = time.monotonic()
+        deadline = started + self.deadline_seconds
+        # Reset per run, so a reused executor widens again rather than
+        # remembering that a previous task already did.
+        self._budget_widened = False
 
         steps: List[Dict[str, str]] = []   # rendered transcript entries
-        seen_calls: set = set()            # (qname, args-json) repeat guard
+        # (qname, args-json) -> the page as it looked when that call was
+        # last made. A dict rather than a set because for browser work
+        # "the same call" is not the same question: see below.
+        seen_calls: Dict[Any, str] = {}
         repeat_counts: Dict[Any, int] = {}  # how often each call has been repeated
         consecutive_failures: Dict[str, int] = {}  # per-tool failure streak
         successful_calls = 0   # real work done, used to challenge an early DONE
@@ -420,6 +518,12 @@ class AgenticExecutor:
             # founder's original wording counts even when the Supervisor's
             # paraphrase dropped the metric names.
             required.add(EXECUTED_CODE)
+        if task_wants_ranking(ranking_text):
+            # "top 5 gainers" is a claim about ORDER, and the default view
+            # of a table is not ordered the way anyone asked. A live run
+            # read a screener's default market-cap list and reported it as
+            # top weekly gainers: every price real, every row wrong.
+            required.add(RANKED_RESULT)
         needs_compute = EXECUTED_CODE in required
 
         # Standing rules reach the LOOP, not just the prose writer.
@@ -454,7 +558,23 @@ class AgenticExecutor:
             except Exception:  # noqa: BLE001
                 return []
 
-        for step_i in range(self.max_steps):
+        # State for the "that click did nothing" check.
+        #
+        # Every browser primitive re-observes after acting and returns the
+        # page it produced, so comparing consecutive results answers the
+        # one question the model cannot answer for itself: did what I just
+        # did have any effect? A click that lands on empty space succeeds,
+        # returns a full page, and looks exactly like a click that sorted
+        # the table.
+        last_page_view = ""
+        ineffective_interactions = 0
+        browser_rules_block = ""
+
+        step_i = -1
+        while True:
+            step_i += 1
+            if step_i >= max_steps:
+                break
             if time.monotonic() > deadline:
                 logger.info("[%s] agentic loop hit wall-clock deadline at step %d", role, step_i)
                 steps.append({"note": "(stopped: time budget for tool use reached)"})
@@ -489,11 +609,12 @@ class AgenticExecutor:
                             tools_block=tools_block,
                             transcript=transcript,
                             steps_used=step_i,
-                            max_steps=self.max_steps,
+                            max_steps=max_steps,
                             standing_rules=standing_block,
+                            browser_rules=browser_rules_block,
                         ),
                         temperature=0.1,
-                        max_tokens=self.step_max_tokens,
+                        max_tokens=step_tokens,
                     )
                     break
                 except Exception as exc:  # noqa: BLE001
@@ -574,7 +695,7 @@ class AgenticExecutor:
                 if (
                     missing_kinds
                     and done_refusals < MAX_DONE_REFUSALS
-                    and step_i + 1 < self.max_steps
+                    and step_i + 1 < max_steps
                 ):
                     done_refusals += 1
                     logger.warning(
@@ -601,7 +722,7 @@ class AgenticExecutor:
                 # specialist that genuinely has nothing left to do must
                 # be able to stop, and nagging it into make-work is the
                 # failure mode on the other side of this.
-                if not done_challenged and successful_calls <= 1 and step_i + 1 < self.max_steps:
+                if not done_challenged and successful_calls <= 1 and step_i + 1 < max_steps:
                     done_challenged = True
                     logger.info(
                         "[%s] DONE at step %d with %d successful call(s) — "
@@ -609,7 +730,7 @@ class AgenticExecutor:
                     )
                     steps.append({"note": (
                         f"(you returned DONE after {successful_calls} successful "
-                        f"tool call(s), with {self.max_steps - step_i - 1} steps "
+                        f"tool call(s), with {max_steps - step_i - 1} steps "
                         f"still available. If the task is genuinely finished, "
                         f"return DONE again and say in your thought what you "
                         f"completed. If it is NOT finished — you opened something "
@@ -634,7 +755,37 @@ class AgenticExecutor:
                 args = {}
 
             fingerprint = (action, json.dumps(args, sort_keys=True)[:400])
-            if action not in pollable_names:
+
+            # LOOKING AGAIN AT A PAGE THAT MOVED IS NOT A REPEAT.
+            #
+            # browser_observe takes only a session token, so observing a
+            # page after changing it produces a byte-identical CALL --
+            # and the guard below killed the run for it. That made the
+            # observe -> act -> observe-to-verify cycle structurally
+            # impossible, which is the very cycle the browser rules
+            # instruct and the ranked_result contract requires. A live
+            # trace ended exactly there: "stopped: repeated the same
+            # action.browser_observe call - no new information", on a
+            # page that had just been navigated somewhere new.
+            #
+            # Allowed only on EVIDENCE that the page really moved, so a
+            # model observing the same unchanged page twice is still
+            # stopped. Non-browser tools keep the old behaviour exactly:
+            # last_page_view stays empty for them and an empty view
+            # never counts as changed.
+            prior_view = seen_calls.get(fingerprint)
+            page_moved = (
+                prior_view is not None
+                and is_browser_tool(action)
+                and page_view_changed(prior_view, last_page_view)
+            )
+            if page_moved:
+                logger.info(
+                    "[%s] %s repeated, but the page moved since — allowing",
+                    role, action,
+                )
+
+            if action not in pollable_names and not page_moved:
                 if fingerprint in seen_calls:
                     # A repeat used to abort the entire run on the FIRST
                     # occurrence. That was too blunt: on a real
@@ -664,7 +815,7 @@ class AgenticExecutor:
                         ),
                     })
                     continue
-                seen_calls.add(fingerprint)
+            seen_calls[fingerprint] = last_page_view
 
             logger.info("[%s] agentic step %d: %s(%s)", role, step_i + 1, action, json.dumps(args)[:120])
             result = self._execute(action, args)
@@ -711,6 +862,81 @@ class AgenticExecutor:
                     and _computation_produced_output(result)
                 ):
                     computed = True
+
+                if is_browser_tool(action):
+                    # This run is driving a browser. Two things follow,
+                    # both triggered by EVIDENCE that a browser tool
+                    # really worked rather than by guessing from the
+                    # task's wording -- the same reason every other check
+                    # here reads a record instead of reading text.
+                    if not browser_rules_block:
+                        browser_rules_block = BROWSER_RULES
+                        logger.info("[%s] browser detected — browser rules added", role)
+                    if self._budget_is_default and not self._budget_widened:
+                        self._budget_widened = True
+                        max_steps = max(max_steps, BROWSER_MAX_STEPS)
+                        step_tokens = max(step_tokens, BROWSER_STEP_MAX_TOKENS)
+                        deadline = max(deadline, started + BROWSER_DEADLINE_SECONDS)
+                        logger.info(
+                            "[%s] browser budget: %d steps, %.0fs, %d tokens/step",
+                            role, max_steps, BROWSER_DEADLINE_SECONDS, step_tokens,
+                        )
+
+                    comparable = is_page_view_tool(action)
+                    changed = (comparable and bool(last_page_view)
+                               and page_view_changed(last_page_view, result))
+
+                    # THE FEEDBACK THAT WAS MISSING.
+                    #
+                    # A click that hits nothing succeeds, returns a full
+                    # page, and is indistinguishable in the call log from
+                    # a click that sorted the table. The end-of-run
+                    # contract could already tell them apart -- it
+                    # compares the page before and after -- but it ran
+                    # after the turn was over. So a model clicked
+                    # ineffectively, was told nothing, and clicked again;
+                    # four TradingView runs never once learned that the
+                    # screener had not moved. Same comparison, run at the
+                    # moment the model can still act on it.
+                    if is_interaction_tool(action) and last_page_view:
+                        if changed:
+                            ineffective_interactions = 0
+                        else:
+                            ineffective_interactions += 1
+                            logger.info(
+                                "[%s] %s left the page unchanged (%d in a row)",
+                                role, action, ineffective_interactions,
+                            )
+                            if ineffective_interactions >= MAX_INEFFECTIVE_INTERACTIONS:
+                                steps.append({"note": (
+                                    f"(THE PAGE IS STILL UNCHANGED. That is "
+                                    f"{ineffective_interactions} interactions in a row "
+                                    f"that did nothing — the elements you are choosing "
+                                    f"are not the control you need, and trying a third "
+                                    f"is unlikely to differ. CHANGE TACTICS NOW: either "
+                                    f"put what you want in the URL and navigate there "
+                                    f"directly, or call action.browser_find to search "
+                                    f"the whole page for the control by description. Do "
+                                    f"not report anything you have read so far as the "
+                                    f"answer — it is the page's default view, not the "
+                                    f"result you were asked for.)"
+                                )})
+                            else:
+                                steps.append({"note": (
+                                    "(NOTE: the page is byte-for-byte the same as "
+                                    "before that action. It succeeded, but the element "
+                                    "you picked was not the control — nothing sorted, "
+                                    "filtered or opened. Do not treat this as done. "
+                                    "Pick a different element, or set the option in the "
+                                    "URL and navigate there instead.)"
+                                )})
+                    elif changed:
+                        # A navigation or scroll moved the page; whatever
+                        # was not working before is no longer the state.
+                        ineffective_interactions = 0
+
+                    if comparable and result:
+                        last_page_view = result
 
         _release_browser_sessions(role)
 

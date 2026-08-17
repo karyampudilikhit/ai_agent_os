@@ -44,6 +44,30 @@ logger = logging.getLogger(__name__)
 EXECUTED_CODE = "executed_code"
 FETCHED_URL = "fetched_url"
 FILE_WRITTEN = "file_written"
+URL_VERIFIED = "url_verified"
+RANKED_RESULT = "ranked_result"
+
+# Words that mean "the ORDER of the results is the answer". A task asking
+# for the top 5 gainers is not asking for five stocks -- it is asking for
+# the five with the largest change, which is a claim about sorting.
+_RANKING_WORDS = (
+    "top ", "best ", "worst ", "highest", "lowest", "biggest", "largest",
+    "smallest", "gainers", "losers", "movers", "leaders", "laggards",
+    "ranked", "rank ", "sorted", "sort by", "most ", "least ",
+)
+
+# Tools that CHANGE what a page is showing, as opposed to reading it.
+# Sorting a table, applying a filter, choosing a period -- all of these
+# go through one of these.
+_INTERACTION_TOOLS = (
+    "browser_click_element", "browser_click", "browser_select",
+    "browser_type", "browser_press", "browser_submit",
+)
+_READ_TOOLS = ("browser_extract", "browser_extract_table", "browser_observe")
+
+
+def task_wants_ranking(task: str) -> bool:
+    return any(w in (task or "").lower() for w in _RANKING_WORDS)
 
 # Tool name fragments that satisfy each kind. Matched against the
 # loop's qualified names ("action.run_python"), so a bare name matches
@@ -62,6 +86,8 @@ CONTRACT_KINDS: Dict[str, str] = {
     EXECUTED_CODE: "must actually execute code and print a result",
     FETCHED_URL: "must actually fetch a live page or dataset",
     FILE_WRITTEN: "must actually produce a file that exists on disk",
+    URL_VERIFIED: "must end at a URL that was opened and confirmed to respond",
+    RANKED_RESULT: "must actually sort or filter the page, not read the default view",
 }
 
 # What the loop tells the model when it refuses DONE for each kind.
@@ -95,12 +121,93 @@ REFUSAL_TEXT: Dict[str, str] = {
         "producing nothing. Actually write the file NOW, then report its "
         "real path.)"
     ),
+    RANKED_RESULT: (
+        "(REFUSED. This task asks for a RANKED result -- top movers, best, "
+        "worst, sorted -- and you have read the page without ever changing "
+        "what it shows. A table's default view is not a ranking: the rows "
+        "you are looking at are whatever the site chose to display, not the "
+        "ones the founder asked for. A previous run reported the screener's "
+        "default market-cap list as 'top gainers'; every number in it was "
+        "real and every row was wrong. Sort or filter the page first. The "
+        "cheapest way is the URL: many sites encode the sort as a "
+        "parameter, and navigating there directly cannot mis-click. "
+        "Otherwise use browser_find to locate the control by description "
+        "-- browser_observe lists only the first elements it finds, so a "
+        "control further down the page never appears in it -- then "
+        "browser_click_element or browser_select to use it, and observe "
+        "again to confirm the order really changed. Only then read the rows.)"
+    ),
+    URL_VERIFIED: (
+        "(REFUSED. This task is only finished when the resulting URL has "
+        "been opened and confirmed to load. Clicking a Deploy button is not "
+        "the same as the deployment working -- builds fail, and a button "
+        "click tells you nothing about what the visitor sees. Take the URL "
+        "the page gave you, open it with action.browser_navigate, confirm "
+        "it responds with the expected page, and report that.)"
+    ),
 }
 
 
 def _tool_matches(qualified: str, fragments: Sequence[str]) -> bool:
     name = str(qualified or "").lower()
     return any(f in name for f in fragments)
+
+
+# The same three predicates the end-of-run check uses, exported so the
+# LOOP can apply them live.
+#
+# This matters more than it looks. The comparison below could tell a
+# click that sorted a table from a click the page ignored -- but it only
+# ran once the turn was over, so a model that clicked nothing useful got
+# no signal at the moment it could still act on one. It made the same
+# ineffective click four times and was told at the end. Same fact, same
+# function, four steps too late.
+
+def is_interaction_tool(qualified: str) -> bool:
+    """True for tools that CHANGE what a page shows."""
+    return _tool_matches(qualified, _INTERACTION_TOOLS)
+
+
+def is_read_tool(qualified: str) -> bool:
+    """True for tools that only READ a page."""
+    return _tool_matches(qualified, _READ_TOOLS)
+
+
+def is_browser_tool(qualified: str) -> bool:
+    """True for anything that drives or reads a browser page.
+
+    Used by the loop to notice it is doing web work at all -- which is
+    what triggers the larger step budget and the browser rule block.
+    """
+    return _tool_matches(qualified, _INTERACTION_TOOLS + _READ_TOOLS + (
+        "browser_navigate", "browser_find", "browser_scroll", "browser_wait",
+        "browser_back", "browser_download", "browser_upload",
+    ))
+
+
+def is_page_view_tool(qualified: str) -> bool:
+    """True for tools whose output is a RENDERING OF THE WHOLE PAGE, and
+    is therefore comparable with the last one.
+
+    browser_find is deliberately excluded even though it is a read. It
+    returns matched controls in its own format and scans far deeper than
+    an observation, so its output differs wildly from a page render --
+    comparing a click against it would report "the page changed" every
+    single time and quietly disable the check this exists for.
+    """
+    return _tool_matches(qualified, _INTERACTION_TOOLS + _READ_TOOLS + (
+        "browser_navigate", "browser_scroll", "browser_wait", "browser_back",
+    ))
+
+
+def page_view_changed(before: str, after: str) -> bool:
+    """True when acting actually moved the page.
+
+    Public alias for the comparison the ranked_result contract is built
+    on, so the loop and the gate can never disagree about what "the page
+    changed" means.
+    """
+    return _materially_different(after, before)
 
 
 def _claimed_paths(ledger_calls: Iterable[Dict[str, Any]]) -> List[str]:
@@ -151,7 +258,108 @@ def satisfied_kinds(
                 break
         except (OSError, ValueError):  # noqa: PERF203
             continue
+
+    # A URL counts as verified only when the run OPENED it after the work
+    # that produced it. Two navigations minimum, and the last one is the
+    # check: navigate → do the thing → navigate to the result.
+    #
+    # "I clicked Deploy" is the claim this refuses to accept. Builds fail
+    # after the button goes green, and a click tells you nothing about
+    # what a visitor actually sees.
+    if _verified_a_result_url(ledger_calls):
+        done.add(URL_VERIFIED)
+
+    if _changed_the_page_before_reading(ledger_calls):
+        done.add(RANKED_RESULT)
     return done
+
+
+def _normalise(text: str) -> str:
+    return " ".join((text or "").split())[:6000]
+
+
+def _materially_different(a: str, b: str) -> bool:
+    """True when two page views are not effectively the same.
+
+    A click that lands on nothing still returns a fresh observation --
+    same URL, same elements, same text. Comparing the VIEWS is what
+    separates "sorted the table" from "clicked something and the page
+    ignored it", and no cheaper signal does that: both look identical in
+    the call log.
+    """
+    na, nb = _normalise(a), _normalise(b)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return False
+    import difflib
+    return difflib.SequenceMatcher(None, na, nb).ratio() < 0.98
+
+
+def _changed_the_page_before_reading(ledger_calls: Iterable[Dict[str, Any]]) -> bool:
+    """True when an interaction actually CHANGED what the page shows.
+
+    Three conditions, and the run that motivated this failed all three
+    in different ways:
+
+      - the interaction must have SUCCEEDED. That run made three clicks
+        and one failed; counting attempts would call a page sorted on
+        the strength of a click that did nothing.
+      - the page must have CHANGED. Its successful click at step 6 hit
+        an element that was not the sort control -- the click worked,
+        the page did not move. Requiring only "a click succeeded" passes
+        that run, which is why comparing views is the load-bearing part.
+      - a read must follow. The run's reported figures came from an
+        extract taken at step 2, before any click at all. Reading first
+        and fiddling afterwards is not sorting.
+
+    Every browser tool re-observes after acting and that output is kept
+    whole in the ledger, so the comparison is against recorded evidence
+    rather than the model's account of what its click did.
+    """
+    calls = sorted(ledger_calls or (), key=lambda c: float(c.get("at") or 0))
+    prev_view = ""
+    changed_at = 0.0
+
+    for call in calls:
+        if not call.get("ok"):
+            continue
+        tool = str(call.get("tool") or "")
+        at = float(call.get("at") or 0)
+        view = str(call.get("output") or call.get("result_preview") or "")
+
+        if _tool_matches(tool, _INTERACTION_TOOLS):
+            if prev_view and _materially_different(view, prev_view):
+                changed_at = max(changed_at, at)
+            if view:
+                prev_view = view
+        elif _tool_matches(tool, _READ_TOOLS):
+            if changed_at and at > changed_at:
+                return True
+            if view:
+                prev_view = view
+    return False
+
+
+def _verified_a_result_url(ledger_calls: Iterable[Dict[str, Any]]) -> bool:
+    """True when a navigation succeeded AFTER some page-changing action.
+
+    Ordering is the whole test. Opening a URL before doing the work
+    proves nothing about the work; opening one afterwards is the agent
+    going back to look at what it made.
+    """
+    acted_at: float = 0.0
+    for call in ledger_calls or ():
+        if not call.get("ok"):
+            continue
+        tool = str(call.get("tool") or "")
+        at = float(call.get("at") or 0)
+        if _tool_matches(tool, ("browser_click", "browser_submit", "browser_press",
+                               "deploy_vercel", "browser_type")):
+            acted_at = max(acted_at, at)
+        elif acted_at and _tool_matches(tool, ("browser_navigate",)) and at > acted_at:
+            return True
+    return False
 
 
 def unsatisfied_kinds(

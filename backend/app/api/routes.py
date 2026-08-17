@@ -82,6 +82,7 @@ from backend.app.employees.employee_config import (
     EmployeeConfigError,
     resolve_with_provenance,
 )
+from backend.app.state import run_artifacts as _artifacts
 from backend.app.employees.employee_registry import EmployeeRegistryError
 from backend.app.employees.employee_registry import get_registry as get_employee_registry
 from backend.app.tools.http_tool_store import HTTPToolStoreError
@@ -336,6 +337,12 @@ def run_task_on_team(session_id: str, req: RunTaskRequest) -> RunTaskResponse:
     # Progress tracking lists SPECIALISTS (the Supervisor's planning
     # and synthesis phases show up as separate phase events, not roles).
     progress_store.start_run(session_id, [e.role for e in specialists])
+    # Scope the deliverable gate and the artifact registry to THIS run,
+    # exactly as the async path does. This endpoint used to do neither,
+    # so every check that asks "what did this run actually do" saw the
+    # whole process history instead.
+    _sync_started = time.time()
+    _artifacts.set_current_run(sync_run_id)
     try:
         result = coordinator.run_with_supervisor(
             prompt=req.task,
@@ -354,6 +361,22 @@ def run_task_on_team(session_id: str, req: RunTaskRequest) -> RunTaskResponse:
 
     final_output = result.get("final_output") or ""
     evidence = result.get("evidence", [])
+
+    # Gate the deliverable, same as the async path.
+    #
+    # This endpoint shipped ungated until now, which meant every check
+    # the product depends on -- compute ran, numbers trace to what the
+    # code printed, a ranking was actually sorted -- applied only to
+    # tasks started from chat. A guard that covers one of two entry
+    # points is a guard with a documented way around it, and the way
+    # around it was the plain REST API.
+    from backend.app.chat.async_runs import DeliverableBlocked
+    try:
+        final_output = _gate_deliverable(final_output, req.task, since=_sync_started)
+    except DeliverableBlocked as exc:
+        get_run_store().set_failed(sync_run_id, str(exc))
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     # Record in RunStore like the async path does. Without this, work
     # started here never appeared in "Past outputs" and was invisible to
     # the clarifier's recent-deliverables memory — the same work, simply
@@ -693,6 +716,130 @@ def update_employee(employee_id: str, req: EmployeeUpdateRequest) -> EmployeeRes
     except EmployeeRegistryError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return _employee_to_response(spec)
+
+
+@router.get("/build")
+def build_info() -> Dict[str, Any]:
+    """When the app shell on disk was last written.
+
+    The UI shows this so a stale browser cache is visible at a glance.
+    Twice now a shipped feature was reported as "nothing happens" purely
+    because the tab was running HTML from before the feature existed, and
+    there was no way to tell that apart from a real bug by looking at it.
+    """
+    import time as _time
+    from backend.app.utils.paths import repo_root
+    shell = os.path.join(repo_root(), "frontend_mvp", "app", "index.html")
+    try:
+        stat = os.stat(shell)
+        return {
+            "built_at": _time.strftime("%H:%M:%S", _time.localtime(stat.st_mtime)),
+            "built_at_epoch": stat.st_mtime,
+            "bytes": stat.st_size,
+        }
+    except OSError as exc:
+        logger.warning("could not stat app shell: %s", exc)
+        return {"built_at": "unknown", "built_at_epoch": 0, "bytes": 0}
+
+
+@router.get("/tools")
+def list_all_tools() -> Dict[str, Any]:
+    """Every tool an employee can reach, grouped by where it comes from.
+
+    Three namespaces present one interface to the planner -- built-in
+    actions, MCP servers the founder connected, and their own HTTP tools
+    -- and until now there was no way to SEE that union. The founder
+    could not answer "what can this employee actually do", which is the
+    first question anyone asks about an AI worker.
+
+    Availability is process-wide today: every employee reaches the same
+    registry. Reported honestly as such rather than implying a per-role
+    catalogue that does not exist yet.
+    """
+    from backend.app.tools.tool_registry import get_registry as _tools
+    try:
+        tools = _tools().list_tools(for_planner=False)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("tool catalogue unavailable: %s", exc)
+        tools = []
+
+    groups: Dict[str, List[Dict[str, Any]]] = {"action": [], "mcp": [], "custom": []}
+    for t in tools:
+        qname = str(t.get("qualified_name") or "")
+        ns = qname.split(".", 1)[0] if "." in qname else ""
+        bucket = "action" if ns == "action" else ("custom" if ns == "custom" else "mcp")
+        schema = t.get("input_schema") or {}
+        # ActionRegistry encodes the approval requirement as a
+        # "[MUTATING — asks approval] " prefix on the description rather
+        # than a field, because that string is written FOR the model.
+        # Read it back out here so the UI can badge it, and strip both
+        # prefixes so the founder sees a clean sentence.
+        desc = str(t.get("description") or "")
+        mutating = bool(t.get("mutating")) or desc.startswith("[MUTATING")
+        for prefix in ("[MUTATING — asks approval] ", "[MUTATING - asks approval] ", "[READ] "):
+            if desc.startswith(prefix):
+                desc = desc[len(prefix):]
+                break
+        groups[bucket].append({
+            "qualified_name": qname,
+            "name": qname.split(".", 1)[-1],
+            "description": desc,
+            "params": list((schema.get("properties") or {}).keys())[:12],
+            "mutating": mutating,
+        })
+    for bucket in groups.values():
+        bucket.sort(key=lambda t: t["qualified_name"])
+    return {
+        "groups": groups,
+        "total": sum(len(v) for v in groups.values()),
+        "scope": "process-wide — every employee currently reaches the same catalogue",
+    }
+
+
+@router.get("/employees/{employee_id}/system-prompt")
+def employee_system_prompt(employee_id: str) -> Dict[str, Any]:
+    """The system prompt this employee ACTUALLY runs on.
+
+    Rendered by the same `build_objective` the real run uses, with a
+    placeholder task, rather than reconstructed in the frontend. A copy
+    of the prompt maintained in JavaScript would drift from the real one
+    the first time either changed, and the founder would be editing a
+    fiction.
+    """
+    spec = get_employee_registry().get(employee_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail=f"No Employee with id {employee_id!r}.")
+
+    cfg = spec.get("config") or {}
+    try:
+        from backend.app.employees.dynamic_employee import DynamicEmployee
+        from backend.app.employees.employee_config import resolve
+
+        class _NoMemory:
+            def relevant_context(self, task): return ""
+            def record(self, task, result): pass
+
+        emp = DynamicEmployee(
+            employee_id=employee_id,
+            role=spec.get("role", ""),
+            mandate=spec.get("mandate", ""),
+            pipeline=None,
+            memory_store=_NoMemory(),
+            config=resolve(spec),
+        )
+        rendered = emp.build_objective("{task}")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("could not render prompt for %s: %s", employee_id, exc)
+        raise HTTPException(status_code=500, detail=f"Could not render prompt: {exc}") from exc
+
+    return {
+        "employee_id": employee_id,
+        "role": spec.get("role", ""),
+        "rendered": rendered,
+        "is_custom": bool(cfg.get("prompt_override")),
+        "override": cfg.get("prompt_override"),
+        "chars": len(rendered),
+    }
 
 
 @router.get("/employees/{employee_id}/effective-config")
@@ -2091,6 +2238,31 @@ def _gate_deliverable(output: str, task: str = "",
     except Exception:  # noqa: BLE001
         pass
 
+    # A ranked answer whose page was never sorted.
+    #
+    # The loop already refuses DONE for this, but a loop can end other
+    # ways -- the run that motivated this hit the repeat-call guard two
+    # steps after being refused, so the contract was never satisfied and
+    # the deliverable shipped anyway. A guard that only lives in the loop
+    # protects the loop, not the founder.
+    try:
+        from backend.app.orchestrator.output_contract import (
+            RANKED_RESULT, satisfied_kinds, task_wants_ranking,
+        )
+        from backend.app.tools.tool_call_ledger import get_call_ledger
+        if task_wants_ranking(task):
+            calls = get_call_ledger().calls(since=since)
+            browsed = any("browser" in str(c.get("tool") or "") for c in calls)
+            if browsed and RANKED_RESULT not in satisfied_kinds(set(), False, calls):
+                problems.append(
+                    "this task asked for a ranked result (top/best/worst/sorted) "
+                    "but the page was never actually sorted or filtered -- the "
+                    "figures reported are whatever the site displayed by default, "
+                    "which is not the ranking that was asked for"
+                )
+    except Exception:  # noqa: BLE001
+        pass
+
     if not problems:
         return output
 
@@ -2312,6 +2484,12 @@ def _dispatch_run(
             # Scopes the compute gate to this run -- see
             # ToolCallLedger.calls(since=...) for why.
             _run_started = time.time()
+            # Bind this thread to the run so producers (write_file,
+            # download_asset, deploy_vercel) register what they make
+            # without every one of them needing a run_id parameter --
+            # they are called by the model, which has no idea what a run
+            # is. See state/run_artifacts.set_current_run.
+            _artifacts.set_current_run(run_id)
             result = run_task_on_company(company_id, CompanyRunRequest(task=effective_task))
             # Clear the plan once executed so it doesn't leak into the next task.
             plan_store.clear(PlanStore.key_for(company_id=company_id))
@@ -2369,6 +2547,7 @@ def _dispatch_run(
 
     def _unit_work():
         _run_started = time.time()
+        _artifacts.set_current_run(run_id)
         result = run_task_on_team(_sid, RunTaskRequest(task=_task))
         plan_store.clear(PlanStore.key_for(session_id=_sid))
         output = result.final_output or ""

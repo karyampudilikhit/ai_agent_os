@@ -44,6 +44,7 @@ never has to change when a new tool is registered.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 from backend.app.actions.action_registry import CONNECTION_NAMESPACE as ACTION_NAMESPACE
@@ -53,6 +54,52 @@ from backend.app.tools.http_tool_runner import HTTPToolRunner
 from backend.app.tools.mcp_client import get_registry as get_mcp_registry
 
 logger = logging.getLogger(__name__)
+
+# Every subsystem reports failure as TEXT starting with a parenthesised
+# marker rather than raising, so a caller cannot use try/except to notice
+# one. These are the shapes in use across action/http/mcp handlers.
+_FAILURE_PREFIXES = (
+    "(call failed", "(action failed", "(browser action failed",
+    "(refused", "(rejected", "(missing ", "(invalid ", "(no such tool",
+    "(download failed", "(deploy failed", "(upload to", "(click on",
+    "(typing into", "(could not", "(the browser is busy", "(that browser session",
+)
+
+# The list above is a hand-maintained enumeration, and it has now been
+# short by one twice. The most recent miss:
+#
+#     (browser_navigate failed: could not open a browser session ...)
+#
+# -- a real failure, recorded ok=True, on the very step where the agent
+# tried the URL shortcut. It then "recovered" into a different browser
+# session and threw away everything it had set up in the first one, with
+# nothing in the ledger saying so.
+#
+# So the SHAPE is matched rather than the exact wording: an opening
+# parenthesis, a short identifier or phrase, then a word that means it did
+# not work. New handlers get covered on the day they are written instead
+# of the day someone notices.
+_FAILURE_SHAPE = re.compile(
+    r"^\(\s*[a-z0-9_.\- ]{0,48}?"
+    r"\b(failed|could not|cannot|would not|is not|was not|were not|"
+    r"refused|rejected|denied|not allowed|no such|timed out|unavailable)\b"
+)
+
+
+def _looks_failed(text: str) -> bool:
+    """True when a tool result is a failure message rather than a result.
+
+    Kept deliberately broad: a false 'failed' costs a warning line in the
+    log, while a false 'succeeded' is what let a browser click fail
+    silently and the run report the stale data it already had.
+    """
+    t = (text or "").lstrip().lower()
+    if t.startswith(_FAILURE_PREFIXES):
+        return True
+    if _FAILURE_SHAPE.match(t):
+        return True
+    # run_python hands back its traceback whole rather than a marker.
+    return t.startswith("python exited with code")
 
 
 class ToolRegistry:
@@ -68,11 +115,16 @@ class ToolRegistry:
 
     # ---- discovery ---------------------------------------------------
 
-    def list_tools(self, for_planner: bool = False) -> List[Dict[str, Any]]:
+    def list_tools(self, for_planner: bool = False,
+                   task_hint: str = "") -> List[Dict[str, Any]]:
         """Every tool from every source, in one list. `for_planner=True`
         additionally hides action tools marked planner_excluded (see
         ActionSpec.planner_excluded) — MCP/HTTP tools have no such
-        concept today, so they're always included."""
+        concept today, so they're always included.
+
+        `task_hint` is the task text, used to drop niche action tools the
+        task never mentions. Optional so existing callers are unaffected.
+        """
         try:
             mcp_tools = get_mcp_registry().list_all_tools()
         except Exception as exc:  # noqa: BLE001
@@ -84,7 +136,8 @@ class ToolRegistry:
             logger.warning("tool_registry: HTTP tool listing failed: %s", exc)
             http_tools = []
         try:
-            action_tools = get_action_registry().list_tools(for_planner=for_planner)
+            action_tools = get_action_registry().list_tools(
+                for_planner=for_planner, task_hint=task_hint)
         except Exception as exc:  # noqa: BLE001
             logger.warning("tool_registry: action listing failed: %s", exc)
             action_tools = []
@@ -149,16 +202,35 @@ class ToolRegistry:
             # not be compared against what the code printed, because the
             # print was cut off before reaching them. See
             # MAX_COMPUTE_OUTPUT_CHARS in tool_call_ledger.
+            #
+            # Browser tools keep theirs for the same reason, learned the
+            # same way: a live run's browser_click_element(e40) failed and
+            # the only evidence was a MISSING side effect two log lines
+            # later. The failure reason went to the model and nowhere
+            # else, so diagnosing the run meant reading timestamp gaps.
+            # A tool result nobody kept is a tool call nobody can audit.
             is_compute = any(
                 qualified_name.endswith(f".{name}") or qualified_name == name
                 for name in DATASET_COMPUTE_TOOLS
             )
+            keep_whole = is_compute or ".browser_" in qualified_name
+
+            # Handlers report failure as TEXT beginning with "(" rather
+            # than raising -- so success cannot be inferred from the
+            # absence of an exception, and a failed browser action looked
+            # identical to a successful one in the log.
+            failed = _looks_failed(text)
+            if failed:
+                logger.warning(
+                    "%s failed: %s", qualified_name, text.strip()[:300],
+                )
+
             get_call_ledger().record(
                 qualified_name,
                 arguments,
-                ok=not text.lstrip().startswith("(call failed"),
+                ok=not failed,
                 result_preview=text[:200],
-                full_output=text if is_compute else None,
+                full_output=text if keep_whole else None,
             )
         except Exception:  # noqa: BLE001
             pass  # bookkeeping must never break the call it records

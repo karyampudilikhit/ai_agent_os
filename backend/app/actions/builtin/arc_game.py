@@ -213,6 +213,10 @@ ARC_RESET_SPEC = ActionSpec(
     preview=lambda a: f"Reset ARC game {a.get('game_id')}",
     mutating=False,
     planner_excluded=False,
+    # Only offered when the task mentions ARC. Its name collides with
+    # the commonest verb in browser work: "arc_click" out-ranked
+    # browser_click_element on a TradingView task.
+    niche_keywords=("arc", "arc-agi", "grid game", "game_id"),
     capability="game.reset",
 )
 
@@ -238,6 +242,10 @@ ARC_CLICK_SPEC = ActionSpec(
     preview=lambda a: f"Click ARC grid at ({a.get('x')},{a.get('y')})",
     mutating=False,
     planner_excluded=False,
+    # Only offered when the task mentions ARC. Its name collides with
+    # the commonest verb in browser work: "arc_click" out-ranked
+    # browser_click_element on a TradingView task.
+    niche_keywords=("arc", "arc-agi", "grid game", "game_id"),
     pollable=True,  # repeated identical clicks can be legitimate here
     capability="game.act",
 )

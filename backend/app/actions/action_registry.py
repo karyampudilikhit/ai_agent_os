@@ -69,6 +69,20 @@ class ActionSpec:
     # for a poll, an identical call is the correct next step, not a
     # stuck loop. See execution_loop.py's `pollable_names` handling.
     pollable: bool = False
+    # Words that must appear in the task before this tool is offered to
+    # the planner at all.
+    #
+    # For tools that belong to one narrow context and whose NAMES collide
+    # with common verbs. The motivating case: `arc_click` ranked FIRST
+    # for "open TradingView and find the top gainers" — BM25 matched
+    # "click" — while browser_click_element did not make the top five at
+    # all. A tool for one specific grid game was crowding out the tool
+    # the task actually needed.
+    #
+    # Different from planner_excluded, which hides a tool permanently.
+    # This hides it until the task mentions it, so ARC work still reaches
+    # these normally.
+    niche_keywords: tuple = ()
     # Abstract capability tag ("web.form.fill", "repo.create") — the
     # indirection the wider architecture needs so a caller can ask the
     # ToolRegistry (backend/app/tools/tool_registry.py) "give me
@@ -103,14 +117,24 @@ class ActionRegistry:
 
     # ---- discovery (MCP-shape) -------------------------------------
 
-    def list_tools(self, for_planner: bool = False) -> List[Dict[str, Any]]:
+    def list_tools(self, for_planner: bool = False,
+                   task_hint: str = "") -> List[Dict[str, Any]]:
         """for_planner=True hides tools marked planner_excluded — see
         ActionSpec.planner_excluded for why. GET /api/actions (the
         founder-visible listing) always calls this with the default,
-        so every registered action still shows up there."""
+        so every registered action still shows up there.
+
+        `task_hint` additionally hides NICHE tools whose keywords the task
+        never mentions (ActionSpec.niche_keywords). Passing no hint keeps
+        every niche tool visible, so an un-migrated caller loses nothing.
+        """
+        hint = (task_hint or "").lower()
         out: List[Dict[str, Any]] = []
         for spec in self._actions.values():
             if for_planner and spec.planner_excluded:
+                continue
+            if (for_planner and hint and spec.niche_keywords
+                    and not any(k in hint for k in spec.niche_keywords)):
                 continue
             properties: Dict[str, Dict[str, str]] = {}
             required: List[str] = []
@@ -257,6 +281,17 @@ def _check_arg_types(spec: "ActionSpec", args: Dict[str, Any]) -> Optional[str]:
         allowed = _TYPE_CHECKS.get(expected)
         if not allowed:
             continue
+        if expected == "string" and isinstance(value, bool):
+            # A JSON bool where a string was declared is a FORMAT nit, not
+            # the guessing this check exists to stop: no identifier is
+            # ever True. Coerced in place rather than rejected, because a
+            # model that sent exactly the right value should not lose a
+            # step to its spelling -- one live run burned 2 of 8 steps
+            # this way. Integers are deliberately NOT coerced: `0` where
+            # a game_id belongs is the original bug, and turning it into
+            # "0" would hand it straight back downstream.
+            args[name] = "true" if value else "false"
+            continue
         if expected != "boolean" and isinstance(value, bool):
             ok = False  # True is not a sensible string/int/number here
         elif expected == "string":
@@ -308,7 +343,8 @@ def _load_builtins(registry: ActionRegistry) -> None:
     from backend.app.actions.builtin import (
         send_email, post_slack, write_file, read_file, read_inbox, reply_email,
         create_pptx, create_docx, create_xlsx, create_pdf, browser_task, create_github_repo,
-        calculate, arc_game, run_python, fetch_market_data,
+        calculate, arc_game, run_python, fetch_market_data, download_asset,
+        deploy_vercel, browser_primitives,
     )
     registry.register(send_email.SPEC)
     registry.register(reply_email.SPEC)
@@ -316,6 +352,13 @@ def _load_builtins(registry: ActionRegistry) -> None:
     registry.register(post_slack.SPEC)
     registry.register(write_file.SPEC)
     registry.register(read_file.SPEC)
+    registry.register(download_asset.SPEC)
+    registry.register(deploy_vercel.SPEC)
+    # The universal browser primitives — observe/click/type/select/
+    # scroll/press/wait. Registered as one list so adding a primitive is
+    # a one-line change in browser_primitives rather than two here.
+    for _spec in browser_primitives.ALL_SPECS:
+        registry.register(_spec)
     registry.register(create_pptx.SPEC)
     registry.register(create_docx.SPEC)
     registry.register(create_xlsx.SPEC)

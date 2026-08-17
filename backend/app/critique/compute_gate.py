@@ -15,7 +15,9 @@ comment about the blocked-until verbs: "Same omission, two places").
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+
+from backend.app.orchestrator.output_contract import EXECUTED_CODE
 
 # Deliberately narrow: these are results you can only get by running
 # something over a dataset, so their presence in the ask plus the
@@ -95,14 +97,78 @@ _PRESENTATION_ROLE_WORDS = (
 )
 
 
-def choose_compute_owner_index(plan: List[Dict[str, Any]]) -> int:
+def declared_compute_roles(specialists: Optional[List[Dict[str, Any]]]) -> set:
+    """Roles whose EMPLOYEE CONFIG says they own executing code.
+
+    A declaration beats every heuristic below it. The founder configured
+    this employee to produce computed numbers; guessing from role words
+    when the answer has been stated outright is how a configuration
+    silently fails to take effect.
+
+    Accepts either shape a caller might have on hand: a flattened
+    ``{role, required_outputs}`` (what EmployeeCoordinator builds) or a
+    raw registry record carrying a nested ``config`` (what
+    ``TeamStore.specialists()`` returns). Handling both here keeps every
+    call site a one-liner instead of making each one reshape first.
+    """
+    out = set()
+    for spec in specialists or []:
+        required = spec.get("required_outputs")
+        if required is None:
+            required = _resolved_required_outputs(spec)
+        if EXECUTED_CODE in (required or ()):
+            role = str(spec.get("role") or "").strip().lower()
+            if role:
+                out.add(role)
+    return out
+
+
+def _resolved_required_outputs(spec: Dict[str, Any]) -> tuple:
+    """Required outputs from a raw registry record.
+
+    Goes through the config resolver rather than reading
+    ``spec["config"]["required_outputs"]`` directly, so a declaration
+    that arrives from a ROLE TEMPLATE counts too. Reading the raw dict
+    would work today and quietly stop working the moment templates ship.
+
+    Lazy import: employee_config reaches into the orchestrator for its
+    budget defaults, and compute_gate should not pull that in at module
+    load. Never raises -- an unreadable config means "no declaration",
+    which falls back to the heuristics below.
+    """
+    try:
+        from backend.app.employees.employee_config import resolve
+        return resolve(spec).required_outputs
+    except Exception:  # noqa: BLE001
+        return tuple((spec.get("config") or {}).get("required_outputs") or ())
+
+
+def choose_compute_owner_index(
+    plan: List[Dict[str, Any]],
+    specialists: Optional[List[Dict[str, Any]]] = None,
+) -> int:
     """Index of the assignment that should own executing the code.
 
-    Prefers the EARLIEST non-presentation assignment with data/analysis
-    affinity -- earliest because every downstream specialist needs the
-    numbers to already exist, and non-presentation because a report
-    author asked to also compute is exactly the split that produced a
-    deliverable full of asserted metrics.
+    Three tiers, in order:
+
+    1. A specialist whose CONFIG declares `executed_code`. Stated intent
+       always beats inference -- including over the presentation-role
+       exclusion below. If a founder deliberately configures their Report
+       Writer to run the numbers, that is their architecture to define,
+       and quietly overruling it would make the setting a lie.
+    2. Otherwise the earliest non-presentation assignment with
+       data/analysis affinity -- earliest because every downstream
+       specialist needs the numbers to already exist, non-presentation
+       because a report author asked to also compute is exactly the split
+       that produced a deliverable full of asserted metrics.
+    3. Otherwise the first non-presentation assignment, then the first.
+
+    THE GAP TIER 1 CLOSES. Per-employee `required_outputs` stopped a
+    specialist REFUSING to compute, but the Supervisor still ELECTED the
+    owner by role-word weights (`quant` 5, `analyst` 4, `data` 1,
+    `engineer` 1) with no idea any employee had declared anything. So a
+    founder could configure their Quant Analyst to own computation and
+    still watch the work land on the Data Engineer.
     """
     if not plan:
         return -1
@@ -110,6 +176,12 @@ def choose_compute_owner_index(plan: List[Dict[str, Any]]) -> int:
     def is_presentation(entry: Dict[str, Any]) -> bool:
         return any(w in str(entry.get("role") or "").lower()
                    for w in _PRESENTATION_ROLE_WORDS)
+
+    declared = declared_compute_roles(specialists)
+    if declared:
+        for i, entry in enumerate(plan):
+            if str(entry.get("role") or "").strip().lower() in declared:
+                return i
 
     scored = []
     for i, entry in enumerate(plan):
@@ -144,9 +216,17 @@ COMPUTE_MANDATE = (
 )
 
 
-def ensure_compute_owner(task: str, plan: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def ensure_compute_owner(
+    task: str,
+    plan: List[Dict[str, Any]],
+    specialists: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
     """If the founder asked for computed figures and no assignment owns
     executing code, give that ownership to one specialist explicitly.
+
+    `specialists` carries each employee's declared `required_outputs` so
+    a configured owner wins over a guessed one. Optional, so every
+    existing caller keeps working on heuristics alone.
 
     THE BUG THIS FIXES, observed live twice. The Supervisor decomposes
     "backtest this and report CAGR/Sharpe/drawdown" into Data Engineer
@@ -159,11 +239,15 @@ def ensure_compute_owner(task: str, plan: List[Dict[str, Any]]) -> List[Dict[str
     prompt rules are advisory to a weak model and this codebase's whole
     history says the mechanical check is the one that holds.
     """
-    if not plan or not task_requires_computation(task):
+    # A declared owner is honoured even when the founder's wording never
+    # named a metric. That is the point of configuring it: the role owns
+    # computation as a standing fact, not one phrasing at a time.
+    declared = declared_compute_roles(specialists)
+    if not plan or not (task_requires_computation(task) or declared):
         return plan
     if plan_has_compute_owner(plan):
         return plan
-    idx = choose_compute_owner_index(plan)
+    idx = choose_compute_owner_index(plan, specialists)
     if idx < 0:
         return plan
     owner = dict(plan[idx])

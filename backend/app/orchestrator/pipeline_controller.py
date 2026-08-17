@@ -17,6 +17,7 @@ Composition:
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -29,6 +30,12 @@ from backend.app.orchestrator.synthesis import SynthesisEngine
 from backend.app.critique.critique_agent import CritiqueEngine
 
 logger = logging.getLogger(__name__)
+
+# Smallest completeness gain that justifies another refinement pass.
+# Below this the loop stops: a rewrite that moved the score by 0.00 is
+# evidence the shortfall is missing WORK, and another pass will only
+# reword it. See the use site for the run this came from.
+MIN_REFINEMENT_GAIN = float(os.environ.get("REFINE_MIN_GAIN", "0.05"))
 
 
 def _detect_handback(text: str):
@@ -358,11 +365,32 @@ class Pipeline:
                     )
                     break
 
+                # Accepted but went nowhere. Refinement REWRITES text; it
+                # cannot fetch data that was never gathered, so when the
+                # score does not move the next pass will not move it
+                # either -- it will just spend another model call saying
+                # the same thing differently.
+                #
+                # Measured on a live run: three passes, ~50 seconds,
+                # completeness 0.20 -> 0.20 -> 0.20 -> 0.30. The
+                # specialist had read the wrong table; no amount of
+                # rewriting was going to make it the right one. Better to
+                # stop and let the deliverable gate report the gap
+                # honestly than to burn the budget polishing it.
+                gained = (new_critique.get("completeness_score", 0.0)
+                          - critique.get("completeness_score", 0.0))
                 draft = refined
                 manager.set_synthesized_output(draft)
                 manager.set_was_refined(True)
                 critique = new_critique
                 manager.set_critique(critique)
+                if gained < MIN_REFINEMENT_GAIN:
+                    logger.info(
+                        "Refinement gained %.2f (< %.2f) — stopping early; the "
+                        "gap is missing work, not wording",
+                        gained, MIN_REFINEMENT_GAIN,
+                    )
+                    break
 
             if attempts == 0:
                 logger.info("Critique passed all checks, no refinement needed")
