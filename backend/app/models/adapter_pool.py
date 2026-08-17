@@ -41,6 +41,41 @@ _adapters: Dict[str, Any] = {}
 _failed: Dict[str, str] = {}
 
 
+def _build(name: str) -> Any:
+    """Pick the provider from the model NAME, and never guess wrong.
+
+    The rule is the naming convention the providers themselves use:
+    an OpenAI-compatible catalogue namespaces its models with a vendor
+    prefix ("z-ai/glm-5.2:free", "meta-llama/llama-3.1-70b"), and Ollama
+    never does. So a slash means "route this over HTTP to the configured
+    OpenAI-compatible endpoint", and its absence means the local daemon.
+
+    An explicit override wins over the convention, because a
+    self-hosted vLLM can serve a model whose name has no slash at all.
+    """
+    explicit = os.environ.get("MODEL_PROVIDER", "").strip().lower()
+    openai_compatible = explicit == "openai" or (not explicit and "/" in name)
+
+    if openai_compatible:
+        from backend.app.models.provider_adapters.openai_adapter import (
+            OpenAICompatAdapter,
+        )
+        return OpenAICompatAdapter(
+            base_url=os.environ.get("OPENAI_BASE_URL", "").strip()
+            or "https://openrouter.ai/api/v1",
+            model=name,
+            api_key=(os.environ.get("OPENROUTER_API_KEY")
+                     or os.environ.get("OPENAI_API_KEY") or None),
+        )
+
+    from backend.app.models.provider_adapters.ollama_adapter import OllamaAdapter
+    return OllamaAdapter(
+        base_url=os.environ.get("OLLAMA_HOST", "http://localhost:11434"),
+        model=name,
+        api_key=os.environ.get("OLLAMA_API_KEY") or None,
+    )
+
+
 def get_adapter(name: str, default: Any = None) -> Any:
     """The shared adapter for `name`, or `default` if it cannot be built.
 
@@ -60,12 +95,7 @@ def get_adapter(name: str, default: Any = None) -> Any:
             return default
 
         try:
-            from backend.app.models.provider_adapters.ollama_adapter import OllamaAdapter
-            adapter = OllamaAdapter(
-                base_url=os.environ.get("OLLAMA_HOST", "http://localhost:11434"),
-                model=key,
-                api_key=os.environ.get("OLLAMA_API_KEY") or None,
-            )
+            adapter = _build(key)
         except Exception as exc:  # noqa: BLE001
             _failed[key] = str(exc)
             logger.warning(

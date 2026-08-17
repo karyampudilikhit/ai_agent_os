@@ -85,6 +85,30 @@ def _build_adapter(model: str, use_mock: bool) -> Any:
     if use_mock:
         return MockAdapter(label=f"mock:{model}")
 
+    # A NON-OLLAMA MODEL GETS AN OPENAI-COMPATIBLE ADAPTER.
+    #
+    # This function hardcoded OllamaAdapter, which is why the README lists
+    # model dependency as the product's single largest risk: only two
+    # models are alive on the free Ollama tier, and handing over an API
+    # key for anything else did nothing because no code path could use
+    # it. It cost a real run today -- the agentic loop was on OpenRouter
+    # and healthy while synthesis was on Ollama, which died mid-run, so a
+    # working run failed on the backend that was not doing the hard part.
+    #
+    # Same routing rule as adapter_pool: a vendor-prefixed name
+    # ("z-ai/glm-5.2:free") means an OpenAI-compatible endpoint; a bare
+    # name means the local daemon. No probe on this path -- the probe
+    # below exists because Ollama historically returned errors as
+    # content, and the OpenAI adapter raises.
+    if "/" in model or os.environ.get("MODEL_PROVIDER", "").strip().lower() == "openai":
+        from backend.app.models.adapter_pool import get_adapter
+        adapter = get_adapter(model)
+        if adapter is not None:
+            logging.info("pipeline model: %s (openai-compatible)", model)
+            return adapter
+        logging.warning("could not build %s — falling back to the mock model", model)
+        return MockAdapter(label=f"mock:{model}-fallback")
+
     # OLLAMA_HOST + OLLAMA_API_KEY env vars let us swap between the
     # local daemon (dev) and Ollama Cloud (deployed). Fallback to
     # localhost so nothing changes for existing local dev.
