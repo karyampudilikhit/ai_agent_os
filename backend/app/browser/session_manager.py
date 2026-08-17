@@ -215,7 +215,7 @@ def looks_like_login_page(snapshot: Dict[str, Any]) -> bool:
 def _new_element_map():
     """Imported lazily so browser_observation can import types from here
     without a cycle."""
-    from backend.app.tools.browser_observation import ElementMap
+    from backend.app.browser.observation import ElementMap
     return ElementMap()
 
 

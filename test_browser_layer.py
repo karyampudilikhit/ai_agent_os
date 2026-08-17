@@ -12,8 +12,8 @@ import time
 
 import pytest
 
-from backend.app.tools import browser_policy as pol
-from backend.app.tools.browser_observation import ElementMap, Observation
+from backend.app.browser import policy as pol
+from backend.app.browser.observation import ElementMap, Observation
 from backend.app.orchestrator.output_contract import (
     URL_VERIFIED,
     satisfied_kinds,
@@ -218,14 +218,14 @@ def test_every_primitive_is_registered():
 def test_primitives_do_not_ask_for_approval():
     """These are navigation-grade. The approval gate belongs on what
     publishes — deploy_vercel, send_email — not on scrolling a page."""
-    from backend.app.actions.builtin import browser_primitives as bp
+    from backend.app.browser import primitives as bp
     assert all(s.mutating is False for s in bp.ALL_SPECS)
 
 
 def test_a_password_field_is_never_typed_into():
     """Vision AI never handles a password. The founder types it into the
     real visible window themselves and the profile keeps the session."""
-    from backend.app.actions.builtin import browser_primitives as bp
+    from backend.app.browser import primitives as bp
 
     class _S:
         class element_map:
@@ -248,7 +248,7 @@ def test_a_password_field_is_never_typed_into():
         @staticmethod
         def touch(): pass
 
-    import backend.app.actions.builtin.browser_primitives as mod
+    import backend.app.browser.primitives as mod
     mod_get = mod.get_manager
     mod.get_manager = lambda: type("M", (), {"get": staticmethod(lambda t: _S())})()
     try:

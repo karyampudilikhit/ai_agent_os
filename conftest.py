@@ -41,7 +41,7 @@ def _close_browser_sessions_between_tests():
     """
     yield
     try:
-        from backend.app.tools.browser_session_manager import get_manager
+        from backend.app.browser.session_manager import get_manager
         mgr = get_manager()
         for token in list(mgr._live._resources.keys()):
             mgr.close(token)

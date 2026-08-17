@@ -342,10 +342,16 @@ def _load_builtins(registry: ActionRegistry) -> None:
     error in one built-in doesn't kill the whole module."""
     from backend.app.actions.builtin import (
         send_email, post_slack, write_file, read_file, read_inbox, reply_email,
-        create_pptx, create_docx, create_xlsx, create_pdf, browser_task, create_github_repo,
+        create_pptx, create_docx, create_xlsx, create_pdf, create_github_repo,
         calculate, arc_game, run_python, fetch_market_data, download_asset,
-        deploy_vercel, browser_primitives,
+        deploy_vercel,
     )
+    # Everything that drives a browser lives in one reviewable package --
+    # see backend/app/browser/README.md. Registered from there rather than
+    # from builtin/ so the layer can be read and audited as a unit instead
+    # of being traced across three directories.
+    from backend.app.browser import primitives as browser_primitives
+    from backend.app.browser import task_flow as browser_task
     registry.register(send_email.SPEC)
     registry.register(reply_email.SPEC)
     registry.register(read_inbox.SPEC)

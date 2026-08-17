@@ -35,18 +35,18 @@ import logging
 from typing import Any, Callable, Dict, Optional
 
 from backend.app.actions.action_registry import ActionSpec
-from backend.app.tools.browser_observation import (
+from backend.app.browser.observation import (
     FIND_SCAN_LIMIT,
     find_elements,
     observe_page,
     render_matches,
 )
-from backend.app.tools.browser_policy import (
+from backend.app.browser.policy import (
     PolicyViolation,
     active_policy,
     wrap_untrusted,
 )
-from backend.app.tools.browser_session_manager import (
+from backend.app.browser.session_manager import (
     BROWSER_OP_TIMEOUT_SECONDS,
     get_manager,
     run_on_browser_thread,

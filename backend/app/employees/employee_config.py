@@ -179,7 +179,7 @@ class ResolvedConfig:
         mid-run from anything the model saw is a scope an injected
         instruction can influence.
         """
-        from backend.app.tools.browser_policy import BrowserPolicy
+        from backend.app.browser.policy import BrowserPolicy
         return BrowserPolicy.for_task(
             domains=self.allowed_domains or None,
             allow_high_risk=self.allow_high_risk_browser,

@@ -291,7 +291,7 @@ def test_find_ranks_the_control_above_the_noise():
     synonyms for 'column' and 'header' credited a plain button exactly as
     much as an actual columnheader. A wrong element reached through a
     genuine match -- which is the kind that reads as working."""
-    from backend.app.tools.browser_observation import Observation, find_elements
+    from backend.app.browser.observation import Observation, find_elements
     obs = Observation({"url": "x", "elements": [
         {"id": "e1", "role": "link", "name": "Exchange rates"},
         {"id": "e2", "role": "button", "name": "Change password"},
@@ -305,7 +305,7 @@ def test_find_ranks_the_control_above_the_noise():
 def test_the_primary_meaning_of_a_role_word_beats_its_fallbacks():
     """The weighting that fixed the case above. 'dropdown' means a
     combobox first and a menuitem only if there is no combobox."""
-    from backend.app.tools.browser_observation import _role_weights
+    from backend.app.browser.observation import _role_weights
     w = _role_weights(["dropdown"])
     assert w["combobox"] > w["menuitem"] > 0
 
@@ -321,7 +321,7 @@ def test_a_sort_control_is_named_by_its_column():
     have distinct names -- and the table never sorted. Six runs of
     'it cannot operate the screener' were one missing label.
     """
-    from backend.app.tools.browser_observation import _OBSERVE_JS
+    from backend.app.browser.observation import _OBSERVE_JS
     assert "closest('th, td')" in _OBSERVE_JS, "cell text must reach the name"
     assert "cellLabel(el, clean(aria))" in _OBSERVE_JS, (
         "an aria-label alone is not enough — it is the part that was "
@@ -337,7 +337,7 @@ def test_column_header_cells_are_addressable():
     13 header CELLS, all visible and cleanly labelled. Zero of the cells
     matched the observer's selector, so across six runs the agent was
     never once offered the control that sorts the table."""
-    from backend.app.tools.browser_observation import _OBSERVE_JS
+    from backend.app.browser.observation import _OBSERVE_JS
     assert "'th', '[role=\"columnheader\"]'" in _OBSERVE_JS
 
 
@@ -348,7 +348,7 @@ def test_a_hover_revealed_control_is_still_clickable():
 
     Verified live: with it, clicking the Chg % header takes the screener
     from NVDA/AAPL/GOOG to TREVQ/ETBI/IOBTQ -- the actual movers."""
-    from backend.app.actions.builtin import browser_primitives as bp
+    from backend.app.browser import primitives as bp
 
     calls = []
 
@@ -391,7 +391,7 @@ def test_a_hover_revealed_control_is_still_clickable():
 def test_an_ordinary_click_does_not_take_the_fallback():
     """The happy path must stay exactly as it was — no extra hover, no
     force, on every click on every page."""
-    from backend.app.actions.builtin import browser_primitives as bp
+    from backend.app.browser import primitives as bp
     calls = []
 
     class Loc:
@@ -410,7 +410,7 @@ def test_a_column_header_outranks_a_toolbar_button_of_the_same_name():
     in the toolbar and a 'Chg %' column header that sorts. They score
     identically on name, and document order handed it to the filter --
     which is what the agent clicked, six runs running."""
-    from backend.app.tools.browser_observation import Observation, find_elements
+    from backend.app.browser.observation import Observation, find_elements
     obs = Observation({"url": "x", "elements": [
         {"id": "e22", "role": "button", "name": "Chg %"},          # toolbar filter, earlier
         {"id": "e57", "role": "columnheader", "name": "Chg %"},    # the sort control
@@ -424,11 +424,11 @@ def test_a_generic_action_word_does_not_become_part_of_a_column_name():
     the control's label produced 'Mkt cap — Change sort', and a search
     for 'Change %' ranked THAT above 'Chg %' -- the word 'change' was
     sitting in a suffix that says nothing about which column it is."""
-    from backend.app.tools.browser_observation import _OBSERVE_JS
+    from backend.app.browser.observation import _OBSERVE_JS
     assert "GENERIC_ACTION" in _OBSERVE_JS
     assert "GENERIC_ACTION.test(own)" in _OBSERVE_JS
 
-    from backend.app.tools.browser_observation import Observation, find_elements
+    from backend.app.browser.observation import Observation, find_elements
     obs = Observation({"url": "x", "elements": [
         {"id": "e61", "role": "columnheader", "name": "Mkt cap"},
         {"id": "e57", "role": "columnheader", "name": "Chg %"},
@@ -438,7 +438,7 @@ def test_a_generic_action_word_does_not_become_part_of_a_column_name():
 
 
 def test_a_substring_does_not_beat_a_whole_word():
-    from backend.app.tools.browser_observation import Observation, find_elements
+    from backend.app.browser.observation import Observation, find_elements
     obs = Observation({"url": "x", "elements": [
         {"id": "e1", "role": "button", "name": "Exchange"},
         {"id": "e2", "role": "button", "name": "Change"},
@@ -450,12 +450,12 @@ def test_find_scans_deeper_than_an_observation_shows():
     """The whole point. The cap on browser_observe exists so its output
     stays readable; a search has no such constraint, and the control that
     was never listed is the one that stopped four runs."""
-    from backend.app.tools.browser_observation import FIND_SCAN_LIMIT, MAX_ELEMENTS
+    from backend.app.browser.observation import FIND_SCAN_LIMIT, MAX_ELEMENTS
     assert FIND_SCAN_LIMIT > MAX_ELEMENTS * 3
 
 
 def test_observe_page_honours_a_deeper_limit():
-    from backend.app.tools.browser_observation import ElementMap, observe_page
+    from backend.app.browser.observation import ElementMap, observe_page
 
     class FakePage:
         url = "https://x.test"
@@ -471,7 +471,7 @@ def test_observe_page_honours_a_deeper_limit():
 def test_a_no_match_points_somewhere_useful():
     """'Not found' has to say what to do next, or the model just rewords
     the query until the step budget is gone."""
-    from backend.app.tools.browser_observation import Observation, render_matches
+    from backend.app.browser.observation import Observation, render_matches
     text = render_matches(Observation({"url": "https://x.test", "elements": []}, 1),
                           "sort control", [])
     assert "NO MATCH" in text
@@ -487,7 +487,7 @@ def test_a_no_match_points_somewhere_useful():
 def test_find_reports_how_many_elements_it_considered():
     """'searched 412 elements' is what tells a model the control is
     genuinely absent, rather than that it phrased the query badly."""
-    from backend.app.tools.browser_observation import Observation, render_matches
+    from backend.app.browser.observation import Observation, render_matches
     obs = Observation({"url": "https://x.test", "elements": [
         {"id": f"e{i}", "role": "button", "name": f"b{i}"} for i in range(1, 31)
     ]}, 1)
@@ -495,7 +495,7 @@ def test_find_reports_how_many_elements_it_considered():
 
 
 def test_find_is_registered_as_a_real_tool():
-    from backend.app.actions.builtin.browser_primitives import ALL_SPECS, FIND_SPEC
+    from backend.app.browser.primitives import ALL_SPECS, FIND_SPEC
     assert FIND_SPEC in ALL_SPECS
     assert FIND_SPEC.name == "browser_find"
     assert {p["name"] for p in FIND_SPEC.parameters} == {"session_token", "query"}
@@ -620,7 +620,7 @@ def test_navigating_again_reuses_the_open_window():
     page -- the agent picked the right strategy and the plumbing refused
     it, then dropped it into a fresh session that had none of its state.
     """
-    from backend.app.actions.builtin import browser_task
+    from backend.app.browser import task_flow as browser_task
 
     class FakePage:
         url = "https://site.test/screener?sort=change&order=desc"
@@ -677,7 +677,7 @@ def test_navigating_again_reuses_the_open_window():
 def test_navigate_advertises_that_a_second_call_moves_the_same_window():
     """The model has to know reuse is available, or it will keep treating
     a new URL as a new browser."""
-    from backend.app.actions.builtin.browser_task import BROWSER_NAVIGATE_SPEC
+    from backend.app.browser.task_flow import BROWSER_NAVIGATE_SPEC
     desc = BROWSER_NAVIGATE_SPEC.description
     assert "same window" in desc.lower()
     assert "session_token" in {p["name"] for p in BROWSER_NAVIGATE_SPEC.parameters}

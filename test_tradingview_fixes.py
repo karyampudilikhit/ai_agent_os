@@ -168,7 +168,7 @@ def test_no_hint_keeps_everything_visible():
 # ------------------------------------- fix 4: headed when operating
 
 def test_navigate_accepts_an_interactive_flag():
-    from backend.app.actions.builtin.browser_task import BROWSER_NAVIGATE_SPEC
+    from backend.app.browser.task_flow import BROWSER_NAVIGATE_SPEC
     params = {p["name"] for p in BROWSER_NAVIGATE_SPEC.parameters}
     assert "interactive" in params
     desc = BROWSER_NAVIGATE_SPEC.description
@@ -191,7 +191,7 @@ def test_json_natural_argument_types_are_accepted():
     """The re-run lost 2 of 8 steps arguing about spelling. The model
     sent `interactive: true` and `table_index: 0` — both exactly right,
     both rejected because the params were declared as strings."""
-    from backend.app.actions.builtin.browser_task import (
+    from backend.app.browser.task_flow import (
         BROWSER_EXTRACT_TABLE_SPEC, BROWSER_NAVIGATE_SPEC,
     )
     types = {p["name"]: p["type"]

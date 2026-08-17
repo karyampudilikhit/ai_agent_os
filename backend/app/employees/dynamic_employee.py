@@ -156,7 +156,7 @@ class DynamicEmployee(Employee):
         # on, BEFORE any task starts. Built from stored config, never
         # from anything read during the run.
         try:
-            from backend.app.tools.browser_policy import set_active_policy
+            from backend.app.browser.policy import set_active_policy
             set_active_policy(self.config.browser_policy())
         except Exception as exc:  # noqa: BLE001
             logger.warning("could not set browser scope for %s: %s", role, exc)

@@ -42,7 +42,7 @@ def _isolated_queue(name: str):
 
 def test_dom_snapshot() -> None:
     from playwright.sync_api import sync_playwright
-    from backend.app.actions.builtin.browser_task import _snapshot_page, _looks_like_login_page
+    from backend.app.browser.task_flow import _snapshot_page, _looks_like_login_page
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -62,7 +62,7 @@ def test_dom_snapshot() -> None:
 
 def test_field_mapping_and_locators() -> None:
     from playwright.sync_api import sync_playwright
-    from backend.app.actions.builtin.browser_task import (
+    from backend.app.browser.task_flow import (
         _snapshot_page, _map_goal_to_fills, _resolve_field_locator, _resolve_button_locator,
     )
 
@@ -103,8 +103,8 @@ def test_full_fill_pause_approve_submit_loop() -> None:
     """The core promise: filled BEFORE approval, NOT submitted until
     approval, resumes the SAME live session on approve."""
     queue = _isolated_queue("submit_loop")
-    from backend.app.actions.builtin import browser_task
-    from backend.app.tools.browser_session_manager import get_manager
+    from backend.app.browser import task_flow as browser_task
+    from backend.app.browser.session_manager import get_manager
 
     goal = ("fill out the contact form: name=Test Founder, email=founder@startup.com, "
             "company=Vision AI, this is a partnership inquiry, message: Testing.")
@@ -125,7 +125,7 @@ def test_full_fill_pause_approve_submit_loop() -> None:
     # A test poking session.page straight from the pytest main thread is
     # therefore a cross-thread violation and dies with a greenlet error;
     # marshal it the same way production code now does.
-    from backend.app.tools.browser_session_manager import run_on_browser_thread
+    from backend.app.browser.session_manager import run_on_browser_thread
 
     assert run_on_browser_thread(
         lambda: session.page.locator("#full_name").input_value()
@@ -144,8 +144,8 @@ def test_full_fill_pause_approve_submit_loop() -> None:
 
 def test_login_wait_reject_abandons_cleanly() -> None:
     queue = _isolated_queue("login_reject")
-    from backend.app.actions.builtin import browser_task
-    from backend.app.tools.browser_session_manager import get_manager
+    from backend.app.browser import task_flow as browser_task
+    from backend.app.browser.session_manager import get_manager
 
     results = {}
 
@@ -178,7 +178,7 @@ def test_login_wait_reject_abandons_cleanly() -> None:
 
 def test_login_wait_approve_signals_correctly() -> None:
     queue = _isolated_queue("login_approve")
-    from backend.app.actions.builtin import browser_task
+    from backend.app.browser import task_flow as browser_task
 
     results = {}
 
@@ -228,7 +228,7 @@ def test_timeout_never_suggests_credentials() -> None:
     literal returned string — the one thing not subject to LLM
     non-determinism."""
     _isolated_queue("timeout_credentials")
-    from backend.app.actions.builtin import browser_task
+    from backend.app.browser import task_flow as browser_task
 
     original_timeout = browser_task.LOGIN_WAIT_TIMEOUT_SECONDS
     browser_task.LOGIN_WAIT_TIMEOUT_SECONDS = 3

@@ -86,7 +86,7 @@ from typing import Any, Dict, List, Optional
 
 from backend.app.actions.action_registry import ActionSpec
 from backend.app.actions.approval_queue import get_queue
-from backend.app.tools.browser_session_manager import (
+from backend.app.browser.session_manager import (
     LOGIN_POLL_INTERVAL_SECONDS,
     LOGIN_WAIT_TIMEOUT_SECONDS,
     get_manager,
