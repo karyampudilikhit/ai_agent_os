@@ -557,7 +557,19 @@ class EmployeeCoordinator:
                 "evidence": self._extract_evidence(solo_output),
             }
 
-        specialists_spec = [{"role": s.role, "mandate": s.mandate} for s in specialists]
+        # `required_outputs` rides along so the planner can hand the
+        # computation to whoever the founder CONFIGURED to own it, rather
+        # than inferring an owner from role words. Read defensively: a
+        # specialist constructed outside the spawner may predate config.
+        specialists_spec = [
+            {
+                "role": s.role,
+                "mandate": s.mandate,
+                "required_outputs": list(getattr(getattr(s, "config", None),
+                                                 "required_outputs", ()) or ()),
+            }
+            for s in specialists
+        ]
 
         planner = SupervisorPlanner(model_adapter=self.pipeline.adapter)
 

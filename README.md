@@ -72,8 +72,9 @@ approves, Units + specialists auto-hire).
 | **Playground UI** | ✅ live at `/app/` (`frontend_mvp/app/index.html`). Studio Chat + Canvas + Org + Output tabs + Edit/Connectors sidebar with live per-employee progress. **Canvas and Org tabs render as SVG branching trees** as of this session: shared `renderTreeInto` helper does leaf-weighted horizontal layout (a Unit with 3 specialists gets 3× the band of one with 1), draws smooth S-curve branch paths with `vector-effect: non-scaling-stroke`, auto-centers the root on load, supports click-and-drag pan + wheel-to-horizontal-scroll + a visible custom scrollbar. Layout is proper 3-level (CEO → Supervisor → specialists) at Company altitude, 2-level (Supervisor → specialists) at Unit altitude. Also fixed a serious flexbox propagation bug where the tree's inline `min-width` was bleeding up through `.canvas-body` → `.center` → `.app` and inflating the whole page past the viewport (that's what made "I can't move it" happen — the founder was dragging the whole page, not the tree). Fixed with `min-width: 0` on each ancestor. Old flat-flow `.emp-node` and Unit-card DOM removed; progress polling now updates `.tree-node[data-role]` instead. |
 | **Clarifier context awareness** | ✅ live at `backend/app/chat/clarifier.py` — the clarifier now reads (a) the active Company's name + purpose, (b) up to 2 most-recent finished deliverables' output snippets (up to 2500 chars each), and (c) cross-turn Q&A memory from earlier clarification cycles in the same session. Two hygiene passes strip bad LLM output before it ever reaches the founder: `_drop_resolved_reference` kills identification-shaped questions ("Who are the personas?", "Which video idea?") whenever the referenced entity already appears in a recent deliverable, and `_drop_redundant` uses token-overlap against pooled + per-source vocabularies to filter re-asks the LLM is famous for. Multi-part questions get split into atomic ones (parenthetical-safe regex — "roles, and industries" stays intact, "industries, and what insights" splits). Persistence: `ClarificationStore.record_qa` keeps the last 8 (Q, A) pairs per session/company so audience answered on turn 2 is still known on turn 5. Also fixed the root-cause bug that made this all pointless: unit runs launched inside a Company were only tagged with `session_id`, never `company_id`, so `RunStore.list_recent_done` couldn't find the personas deliverable when the next chat turn looked it up by Company scope. Now every run carries both ids. Regression tests in `scratchpad/test_clarifier_bug.py` + `scratchpad/test_end_to_end.py` cover the personas + Finance-Free Friday + audience-research bundled-reask cases. |
 | **Verification / no-fabrication** | ✅ live — critique/refine loop, measured working (multi-agent 1/10 vs single-call 3/10 in the independent-judge benchmarks). |
-| **Agentic execution loop** | ✅ live — `orchestrator/execution_loop.py`, THINK → ACT → OBSERVE, bounded (10 steps / 240s / repeat-guard). Replaced the old single-shot `MCPPlanner` that picked 4 tools blind before seeing any result. This is what makes dependent work possible ("read the file, then email the person named in it"). `AGENT_LOOP_MODEL` routes the loop to a different model than synthesis/critique; `AGENT_STEP_MAX_TOKENS` (default 700) sizes each step. |
+| **Agentic execution loop** | ✅ live — `orchestrator/execution_loop.py`, THINK → ACT → OBSERVE, bounded (10 steps / 240s / repeat-guard). Replaced the old single-shot `MCPPlanner` that picked 4 tools blind before seeing any result. This is what makes dependent work possible ("read the file, then email the person named in it"). `AGENT_LOOP_MODEL` routes the loop to a different model than synthesis/critique; `AGENT_STEP_MAX_TOKENS` (default 700) sizes each step. **Browser runs get their own budget** (22 steps / 600s / 3000 tokens) applied on *evidence* a browser tool really succeeded, and only when the founder has not set a budget of their own — operating a UI costs three steps per attempt, and `run_test_model.py` measured the same model failing at 700 tokens/step and succeeding at 3000. Per-employee `model.loop_model` now reaches the loop through a memoised `adapter_pool` (no health probe per employee). |
 | **Browser automation** | ✅ live, including inside the agentic loop. Real visible Chrome, persistent profile, founder logs in themselves (no password ever enters the codebase). Async dispatch via `action.browser_task_async` + pollable status. Screenshot-on-failure, consent-banner dismissal, classified open-failures. **One shared Playwright instance on one dedicated thread** — never start/stop per session, and marshal all `Page`/`Locator` access through `run_on_browser_thread()`. |
+| **Browser OPERATION layer** | ✅ live as of 2026-08-17 — the primitives that drive a web app rather than read one. Semantic observation stamps `data-vai-id` on every interactive element and hands the model `e17 button "Deploy"` instead of pixels; ids are per-observation and a stale one fails loudly. 11 primitives (`browser_observe`, `browser_find`, `browser_click_element`, `browser_type`, `browser_select`, `browser_scroll`, `browser_press`, `browser_wait`, `browser_upload`, `browser_download`, `browser_back`), all non-mutating, `browser_type` refuses password fields. `BrowserPolicy` fences scope with **no `allow_domain()` method** — deliberately immutable so page content can never widen it — and all page text routes through `wrap_untrusted()`. **Six blockers were found by tracing live runs, every one in our layer rather than the model** — see "Open problems" §0.5. |
 | **Compute + real market data** | ✅ live — `action.run_python` (separate isolated interpreter, wall-clock timeout, scratch cwd, sockets disabled, credentials stripped) and `action.fetch_market_data`. Verified composing on real data end to end **through the agentic loop**: SPY daily bars → SMA-50/200 crossover → **CAGR 11.26%, Sharpe 0.9329, MaxDD −18.76%**, computed by executed code and carried into the deliverable with a citation to the execution step. ⚠️ Reaches this outcome in **2 of 4** valid runs — see "Open problems" #1. ⚠️ **Solo only.** As of 2026-08-15 the *team* path has never produced real computed numbers (0 of 5) while the solo path is 2 of 2 — see "Open problems" §0. |
 | **Guard layer (record-checking)** | ✅ live and load-bearing. `SourceLedger` (asks the network "was this URL actually fetched?" — caught 2 fabricated citations), `ToolCallLedger` + `claim_checker` (asks the call log "was this value ever sent?" — caught a deliverable blaming a `game_id` the run never sent), per-tool consecutive-failure guard, argument type validation, refinement-can't-ship-a-worse-draft, DONE-challenge when a specialist quits with ≤1 successful call, and `_gate_deliverable` — **detection can fail a run**, not merely force a rewrite, with the draft preserved on the failed record. |
 | **Model dependency** | 🔴 **single point of failure.** Only `gpt-oss:120b-cloud` and `nemotron-3-super:cloud` are alive on the free Ollama tier. `qwen3-coder:480b` and `deepseek-v3.1:671b` were **retired upstream 2026-07-15 and now return HTTP 410** — they still appear in `/api/tags`, so a run looks healthy right up to the first model call. The current top-tier cloud models (`kimi-k2.7-code`, `deepseek-v4-pro`, `glm-5.2`, `minimax-m2.7`) all return **HTTP 403 — paid subscription required**. If `gpt-oss:120b-cloud` retires the same way, the product stops working with no warning. |
@@ -94,7 +95,7 @@ approves, Units + specialists auto-hire).
 | **Memory system** | ✅ live at `backend/app/memory/`. Two tiers over the persisted `RunStore`: `memory_manager.py` recalls past **successful** deliverables, `mistake_repository.py` recalls past **failures**, both ranked by `retrieval.py` (Okapi BM25, dependency-free — no vector store, because a network call on the recall path is a new way to fail confidently and buys nothing at a 200-run corpus). Recall is deliberately conservative: a document must clear a normalized coverage threshold **and** match ≥2 discriminating terms, because a loose match hands an employee plausible material for a question it doesn't answer. Wired into `_build_clarifier_context` (relevance-matched deliverables of any age, alongside the recency feed) and `DynamicEmployee.build_objective` (cross-run recall, so a specialist can see work a *different* specialist did on an earlier run). Calibration was set from probing real run history, not from constructed fixtures — two false-positive classes only appeared there. Tests: `test_memory_recall.py`. |
 | **Outage resilience** | ✅ live as of 2026-08-15 — three layers. (1) `ollama_adapter` retries HTTP 5xx with jittered exponential backoff on **every** call in the system. (2) `execution_loop` records `backend.unavailable` in the `ToolCallLedger` when it gives up, so the gate reports an **outage** rather than critiquing a deliverable that never had a chance to be written. (3) `employee_coordinator` re-runs a **single** dead specialist (1 retry each, 2 per run, 5s delay) when the ledger shows the backend died during its turn — and refuses to retry when there is no such record, so a genuine refusal is never looped. See Open problems §0. |
 | **Per-employee configuration** | ✅ live as of 2026-08-16 — click any employee in the Canvas or Org tree and configure how it behaves. **Collaboration posture** (team / flexible / solo) makes the previously-hardcoded "do only your part" instruction a setting, and auto-promotes `team`→`flexible` when the employee owes a required output — that contradiction is what made a Data Engineer refuse the compute gate three times. **Required outputs** (`executed_code` / `fetched_url` / `file_written`) let a role own a guarantee instead of re-earning it from the task wording each run; `file_written` stats the disk. **Standing domain rules** reach the *agentic loop*, not just the prose writer — the loop never saw an employee's mandate before, so a rule about the code arrived after the arithmetic was already wrong. Plus per-employee step / time / token budgets and a **full prompt override with nothing protected** (a deliberate product decision — the ledger-based guards run outside the prompt and are unaffected). Storage: a nested `config` dict on the registry record, merged not replaced, with `null` meaning "clear back to inherit". `GET /api/employees/{id}/effective-config` returns every setting with its provenance. Role templates + per-employee override are designed and stubbed; increment 2. |
-| **Test coverage** | ⚠️ partial — 26 test files; the canonical suite is **152 passing** (`test_phase6_fixes` + `test_execution_loop` + `test_phase5_coverage` + `test_memory_recall` + `test_specialist_outage_retry` + `test_done_refusal` + `test_number_provenance` + `test_ollama_empty_retry` + `test_output_contract` + `test_employee_config` + `test_dynamic_employee_prompt`). Covered: execution loop, browser automation (14 tests), memory recall (17), and as of Phase 5 the four subsystems that had nothing (`test_phase5_coverage.py`, 24 tests): the chat router's never-dead-end contract, the approval queue's **reject** path (approve was exercised constantly in development, reject never was), citation verification incl. the Phase 3a multi-URL and 3b DOI-paren regressions, and the connector layer incl. the security property that undeclared args are dropped rather than rerouted to the query string. Still uncovered: synthesis, critique/refinement loop, the clarifier's question-dropping heuristics. |
+| **Test coverage** | ⚠️ partial — **344 passing, 2 failing.** The 2 failures are `test_http_tools.py::test_store_crud` and `::test_runner_get_with_query`, which read the founder's REAL HTTP tool store instead of an isolated fixture (confirmed pre-existing — reproduces with all browser work stashed). Browser operation adds `test_browser_operation.py` (37) and `test_tradingview_fixes.py` (11). Historically — 26 test files; the canonical suite was **152 passing** (`test_phase6_fixes` + `test_execution_loop` + `test_phase5_coverage` + `test_memory_recall` + `test_specialist_outage_retry` + `test_done_refusal` + `test_number_provenance` + `test_ollama_empty_retry` + `test_output_contract` + `test_employee_config` + `test_dynamic_employee_prompt`). Covered: execution loop, browser automation (14 tests), memory recall (17), and as of Phase 5 the four subsystems that had nothing (`test_phase5_coverage.py`, 24 tests): the chat router's never-dead-end contract, the approval queue's **reject** path (approve was exercised constantly in development, reject never was), citation verification incl. the Phase 3a multi-URL and 3b DOI-paren regressions, and the connector layer incl. the security property that undeclared args are dropped rather than rerouted to the query string. Still uncovered: synthesis, critique/refinement loop, the clarifier's question-dropping heuristics. |
 | **Deploy** | ❌ **not deployed.** `fly.toml` names `neutron-ai`; the app was never created and the name is unclaimed. Needs: `fly auth login`, a globally-unique app name, `fly volumes create data`, secrets (`OLLAMA_HOST`, `OLLAMA_API_KEY`, `TAVILY_API_KEY`), `fly deploy`. The Dockerfile was **broken for browser work** until Phase 5 — it pip-installed `playwright` but never ran `playwright install`, so Chromium would have been absent and every browser task would have failed in production while passing locally; now fixed with `--with-deps chromium`. Open risk: `memory = "512mb"` is likely too small for headless Chromium, and an OOM presents as the machine restarting mid-run rather than as a browser error. |
 | **AI hierarchy — Phase 2b** | ❌ deferred: multiple Teams per Unit + persistent CEO memory. |
 | **User accounts / auth** | ❌ deferred until we're ready to host. |
@@ -102,6 +103,92 @@ approves, Units + specialists auto-hire).
 ---
 
 ## Open problems (read this before planning work)
+
+### 0.5. Nothing checks the OUTCOME — only that something happened (2026-08-17)
+
+**This is the #1 open problem for the browser feature, and it is the last
+structural one.**
+
+The guard layer answers three questions and is missing a fourth:
+
+| Check | Question | Status |
+|---|---|---|
+| Provenance | Did a tool actually run? | ✅ `ToolCallLedger` |
+| Substance | Are real figures in the output? | ✅ number provenance |
+| Correctness | Are they the figures the code printed? | ✅ compute gate |
+| **Outcome** | **Is the page now showing what was asked for?** | ❌ **missing** |
+
+Every browser check compares **page views** — element lists, URL, chrome,
+text. None compares **the data**. So:
+
+- A run navigated to `?sort=Perf%20%25&order=desc&timeframe=1W`, a
+  parameter TradingView silently ignores. The page loaded, the address
+  bar said "sorted", the rows were the default ones. Nothing flagged it,
+  because the *view* differed.
+- A run clicked the toolbar's "Perf %" filter. A dropdown opened, the
+  page changed, it counted as progress.
+- `ranked_result` is satisfied by "an interaction changed the page and a
+  read followed" — it proves the page was **operated**, not **sorted**.
+  Run 5 satisfied it and shipped the default market-cap list with
+  HTTP 200.
+
+The fix is the same evidence-based shape as every guard that has held
+here, applied to the data instead of the DOM: capture the table rows
+before acting, compare after. Identical rows mean the action did nothing
+that matters, whatever the page did.
+
+**Why this is the keystone.** With an outcome check the loop stops
+guessing and starts *searching* — it does not need to know that "weekly"
+lives under TradingView's Performance tab, only that it has not got there
+yet. Site knowledge stops being a prerequisite. Without it, every new site
+is a fresh guessing game and a wrong answer can still ship.
+
+### 0.4. Six browser blockers, all in our layer (2026-08-17, all fixed)
+
+Six runs of one task ("top 5 weekly gainers and losers from TradingView's
+screener") never sorted the table. The obvious reading was that
+`gpt-oss:120b` cannot operate a complex UI. **That reading was wrong.**
+Five in-process traces (`trace_browser_run.py`) showed the model making a
+sensible next move at every step, and six distinct defects in the
+scaffolding under it:
+
+1. **No feedback on a dead click.** The before/after page comparison
+   existed, but ran only at the end of the turn — so a model that clicked
+   ineffectively was told four steps too late. Now runs in the loop.
+2. **The URL shortcut was impossible to execute.** `browser_navigate`
+   always launched a *new* browser, and one on-disk profile can be held
+   by exactly one context — so every "navigate to the sorted URL" was
+   doomed from the moment step 1 opened a page. It fell back to a fresh
+   session and silently lost all state. Now reuses the open window.
+3. **A failed navigation was recorded `ok=True`.** `(browser_navigate
+   failed: …)` was not in the hand-maintained list of failure prefixes.
+   Third time this bug class landed, so `_looks_failed` now matches the
+   *shape* rather than another literal string.
+4. **The sort controls were unnamed.** All twelve carry the identical
+   `aria-label="Sort descending"`. A control in a table cell now takes its
+   name from the cell (`"Chg % — Sort descending"`), and generic action
+   words are dropped so they cannot pollute the wrong column's identity.
+5. **The repeat guard blocked verification.** `browser_observe` takes only
+   a session token, so looking at a page *after* changing it is a
+   byte-identical call — and the guard killed the run for it. The
+   observe → act → verify cycle the rules instruct could never complete.
+   Now allowed on evidence the page really moved.
+6. **Header cells were invisible.** Measured on the live DOM: 14 sort
+   buttons inside `<th>` of which **3 visible** (the rest
+   `visibility:hidden` until hovered), 13 header cells **all visible**,
+   and **zero** matched the observer's 14 selectors. `th` /
+   `[role="columnheader"]` added, plus a hover-then-force fallback in
+   `_click_locator` — Playwright runs actionability checks *before* it
+   hovers, so a hover-revealed control fails them and the click never
+   fires. Verified live: clicking the Chg % header takes the screener
+   from NVDA/AAPL/GOOG to TREVQ/ETBI/IOBTQ.
+
+**The lesson worth keeping:** "the model can't do it" was wrong six times
+in a row, and each time the evidence that proved it came from a trace of
+what the run *actually did* — never from the deliverable's account of
+itself. The ledger is in-memory with no endpoint, which is why every
+autopsy before this was a reconstruction; `trace_browser_run.py` exists to
+close that gap and should be the first thing reached for.
 
 ### 0. The team path is less reliable than one specialist (2026-08-15)
 

@@ -28,7 +28,7 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -46,6 +46,33 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def _no_stale_frontend(request: Request, call_next):
+    """Force the browser to revalidate the app shell on every load.
+
+    The whole UI is one hand-edited index.html with no build step and no
+    content hash in its URL, so a browser that decides to reuse its
+    cached copy silently pins the founder to an older version of the
+    app. That is not hypothetical: a shipped feature was reported as
+    "clicking does nothing" purely because the tab was serving HTML from
+    before the feature existed, and an ordinary reload did not clear it.
+
+    ETag/Last-Modified alone are not enough -- without an explicit
+    directive a browser may serve a heuristically-fresh copy without
+    asking us at all. `no-cache` does not mean "don't store", it means
+    "always revalidate", so the 304 path still works and this stays
+    cheap.
+
+    Scoped to documents; hashed assets, if this ever gets a build step,
+    should keep their long cache lifetimes.
+    """
+    response = await call_next(request)
+    path = request.url.path
+    if not path.startswith("/api") and (path.endswith((".html", "/")) or "." not in path.rsplit("/", 1)[-1]):
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return response
+
 
 app.include_router(router, prefix="/api")
 # OAuth connect flow ("Connect GitHub" etc). Separate router so the

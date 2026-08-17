@@ -227,7 +227,13 @@ class SupervisorPlanner:
         # figures and the decomposition left the computing to nobody,
         # assign it explicitly. See compute_gate.ensure_compute_owner
         # for the live failure this fixes.
-        cleaned = ensure_compute_owner(task, cleaned)
+        #
+        # `specialists` is passed through so an employee whose config
+        # DECLARES it owns executing code wins over the role-word
+        # heuristic. Without it a founder could configure their Quant
+        # Analyst to own computation and still watch the mandate land on
+        # the Data Engineer.
+        cleaned = ensure_compute_owner(task, cleaned, specialists)
         return cleaned
 
     def synthesize(

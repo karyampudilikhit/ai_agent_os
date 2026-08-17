@@ -80,3 +80,8 @@ browser_profile/
 runs.json
 workspace/market_data/
 workspace/python_runs/
+
+# Browser run traces from trace_browser_run.py. Regenerable, and each
+# embeds a full page dump including whatever the live site was showing.
+browser_trace.json
+browser_trace*.log

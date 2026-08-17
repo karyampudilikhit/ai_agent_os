@@ -1418,8 +1418,22 @@
   ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
 
   /* ---- Employee configuration modal ---- */
+  /* The node has to LOOK clickable — the first person to use this could
+     not find the editor, having no reason to think a card was a button. */
   .tree-node.is-configurable { cursor: pointer; }
-  .tree-node.is-configurable:hover { border-color: var(--accent); }
+  .tree-node.is-configurable:hover,
+  .tree-node.is-configurable:focus-visible {
+    border-color: var(--accent-2);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+    outline: none;
+  }
+  .tree-node.is-configurable::after {
+    content: "⚙";
+    position: absolute; right: 8px; bottom: 4px;
+    font-size: 10px; color: var(--text-dim);
+    opacity: 0; transition: opacity .12s ease;
+  }
+  .tree-node.is-configurable:hover::after { opacity: .85; }
 
   .emp-modal-backdrop {
     position: fixed; inset: 0; z-index: 200;
@@ -1445,6 +1459,56 @@
     font-size: 22px; line-height: 1; cursor: pointer; padding: 0 4px;
   }
   .emp-x:hover { color: var(--text); }
+
+  .emp-tabs {
+    display: flex; gap: 4px; padding: 0 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .emp-tab {
+    background: none; border: none; border-bottom: 2px solid transparent;
+    padding: 9px 12px; margin-bottom: -1px;
+    font: inherit; font-size: 12.5px; font-weight: 600;
+    color: var(--text-muted); cursor: pointer;
+  }
+  .emp-tab:hover { color: var(--text); }
+  .emp-tab.active { color: var(--accent-2); border-bottom-color: var(--accent-2); }
+  .emp-pane.hidden { display: none; }
+
+  /* The prompt as the model really receives it. Read-only on purpose:
+     it is assembled from several layers, and the editable box below is
+     the one that replaces them. */
+  .emp-rendered {
+    margin: 6px 0 0; padding: 12px 14px; max-height: 240px; overflow: auto;
+    background: var(--panel-3); border: 1px solid var(--border); border-radius: 7px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px; line-height: 1.55; color: var(--text-muted);
+    white-space: pre-wrap; word-break: break-word;
+  }
+
+  .emp-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  .emp-tool-group { margin-top: 14px; }
+  .emp-tool-group-head {
+    display: flex; align-items: baseline; gap: 8px;
+    font-size: 11.5px; font-weight: 700; color: var(--text);
+    margin-bottom: 2px;
+  }
+  .emp-tool-group-head span { font-weight: 500; font-size: 10.5px; color: var(--text-dim); }
+  .emp-tool {
+    display: flex; gap: 10px; align-items: baseline;
+    padding: 6px 0; border-bottom: 1px solid var(--border);
+  }
+  .emp-tool:last-child { border-bottom: none; }
+  .emp-tool code {
+    flex: 0 0 34%; font-size: 11px; color: var(--accent-2);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    word-break: break-all;
+  }
+  .emp-tool p { margin: 0; font-size: 11.5px; color: var(--text-muted); line-height: 1.45; }
+  .emp-mut {
+    flex: 0 0 auto; font-size: 9px; color: var(--warn);
+    border: 1px solid var(--warn); border-radius: 3px; padding: 0 4px;
+  }
 
   .emp-modal-body { padding: 16px 20px; overflow-y: auto; }
   .emp-label {
@@ -1526,6 +1590,11 @@
       </div>
     </div>
     <div class="header-status">
+      <!-- Build stamp. Exists because "I can't see any changes" turned out
+           to be a cached app shell twice, and there was no way to tell a
+           stale tab from a broken feature by looking. If this is missing
+           or the time is old, the browser is serving an old copy. -->
+      <span id="build-stamp" title="Loading build info…">·</span>
       <span class="pulse"></span>
       <span id="header-status"></span>
     </div>
@@ -1621,69 +1690,157 @@
           <div class="emp-modal-title" id="emp-modal-title">Employee</div>
           <div class="emp-modal-sub" id="emp-modal-sub"></div>
         </div>
-        <button class="emp-x" id="emp-close" type="button" title="Close">×</button>
+        <button class="emp-x" id="emp-close" type="button" title="Close">&times;</button>
+      </div>
+
+      <div class="emp-tabs" id="emp-tabs">
+        <button class="emp-tab active" type="button" data-etab="prompt">System prompt</button>
+        <button class="emp-tab" type="button" data-etab="behaviour">Behaviour</button>
+        <button class="emp-tab" type="button" data-etab="tools">Tools</button>
       </div>
 
       <div class="emp-modal-body" id="emp-modal-body">
-        <label class="emp-label">Role
-          <input class="emp-input" id="emp-role" type="text" />
-        </label>
-        <div class="emp-hint">Role text also decides which specialist is assigned computation
-          and which tools rank first. Renaming changes behaviour.</div>
 
-        <label class="emp-label">Mandate — what only this employee owns
-          <textarea class="emp-input emp-ta" id="emp-mandate" rows="3"></textarea>
-        </label>
-
-        <div class="emp-label">How strictly it stays in its lane</div>
-        <div class="emp-radios" id="emp-collab">
-          <label><input type="radio" name="collab" value="team">
-            <b>Team</b> — do only its own part, skip work that belongs to another role</label>
-          <label><input type="radio" name="collab" value="flexible">
-            <b>Flexible</b> — stay in lane, but never refuse work its required outputs demand</label>
-          <label><input type="radio" name="collab" value="solo">
-            <b>Solo</b> — no teammates exist; do the whole job itself</label>
-        </div>
-
-        <div class="emp-label">Required outputs — refuses to finish without these</div>
-        <div class="emp-checks" id="emp-required">
-          <label><input type="checkbox" value="executed_code"> must actually execute code and print a result</label>
-          <label><input type="checkbox" value="fetched_url"> must actually fetch a live page or dataset</label>
-          <label><input type="checkbox" value="file_written"> must actually produce a file that exists on disk</label>
-        </div>
-
-        <button class="emp-adv-toggle" id="emp-adv-toggle" type="button">Advanced ▸</button>
-
-        <div class="emp-advanced" id="emp-advanced" hidden>
-          <label class="emp-label">Standing rules — one per line, applied to every task
-            <textarea class="emp-input emp-ta" id="emp-rules" rows="4"
-              placeholder="always use adjusted close&#10;execute on T+1, never same-bar&#10;252 trading days"></textarea>
-          </label>
-
-          <div class="emp-grid">
-            <label class="emp-label">Max steps <span class="emp-prov" id="prov-max_steps"></span>
-              <input class="emp-input" id="emp-max-steps" type="number" min="1" max="60" />
-            </label>
-            <label class="emp-label">Time budget (s) <span class="emp-prov" id="prov-deadline_seconds"></span>
-              <input class="emp-input" id="emp-deadline" type="number" min="10" max="900" />
-            </label>
-            <label class="emp-label">Tokens per step <span class="emp-prov" id="prov-step_max_tokens"></span>
-              <input class="emp-input" id="emp-step-tokens" type="number" min="100" max="4000" />
-            </label>
+        <!-- ---------- SYSTEM PROMPT ---------- -->
+        <div class="emp-pane" id="epane-prompt">
+          <div class="emp-label">What this employee actually runs on
+            <span class="emp-prov" id="emp-rendered-count"></span>
           </div>
+          <pre class="emp-rendered" id="emp-rendered">Loading…</pre>
+          <div class="emp-hint">Rendered by the same code the real run uses. Runtime context
+            (fetched pages, teammates' work, memory) is appended below this at run time.</div>
 
-          <label class="emp-label">Full prompt override
-            <textarea class="emp-input emp-ta emp-mono" id="emp-prompt" rows="12"></textarea>
-          </label>
+          <div class="emp-label" style="margin-top:18px;">Your prompt — replaces the block above
+            <span class="emp-prov" id="emp-prompt-count"></span>
+          </div>
+          <textarea class="emp-input emp-ta emp-mono" id="emp-prompt" rows="14"></textarea>
           <div class="emp-actions-inline">
             <button class="emp-btn-ghost" id="emp-prompt-reset" type="button">Reset to default</button>
             <span class="emp-hint">Placeholders: {role} {mandate} {task} {domain_rules}</span>
           </div>
-          <div class="emp-warn">Editing this replaces the entire instruction block, including the
-            do-not-fabricate line. The mechanical guards — compute gate, source ledger,
-            number-provenance and hand-back checks — run outside the prompt and are
+          <div class="emp-warn">This replaces the entire instruction block, including the
+            do-not-fabricate line. The mechanical guards &mdash; compute gate, source ledger,
+            number-provenance and hand-back checks &mdash; run outside the prompt and are
             unaffected by anything you write here.</div>
         </div>
+
+        <!-- ---------- BEHAVIOUR ---------- -->
+        <div class="emp-pane hidden" id="epane-behaviour">
+          <label class="emp-label">Role
+            <input class="emp-input" id="emp-role" type="text" />
+          </label>
+          <div class="emp-hint">Role text also decides which specialist is assigned computation
+            and which tools rank first. Renaming changes behaviour.</div>
+
+          <label class="emp-label">Mandate &mdash; what only this employee owns
+            <textarea class="emp-input emp-ta" id="emp-mandate" rows="3"></textarea>
+          </label>
+
+          <label class="emp-label">Standing rules &mdash; one per line, applied to every task
+            <textarea class="emp-input emp-ta" id="emp-rules" rows="4"
+              placeholder="always use adjusted close&#10;execute on T+1, never same-bar&#10;252 trading days"></textarea>
+          </label>
+
+          <div class="emp-label">How strictly it stays in its lane</div>
+          <div class="emp-radios" id="emp-collab">
+            <label><input type="radio" name="collab" value="team">
+              <b>Team</b> &mdash; do only its own part, skip work that belongs to another role</label>
+            <label><input type="radio" name="collab" value="flexible">
+              <b>Flexible</b> &mdash; stay in lane, but never refuse work its required outputs demand</label>
+            <label><input type="radio" name="collab" value="solo">
+              <b>Solo</b> &mdash; no teammates exist; do the whole job itself</label>
+          </div>
+
+          <div class="emp-label">Required outputs &mdash; refuses to finish without these</div>
+          <div class="emp-checks" id="emp-required">
+            <label><input type="checkbox" value="executed_code"> must actually execute code and print a result</label>
+            <label><input type="checkbox" value="fetched_url"> must actually fetch a live page or dataset</label>
+            <label><input type="checkbox" value="file_written"> must actually produce a file that exists on disk</label>
+          </div>
+
+          <button class="emp-adv-toggle" id="emp-adv-toggle" type="button">Limits &#9656;</button>
+          <div class="emp-advanced" id="emp-advanced" hidden>
+            <div class="emp-grid">
+              <label class="emp-label">Max steps <span class="emp-prov" id="prov-max_steps"></span>
+                <input class="emp-input" id="emp-max-steps" type="number" min="1" max="60" />
+              </label>
+              <label class="emp-label">Time budget (s) <span class="emp-prov" id="prov-deadline_seconds"></span>
+                <input class="emp-input" id="emp-deadline" type="number" min="10" max="900" />
+              </label>
+              <label class="emp-label">Tokens per step <span class="emp-prov" id="prov-step_max_tokens"></span>
+                <input class="emp-input" id="emp-step-tokens" type="number" min="100" max="4000" />
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- ---------- TOOLS ---------- -->
+        <div class="emp-pane hidden" id="epane-tools">
+          <div class="emp-label">Everything this employee can reach
+            <span class="emp-prov" id="emp-tool-count"></span>
+          </div>
+          <div class="emp-hint" id="emp-tool-scope"></div>
+          <div id="emp-tool-groups"></div>
+
+          <div class="emp-label" style="margin-top:20px;">Connect another tool</div>
+          <div class="emp-radios" id="emp-conn-kind">
+            <label><input type="radio" name="connkind" value="http" checked>
+              <b>HTTP API</b> &mdash; any endpoint with a URL</label>
+            <label><input type="radio" name="connkind" value="mcp">
+              <b>MCP server</b> &mdash; Notion, Slack, anything speaking MCP over stdio</label>
+          </div>
+
+          <div id="emp-conn-http">
+            <div class="emp-grid2">
+              <label class="emp-label">Name
+                <input class="emp-input" id="conn-name" placeholder="crm_lookup" />
+              </label>
+              <label class="emp-label">Method
+                <input class="emp-input" id="conn-method" placeholder="GET" value="GET" />
+              </label>
+            </div>
+            <label class="emp-label">URL
+              <input class="emp-input" id="conn-url" placeholder="https://api.example.com/v1/customers" />
+            </label>
+            <label class="emp-label">What it does &mdash; the employee reads this to decide when to call it
+              <input class="emp-input" id="conn-desc" placeholder="Look up a customer record by email." />
+            </label>
+            <div class="emp-grid2">
+              <label class="emp-label">Auth
+                <select class="emp-input" id="conn-auth">
+                  <option value="none">None</option>
+                  <option value="bearer">Bearer token</option>
+                  <option value="api_key_header">API key header</option>
+                  <option value="basic">Basic</option>
+                </select>
+              </label>
+              <label class="emp-label">Token / key <span class="emp-prov">stored locally</span>
+                <input class="emp-input" id="conn-token" type="password" placeholder="leave blank if none" />
+              </label>
+            </div>
+          </div>
+
+          <div id="emp-conn-mcp" hidden>
+            <div class="emp-grid2">
+              <label class="emp-label">Name
+                <input class="emp-input" id="mcp-name" placeholder="notion" />
+              </label>
+              <label class="emp-label">Command
+                <input class="emp-input" id="mcp-cmd" placeholder="npx" value="npx" />
+              </label>
+            </div>
+            <label class="emp-label">Arguments &mdash; space separated
+              <input class="emp-input" id="mcp-args" placeholder="-y @notionhq/notion-mcp-server" />
+            </label>
+            <div class="emp-hint">First connect downloads the server and can take ~30s.</div>
+          </div>
+
+          <div class="emp-actions-inline" style="margin-top:10px;">
+            <button class="emp-btn" id="emp-conn-add" type="button">Connect</button>
+            <span class="emp-hint" id="emp-conn-status"></span>
+          </div>
+        </div>
+
       </div>
 
       <div class="emp-modal-foot">
@@ -2163,7 +2320,15 @@ function enableTreePan(container) {
   let isDown = false, startX = 0, startY = 0, startScrollLeft = 0, startScrollTop = 0;
   container.addEventListener('mousedown', (e) => {
     // Don't hijack clicks on interactive children (delete buttons etc.)
-    if (e.target.closest('button, a, input, textarea')) return;
+    //
+    // `[role="button"]` matters as much as the real tags: an employee
+    // node is a DIV, so `closest('button')` misses it and this handler
+    // ate the whole interaction — mousedown fired, then preventDefault
+    // plus the drag-scroll meant mouseup landed elsewhere and the
+    // browser never synthesised a click at all. Clicking an employee
+    // silently did nothing, while a scripted .click() worked fine,
+    // which is exactly the combination that makes this hard to spot.
+    if (e.target.closest('button, a, input, textarea, select, [role="button"]')) return;
     isDown = true;
     container.classList.add('dragging');
     startX = e.pageX;
@@ -2339,7 +2504,16 @@ function renderTreeInto(container, tree) {
     if (n.employee_id) {
       el.dataset.employeeId = n.employee_id;
       el.classList.add('is-configurable');
-      el.addEventListener('click', () => openEmployeeConfig(n.employee_id, n.role));
+      // role/tabindex so the node reads and behaves as the button it is:
+      // without them it is an unfocusable div that screen readers and
+      // keyboard users cannot reach, and nothing signals it is clickable.
+      el.setAttribute('role', 'button');
+      el.setAttribute('tabindex', '0');
+      const open = () => openEmployeeConfig(n.employee_id, n.role);
+      el.addEventListener('click', open);
+      el.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); open(); }
+      });
     }
 
     const dot = document.createElement('span'); dot.className = 'tn-dot';
@@ -2876,8 +3050,11 @@ async function removeMember(role) {
    wording each run; standing rules put domain standards where the
    agentic loop can see them, since the loop never sees the mandate. */
 
-let empModalState = null;   // { id, role, dirty }
+let empModalState = null;   // { id, role, dirty, loaded }
 
+// Fallback only. The real prompt comes from the server so the founder is
+// never editing a copy that has drifted from what the model receives;
+// this is what "Reset to default" writes when that fetch failed.
 const EMP_DEFAULT_PROMPT_HINT =
   'You are the {role} on this project team.\n\n' +
   'Your mandate — what only you are responsible for:\n{mandate}\n\n' +
@@ -2890,26 +3067,152 @@ const EMP_DEFAULT_PROMPT_HINT =
   'describe things qualitatively (unless the web results below give you a\n' +
   'real one).';
 
+function updatePromptCount() {
+  // Shown because the founder asked for a high prompt context length —
+  // seeing the size is how you know you actually have the room.
+  const n = ($('emp-prompt').value || "").length;
+  const el = $('emp-prompt-count');
+  if (el) el.textContent = n.toLocaleString() + ' chars';
+}
+
 function empSetStatus(msg, isError) {
   const el = $('emp-status');
   el.textContent = msg || '';
   el.style.color = isError ? 'var(--danger)' : 'var(--text-muted)';
 }
 
+function empShowTab(name) {
+  document.querySelectorAll('.emp-tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.etab === name));
+  ['prompt', 'behaviour', 'tools'].forEach(p =>
+    $('epane-' + p).classList.toggle('hidden', p !== name));
+  $('emp-modal-body').scrollTop = 0;
+}
+
+// ---- tools -----------------------------------------------------------
+
+const EMP_TOOL_GROUP_LABELS = {
+  action: ['Built-in actions', 'email, browser, code, files — always available'],
+  mcp: ['Connected MCP servers', 'anything you have plugged in'],
+  custom: ['Your HTTP tools', 'endpoints you registered yourself'],
+};
+
+async function renderToolCatalogue() {
+  const wrap = $('emp-tool-groups');
+  wrap.innerHTML = '<div class="emp-hint">Loading…</div>';
+  let data;
+  try {
+    data = await api('GET', '/api/tools');
+  } catch (e) {
+    wrap.innerHTML = '';
+    $('emp-tool-scope').textContent = 'Could not load tools: ' + e.message;
+    return;
+  }
+  $('emp-tool-count').textContent = data.total + ' available';
+  $('emp-tool-scope').textContent = data.scope || '';
+  wrap.innerHTML = '';
+
+  for (const key of ['action', 'mcp', 'custom']) {
+    const tools = (data.groups || {})[key] || [];
+    const [label, sub] = EMP_TOOL_GROUP_LABELS[key];
+    const g = document.createElement('div');
+    g.className = 'emp-tool-group';
+    const head = document.createElement('div');
+    head.className = 'emp-tool-group-head';
+    head.innerHTML = escapeHtml(label) + ' <span>' +
+      (tools.length ? escapeHtml(sub) : 'none connected yet') + '</span>';
+    g.appendChild(head);
+
+    tools.forEach(t => {
+      const row = document.createElement('div');
+      row.className = 'emp-tool';
+      const code = document.createElement('code');
+      code.textContent = t.qualified_name;
+      const p = document.createElement('p');
+      p.textContent = t.description || '';
+      row.appendChild(code);
+      row.appendChild(p);
+      if (t.mutating) {
+        // Worth calling out: these are the ones that stop for approval.
+        const m = document.createElement('span');
+        m.className = 'emp-mut';
+        m.textContent = 'asks first';
+        m.title = 'Mutating — queues for your approval before it fires';
+        row.appendChild(m);
+      }
+      g.appendChild(row);
+    });
+    wrap.appendChild(g);
+  }
+}
+
+async function connectTool() {
+  const kind = (document.querySelector('#emp-conn-kind input:checked') || {}).value;
+  const status = $('emp-conn-status');
+  const setS = (m, err) => {
+    status.textContent = m || '';
+    status.style.color = err ? 'var(--danger)' : 'var(--text-muted)';
+  };
+  $('emp-conn-add').disabled = true;
+  setS('Connecting…');
+  try {
+    if (kind === 'mcp') {
+      const name = $('mcp-name').value.trim();
+      if (!name) throw new Error('Name is required.');
+      await api('POST', '/api/connectors', {
+        name,
+        transport: 'stdio',
+        command: $('mcp-cmd').value.trim() || 'npx',
+        args: $('mcp-args').value.trim().split(/\s+/).filter(Boolean),
+        env: {},
+      });
+    } else {
+      const name = $('conn-name').value.trim();
+      const url = $('conn-url').value.trim();
+      if (!name || !url) throw new Error('Name and URL are both required.');
+      const authType = $('conn-auth').value;
+      const token = $('conn-token').value.trim();
+      const body = {
+        name,
+        description: $('conn-desc').value.trim() || ('Call ' + url),
+        method: ($('conn-method').value.trim() || 'GET').toUpperCase(),
+        url,
+        parameters: [],
+      };
+      if (authType !== 'none' && token) body.auth = { type: authType, token };
+      await api('POST', '/api/http-tools', body);
+    }
+    setS('Connected — it is now available to every employee.');
+    ['conn-name', 'conn-url', 'conn-desc', 'conn-token', 'mcp-name', 'mcp-args']
+      .forEach(id => { if ($(id)) $(id).value = ''; });
+    await renderToolCatalogue();
+  } catch (e) {
+    setS(e.message, true);
+  } finally {
+    $('emp-conn-add').disabled = false;
+  }
+}
+
+// ---- open / save -----------------------------------------------------
+
 async function openEmployeeConfig(employeeId, roleHint) {
-  empModalState = { id: employeeId, role: roleHint || '', dirty: false };
+  empModalState = { id: employeeId, role: roleHint || '', dirty: false, loaded: {} };
   $('emp-modal').hidden = false;
   $('emp-modal-title').textContent = roleHint || 'Employee';
   $('emp-modal-sub').textContent = 'Loading…';
+  $('emp-rendered').textContent = 'Loading…';
   empSetStatus('');
+  empShowTab('prompt');
   $('emp-advanced').hidden = true;
-  $('emp-adv-toggle').textContent = 'Advanced ▸';
+  $('emp-adv-toggle').textContent = 'Limits ▸';
 
-  let emp, eff;
+  let emp, eff, prompt;
   try {
-    [emp, eff] = await Promise.all([
+    [emp, eff, prompt] = await Promise.all([
       api('GET', `/api/employees/${encodeURIComponent(employeeId)}`),
       api('GET', `/api/employees/${encodeURIComponent(employeeId)}/effective-config`),
+      api('GET', `/api/employees/${encodeURIComponent(employeeId)}/system-prompt`)
+        .catch(() => null),
     ]);
   } catch (e) {
     $('emp-modal-sub').textContent = '';
@@ -2922,13 +3225,28 @@ async function openEmployeeConfig(employeeId, roleHint) {
   empModalState.role = emp.role;
   $('emp-modal-title').textContent = emp.role;
   $('emp-modal-sub').textContent =
-    (emp.is_supervisor ? 'Supervisor · ' : '') + employeeId;
+    (emp.is_supervisor ? 'Supervisor · ' : 'Employee · ') + employeeId;
+
+  // What the model really receives, straight from the server.
+  const rendered = prompt ? prompt.rendered : '(could not render — showing the template)';
+  $('emp-rendered').textContent = rendered;
+  $('emp-rendered-count').textContent = prompt
+    ? prompt.chars.toLocaleString() + ' chars' + (prompt.is_custom ? ' · yours' : ' · default')
+    : '';
+
+  // The editable box starts from whatever it actually runs on, so a
+  // founder edits rather than writes from scratch — writing from scratch
+  // is how the anti-fabrication line gets dropped by accident.
+  empModalState.defaultPrompt =
+    (prompt && !prompt.is_custom) ? prompt.rendered : EMP_DEFAULT_PROMPT_HINT;
+  $('emp-prompt').value = cfg.prompt_override || empModalState.defaultPrompt;
+  updatePromptCount();
 
   $('emp-role').value = emp.role || '';
   $('emp-mandate').value = emp.mandate || '';
 
-  // The RESOLVED posture, so a founder sees what it actually runs with.
-  // When required outputs promoted team->flexible, showing the stored
+  // The RESOLVED posture, so the founder sees what it actually runs with:
+  // when required outputs promoted team→flexible, showing the stored
   // "team" would misrepresent their own employee.
   const collab = (s.effective_collaboration && s.effective_collaboration.value) || 'team';
   document.querySelectorAll('#emp-collab input').forEach(r => {
@@ -2946,22 +3264,14 @@ async function openEmployeeConfig(employeeId, roleHint) {
   $('emp-step-tokens').value = s.step_max_tokens ? s.step_max_tokens.value : '';
 
   // Remember what was LOADED and where it came from, so save can tell a
-  // value the founder actually chose from one merely displayed. The
-  // budget inputs are pre-filled with resolved values; without this,
-  // opening the modal and pressing Save would pin all three as explicit
-  // overrides and the employee would silently stop tracking future
-  // changes to the shared defaults.
+  // value the founder chose from one merely displayed. Without this,
+  // opening the modal and pressing Save would pin all three budgets as
+  // explicit overrides and the employee would stop tracking the defaults.
   empModalState.loaded = {
     max_steps: { value: $('emp-max-steps').value, from: (s.max_steps || {}).from },
     deadline_seconds: { value: $('emp-deadline').value, from: (s.deadline_seconds || {}).from },
     step_max_tokens: { value: $('emp-step-tokens').value, from: (s.step_max_tokens || {}).from },
   };
-
-  // Pre-fill with the rendered default so editing is the path of least
-  // resistance. A blank box invites writing a prompt from scratch, which
-  // is how the anti-fabrication line gets dropped by accident rather
-  // than on purpose.
-  $('emp-prompt').value = cfg.prompt_override || EMP_DEFAULT_PROMPT_HINT;
 
   ['max_steps', 'deadline_seconds', 'step_max_tokens'].forEach(k => {
     const chip = $('prov-' + k);
@@ -2971,6 +3281,8 @@ async function openEmployeeConfig(employeeId, roleHint) {
       : from === 'default' ? 'default'
       : from.replace('template:', 'from ');
   });
+
+  renderToolCatalogue();
 }
 
 function closeEmployeeConfig(force) {
@@ -2991,10 +3303,9 @@ async function saveEmployeeConfig() {
     .map(r => r.trim()).filter(Boolean);
   const promptVal = $('emp-prompt').value.trim();
 
-  // A budget field is only SET if the founder changed it, or if it was
-  // already set on this employee. Left exactly as loaded from a default
-  // or a template, it is sent as null — "keep inheriting" — so the
-  // employee keeps tracking the shared value instead of freezing a copy.
+  // A budget is only SET if the founder changed it, or it was already
+  // set on this employee. Left as loaded from a default it goes as null
+  // — "keep inheriting" — so the employee tracks the shared value.
   const num = (el, key) => {
     const v = $(el).value.trim();
     const was = (empModalState.loaded || {})[key] || {};
@@ -3013,7 +3324,7 @@ async function saveEmployeeConfig() {
       // Storing the unedited default as an override would freeze a copy
       // of today's wording onto this employee forever — it would stop
       // tracking every future improvement to the shared prompt.
-      prompt_override: (promptVal && promptVal !== EMP_DEFAULT_PROMPT_HINT.trim())
+      prompt_override: (promptVal && promptVal !== (empModalState.defaultPrompt || '').trim())
         ? promptVal : null,
       budget: {
         max_steps: num('emp-max-steps', 'max_steps'),
@@ -3043,15 +3354,32 @@ function wireEmployeeModal() {
   $('emp-close').onclick = () => closeEmployeeConfig();
   $('emp-cancel').onclick = () => closeEmployeeConfig();
   $('emp-save').onclick = saveEmployeeConfig;
+  $('emp-conn-add').onclick = connectTool;
+
+  document.querySelectorAll('.emp-tab').forEach(t => {
+    t.onclick = () => empShowTab(t.dataset.etab);
+  });
+  document.querySelectorAll('#emp-conn-kind input').forEach(r => {
+    r.onchange = () => {
+      $('emp-conn-http').hidden = (r.value !== 'http');
+      $('emp-conn-mcp').hidden = (r.value !== 'mcp');
+    };
+  });
+
   $('emp-adv-toggle').onclick = () => {
     const adv = $('emp-advanced');
     adv.hidden = !adv.hidden;
-    $('emp-adv-toggle').textContent = adv.hidden ? 'Advanced ▸' : 'Advanced ▾';
+    $('emp-adv-toggle').textContent = adv.hidden ? 'Limits ▸' : 'Limits ▾';
   };
   $('emp-prompt-reset').onclick = () => {
-    $('emp-prompt').value = EMP_DEFAULT_PROMPT_HINT;
+    $('emp-prompt').value = empModalState
+      ? (empModalState.defaultPrompt || EMP_DEFAULT_PROMPT_HINT)
+      : EMP_DEFAULT_PROMPT_HINT;
+    updatePromptCount();
     if (empModalState) empModalState.dirty = true;
   };
+  $('emp-prompt').addEventListener('input', updatePromptCount);
+
   $('emp-modal').addEventListener('click', (ev) => {
     if (ev.target === $('emp-modal')) closeEmployeeConfig();
   });
@@ -3695,6 +4023,26 @@ $('conn-add-btn').onclick = addConnector;
 sessionSelector.onchange = () => { if (sessionSelector.value) selectSession(sessionSelector.value); };
 document.querySelectorAll('.tab').forEach(t => { t.onclick = () => switchTab(t.dataset.tab); });
 wireEmployeeModal();
+
+// Build stamp — compares the shell the SERVER has on disk against the
+// one this tab is running. A mismatch means the browser served a cached
+// copy, which is otherwise indistinguishable from a broken feature.
+(async function showBuild() {
+  const el = $('build-stamp');
+  if (!el) return;
+  try {
+    const b = await api('GET', '/api/build');
+    const mine = document.documentElement.outerHTML.length;
+    const stale = Math.abs(mine - b.bytes) > 2000;
+    el.textContent = stale ? 'stale — hard refresh' : ('build ' + b.built_at);
+    el.style.color = stale ? 'var(--danger)' : 'var(--text-dim)';
+    el.title = stale
+      ? 'This tab is running an older copy of the app. Press Ctrl+Shift+R.'
+      : ('App shell built at ' + b.built_at + ' (' + b.bytes + ' bytes)');
+  } catch (e) {
+    el.textContent = '';
+  }
+})();
 
 (async function init() {
   const sessions = await refreshSessions();
