@@ -18,6 +18,13 @@ from backend.app.tools.http_tool_runner import HTTPToolRunner
 from backend.app.tools.http_tool_store import HTTPToolStore, HTTPToolStoreError
 
 
+def _seed_count() -> int:
+    """How many connectors ship in the repo. Read rather than hardcoded,
+    so adding a seed connector does not break an unrelated test."""
+    seed_dir = Path(__file__).parent / "connectors" / "seed"
+    return len(list(seed_dir.glob("*.json"))) if seed_dir.is_dir() else 0
+
+
 def _fresh_store() -> HTTPToolStore:
     """Isolated store so this test can't collide with a user's real
     .http_tools.json at repo root."""
@@ -73,7 +80,13 @@ def test_store_crud() -> None:
     added = store.add(spec)
     assert added["name"] == "echo_get"
     assert store.get("echo_get") is not None
-    assert len(store.list()) == 1
+    # Counted RELATIVE to what a fresh store already holds. _load merges
+    # the connectors shipped in connectors/seed/, so a brand-new store is
+    # not empty -- this asserted an absolute 1 and started failing the day
+    # the first seed connector was added, which read as a bug in the store
+    # rather than a stale expectation in the test.
+    assert store.get("echo_get") in store.list()
+    assert len(store.list()) == _seed_count() + 1
 
     # Update
     updated = store.update("echo_get", {"description": "updated"})
@@ -99,8 +112,8 @@ def test_runner_get_with_query() -> None:
     runner = HTTPToolRunner(store=store)
 
     tools = runner.list_tools()
-    assert len(tools) == 1
-    t = tools[0]
+    t = next(x for x in tools if x["qualified_name"] == "custom.echo_get")
+    assert len(tools) == _seed_count() + 1
     assert t["qualified_name"] == "custom.echo_get"
     assert t["connection"] == "custom"
     assert "q" in t["input_schema"]["properties"]

@@ -29,6 +29,35 @@ _FIXTURES_PORT = 8899
 
 
 @pytest.fixture(autouse=True)
+def _isolate_on_disk_stores(tmp_path, monkeypatch):
+    """Point the JSON stores at a temp directory for every test.
+
+    Without this they read the FOUNDER'S REAL FILES. test_http_tools
+    asserted "one tool in the store" and failed with three, because the
+    developer running it had three tools saved — a test that passes or
+    fails depending on whose machine it is on, and which reads as a bug
+    in the code under test.
+
+    Browser playbooks get the same treatment for a sharper reason: a test
+    could otherwise WRITE a recipe into the real store, and a later real
+    run would be handed a path invented by a fixture.
+    """
+    from backend.app.tools import http_tool_store
+    from backend.app.browser import playbook
+
+    monkeypatch.setattr(http_tool_store, "_store_path",
+                        lambda: tmp_path / "http_tools.json")
+    monkeypatch.setattr(playbook, "_store_path",
+                        lambda: tmp_path / "browser_playbooks.json")
+    # Both modules cache a singleton built from the path above.
+    monkeypatch.setattr(playbook, "_store", None, raising=False)
+    for mod, attr in ((http_tool_store, "_store"), (http_tool_store, "_STORE")):
+        if hasattr(mod, attr):
+            monkeypatch.setattr(mod, attr, None, raising=False)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _close_browser_sessions_between_tests():
     """Close any browser session a test left open.
 

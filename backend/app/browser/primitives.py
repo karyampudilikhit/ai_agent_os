@@ -104,12 +104,28 @@ def _on_thread(fn: Callable, *a, **kw) -> str:
 
 
 def _resolve(session, element_id: str):
-    """The locator for `element_id`, or a message explaining why not."""
+    """The locator for `element_id`, or a message explaining why not.
+
+    An id like `f1e3` lives inside a frame, so the locator is built from
+    that frame rather than the page. Resolving a frame element against
+    the main document would find nothing — or worse, find a same-named
+    element in the wrong document.
+    """
     problem = session.element_map.check(element_id)
     if problem:
         return None, f"({problem})"
     selector = session.element_map.selector_for(element_id)
-    locator = session.page.locator(selector).first
+    # getattr, not a direct call: several tests substitute their own
+    # element_map, and a method others substitute should keep the shape
+    # they substituted. Widening this signature broke five of them at
+    # once the first time.
+    frame_for = getattr(session.element_map, "frame_for", None)
+    root = (frame_for(element_id) if callable(frame_for) else None) or session.page
+    try:
+        locator = root.locator(selector).first
+    except Exception:  # noqa: BLE001
+        return None, (f"({element_id} was inside a frame that has since gone "
+                      "away. Call action.browser_observe for fresh ids.)")
     if locator.count() == 0:
         return None, (f"({element_id} is no longer on the page — it was there when you "
                       "observed, and the page has changed since. Call "

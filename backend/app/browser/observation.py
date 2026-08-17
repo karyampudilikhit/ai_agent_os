@@ -68,6 +68,14 @@ MAX_TEXT_CHARS = int(__import__("os").environ.get("BROWSER_MAX_TEXT_CHARS", "300
 FIND_SCAN_LIMIT = int(__import__("os").environ.get("BROWSER_FIND_SCAN_LIMIT", "600"))
 FIND_RESULTS = int(__import__("os").environ.get("BROWSER_FIND_RESULTS", "12"))
 
+# How many iframes are observed. Ad-heavy pages carry dozens of tiny
+# tracking frames; the ones that hold real controls are few and near the
+# front. A cap keeps an observation from being buried in advertising.
+MAX_FRAMES = int(__import__("os").environ.get("BROWSER_MAX_FRAMES", "8"))
+
+# "f2e7" — the seventh element of the second frame.
+_FRAME_ID = re.compile(r"^f(\d+)(e\d+)$")
+
 # The data fingerprint, as a self-contained JS function.
 #
 # ONE definition, used two ways: interpolated into _OBSERVE_JS so an
@@ -824,6 +832,11 @@ class ElementMap:
     def __init__(self) -> None:
         self._gen = 0
         self._last: Optional[Observation] = None
+        # Frame index -> the Playwright Frame it came from. Cleared each
+        # generation, because a frame from a previous observation may be
+        # detached and resolving into it would be the stale-reference bug
+        # this whole id scheme exists to prevent.
+        self._frames: Dict[int, Any] = {}
 
     @property
     def generation(self) -> int:
@@ -835,13 +848,33 @@ class ElementMap:
 
     def new_generation(self) -> int:
         self._gen += 1
+        self._frames = {}
         return self._gen
 
     def record(self, obs: Observation) -> None:
         self._last = obs
 
+    def record_frame(self, index: int, frame: Any) -> None:
+        self._frames[index] = frame
+
+    def frame_for(self, element_id: str) -> Optional[Any]:
+        """The frame an id lives in, or None for the main document.
+
+        `f2e7` means the seventh element of the second frame. The prefix
+        is part of the id rather than a separate argument so a model
+        cannot address an element in one frame while naming another.
+        """
+        m = _FRAME_ID.match(element_id or "")
+        if not m:
+            return None
+        return self._frames.get(int(m.group(1)))
+
     def selector_for(self, element_id: str) -> str:
-        return f'[data-vai-id="{element_id}"]'
+        # The stamp inside a frame is the UNPREFIXED id — the prefix
+        # identifies the document, not the element within it.
+        m = _FRAME_ID.match(element_id or "")
+        bare = m.group(2) if m else element_id
+        return f'[data-vai-id="{bare}"]'
 
     def check(self, element_id: str) -> Optional[str]:
         """None when the id is usable, else why it is not.
@@ -853,9 +886,11 @@ class ElementMap:
         if not self._last:
             return ("no observation yet — call browser_observe first to see "
                     "what is on the page")
-        if not element_id or not element_id.startswith("e"):
-            return (f"{element_id!r} is not an element id. Ids look like 'e17' "
-                    "and come from browser_observe.")
+        if not element_id or not (element_id.startswith("e")
+                                  or _FRAME_ID.match(element_id)):
+            return (f"{element_id!r} is not an element id. Ids look like 'e17', "
+                    "or 'f1e3' for something inside a frame, and come from "
+                    "browser_observe.")
         if self._last.find(element_id) is None:
             known = ", ".join(e["id"] for e in self._last.elements[:12])
             return (f"{element_id} is not in the current observation. "
@@ -879,9 +914,63 @@ def observe_page(page, element_map: ElementMap,
     gen = element_map.new_generation()
     raw = page.evaluate(_OBSERVE_JS, {"gen": gen, "limit": max(1, int(limit))})
     obs = Observation(raw or {}, gen)
+
+    # IFRAMES ARE PART OF THE PAGE, and were invisible.
+    #
+    # page.evaluate runs in the main document only, so an embedded form,
+    # a chat widget, a checkout step or a consent wall simply did not
+    # exist as far as the model was concerned -- it saw an empty region
+    # where the controls were and had no way to know why. Measured on
+    # theguardian.com, whose entire consent dialog lives in a
+    # cross-origin frame.
+    #
+    # Frame elements get an id prefixed with the frame index (f1e3), and
+    # ElementMap remembers which frame each id belongs to so a click
+    # resolves inside the right document. Same stamped-attribute
+    # mechanism, one document deeper.
+    frame_index = 0
+    for frame in _child_frames(page):
+        if len(obs.elements) >= limit:
+            break
+        frame_index += 1
+        prefix = f"f{frame_index}"
+        try:
+            fraw = frame.evaluate(
+                _OBSERVE_JS,
+                {"gen": gen, "limit": max(1, int(limit) - len(obs.elements))},
+            ) or {}
+        except Exception:  # noqa: BLE001
+            # A frame that detached mid-observation, or one that refuses
+            # script access, is skipped rather than failing the whole
+            # observation.
+            continue
+        for el in (fraw.get("elements") or []):
+            el = dict(el)
+            el["id"] = f"{prefix}{el.get('id')}"
+            el["frame"] = frame_index
+            obs.elements.append(el)
+        element_map.record_frame(frame_index, frame)
+
     element_map.record(obs)
     logger.info(
-        "observed %s — %d interactive element(s), gen %d",
-        obs.url[:80], len(obs.elements), gen,
+        "observed %s — %d interactive element(s) across %d frame(s), gen %d",
+        obs.url[:80], len(obs.elements), frame_index + 1, gen,
     )
     return obs
+
+
+def _child_frames(page):
+    """Frames worth observing: same-page, not the main document, and not
+    the empty placeholders a page leaves behind."""
+    out = []
+    try:
+        for f in page.frames:
+            if f is page.main_frame:
+                continue
+            url = (f.url or "")
+            if not url or url == "about:blank":
+                continue
+            out.append(f)
+    except Exception:  # noqa: BLE001
+        return []
+    return out[:MAX_FRAMES]
