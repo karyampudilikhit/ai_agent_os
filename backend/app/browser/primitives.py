@@ -32,6 +32,9 @@ being told the click succeeded.
 from __future__ import annotations
 
 import logging
+import os
+import re
+import time
 from typing import Any, Callable, Dict, Optional
 
 from backend.app.actions.action_registry import ActionSpec
@@ -115,9 +118,30 @@ def _resolve(session, element_id: str):
 
 
 def _describe(session, note: str, include_text: bool = False) -> str:
-    """Re-observe and report what the action actually did."""
+    """Re-observe and report what the action actually did.
+
+    A login wall is called out HERE rather than in each handler, so every
+    primitive reports it the same way. Without this the agent hits a
+    sign-in page, sees a form it cannot fill, and spends its remaining
+    budget clicking around a page that will never yield -- which is what
+    happens on every social platform, where the wall is the first thing
+    you meet.
+    """
     obs = observe_page(session.page, session.element_map)
     body = f"{note}\n\n{obs.render(include_text=include_text)}"
+    try:
+        if _on_login_wall(session.page):
+            body = (
+                "THIS PAGE IS ASKING FOR A SIGN-IN. You cannot do this part: "
+                "passwords are never typed by the AI and never enter this "
+                "system. Call action.browser_await_login — a real window is "
+                "already open, the founder signs in there, and the run "
+                "continues by itself the moment it is done. Do not try to "
+                "fill the password field and do not click around looking for "
+                "a way past it.\n\n"
+            ) + body
+    except Exception:  # noqa: BLE001
+        pass
     return wrap_untrusted(body, obs.url) if include_text else body
 
 
@@ -134,6 +158,290 @@ def _observe_impl(args: Dict[str, Any]) -> str:
         return str(exc)
     obs = observe_page(session.page, session.element_map)
     return wrap_untrusted(obs.render(include_text=True), obs.url)
+
+
+# --------------------------------------------------------- blocking overlays
+
+# A consent wall or modal sits ON TOP of the page: the content is right
+# there in the DOM, the observer lists it, and every click lands on the
+# overlay instead. From the agent's side that is indistinguishable from
+# clicking the wrong element -- the page "doesn't move" and it tries
+# again, and again, until the budget is gone.
+#
+# Ordered by preference: decline before accept. This runs on the
+# founder's real browser with their real profile, so the privacy-
+# preserving choice is the one to make on their behalf.
+#
+# The wordings are the real ones, taken off live walls rather than
+# imagined: theguardian.com offers "No, thank you" — not "no thanks",
+# which is what this list said first, and why it matched nothing on the
+# most common consent wall on the web.
+_DISMISS_LABELS = (
+    # decline, most explicit first
+    "continue without accepting", "reject all", "decline all", "refuse all",
+    "reject non-essential", "only necessary", "necessary only",
+    "essential only", "use necessary cookies only", "no thank you",
+    "no thanks", "reject", "decline",
+    # then accept, because a closed wall beats a blocked run
+    "yes i accept", "accept all", "allow all", "accept cookies",
+    "i accept", "i agree", "agree", "accept",
+    # then plain dismissal
+    "got it", "understood", "ok", "okay", "close", "dismiss",
+    "maybe later", "not now", "skip", "continue",
+)
+
+# Punctuation and case differ between every implementation of the same
+# button, so both sides get flattened before they are compared.
+_PUNCT = re.compile(r"[^a-z0-9 ]+")
+
+
+def _norm_label(text: str) -> str:
+    return " ".join(_PUNCT.sub(" ", (text or "").lower()).split())
+
+_OVERLAY_JS = r"""
+() => {
+  // THE QUESTION IS NOT "is something big and fixed on this page".
+  //
+  // It is: WHAT WOULD A CLICK IN THE MIDDLE OF THE PAGE ACTUALLY HIT?
+  // The first version asked the former and counted theguardian.com's own
+  // sticky navigation header as a blocking overlay — so a run that had
+  // successfully closed the consent wall still reported the page as
+  // blocked. Site furniture lives at the edges; a modal owns the centre.
+  //
+  // elementFromPoint answers the real question directly, and it answers
+  // it the same way the browser will when the agent clicks.
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const probes = [[vw / 2, vh / 2], [vw / 2, vh * 0.4], [vw / 2, vh * 0.6]];
+  const found = new Map();
+
+  for (const [x, y] of probes) {
+    let el = document.elementFromPoint(x, y);
+    while (el && el !== document.body && el !== document.documentElement) {
+      const s = getComputedStyle(el);
+      const z = parseInt(s.zIndex || '0', 10) || 0;
+      const isLayer = s.position === 'fixed' || s.position === 'absolute';
+      const isDialog = el.tagName === 'DIALOG' ||
+                       el.getAttribute('role') === 'dialog' ||
+                       el.getAttribute('aria-modal') === 'true';
+      if (isDialog || (isLayer && z >= 100)) {
+        const r = el.getBoundingClientRect();
+        const txt = (el.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+        const key = txt.slice(0, 60) + '|' + Math.round(r.width);
+        if (!found.has(key)) {
+          found.set(key, {
+            z: z, text: txt || '(no text)',
+            area: Math.round((r.width * r.height) / (vw * vh) * 100),
+          });
+        }
+        break;
+      }
+      el = el.parentElement;
+    }
+  }
+  return Array.from(found.values()).sort((a, b) => b.z - a.z).slice(0, 4);
+}
+"""
+
+
+def _frames(page):
+    """The main document plus every iframe, main document first.
+
+    Frames come and go while a page settles, so a frame that has already
+    detached raises on any use -- collected defensively rather than
+    trusted.
+    """
+    out = [page.main_frame]
+    try:
+        for f in page.frames:
+            if f is not page.main_frame:
+                out.append(f)
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+def _dismiss_impl(args: Dict[str, Any]) -> str:
+    """Close whatever is sitting on top of the page.
+
+    Tries the named controls a consent wall actually uses, DECLINING
+    before accepting -- this drives the founder's real browser with their
+    real profile, so the privacy-preserving answer is the one to give on
+    their behalf. Falls back to Escape.
+
+    Reports what it closed, and reports honestly when nothing was in the
+    way, because "I dismissed the popup" on a page that had none is the
+    kind of confident nonsense the rest of this layer exists to stop.
+    """
+    session, err = _session(args)
+    if err:
+        return err
+    try:
+        _policy().check_action("click")
+        _policy().check_url(session.page.url)
+    except PolicyViolation as exc:
+        return str(exc)
+
+    try:
+        blockers = session.page.evaluate(_OVERLAY_JS) or []
+    except Exception:  # noqa: BLE001
+        blockers = []
+
+    # EVERY FRAME, not just the top document.
+    #
+    # Consent management platforms almost always render inside a
+    # cross-origin iframe -- measured on theguardian.com, where the wall
+    # covers 100% of the viewport and searching the main page finds
+    # nothing at all. A dismisser that only looks at the top document
+    # fails on the single most common blocking overlay on the web.
+    # Read the buttons that are actually there, then pick by preference.
+    # Matching a guessed string against the DOM was the bug: it needed
+    # the site to phrase its button exactly the way this list did.
+    for frame in _frames(session.page):
+        try:
+            labels = frame.evaluate(
+                "() => Array.from(document.querySelectorAll("
+                "'button,[role=button],a[role=button],input[type=button],"
+                "input[type=submit]')).map(b => (b.innerText || b.value || "
+                "b.getAttribute('aria-label') || '').replace(/\\s+/g,' ')"
+                ".trim()).filter(t => t && t.length < 60)"
+            ) or []
+        except Exception:  # noqa: BLE001
+            continue
+        if not labels:
+            continue
+
+        by_norm = {}
+        for raw in labels:
+            by_norm.setdefault(_norm_label(raw), raw)
+
+        for wanted in _DISMISS_LABELS:
+            raw = by_norm.get(wanted)
+            if raw is None:
+                continue
+            try:
+                loc = frame.get_by_role(
+                    "button", name=re.compile(rf"^\s*{re.escape(raw)}\s*$", re.I)
+                ).first
+                if not loc.count():
+                    loc = frame.get_by_text(raw, exact=True).first
+                if not loc.count():
+                    continue
+                loc.click(timeout=2500, force=True)
+                session.page.wait_for_timeout(800)
+                where = "" if frame is session.page.main_frame else " (in a frame)"
+                return _describe(
+                    session, f'Dismissed an overlay by clicking "{raw}"{where}.')
+            except Exception:  # noqa: BLE001
+                continue
+
+    # Nothing named matched. Escape closes a great many dialogs.
+    try:
+        session.page.keyboard.press("Escape")
+        session.page.wait_for_timeout(500)
+        after = session.page.evaluate(_OVERLAY_JS) or []
+        if len(after) < len(blockers):
+            return _describe(session, "Dismissed an overlay with Escape.")
+    except Exception:  # noqa: BLE001
+        pass
+
+    if not blockers:
+        return _describe(
+            session,
+            "Nothing is covering the page — there was no overlay to dismiss. "
+            "If a click is not working, the element is the problem, not a "
+            "popup.",
+        )
+    top = blockers[0]
+    return _describe(
+        session,
+        f"Could not close the overlay. Something is still covering about "
+        f"{top.get('area')}% of the page and starts with: "
+        f"{str(top.get('text'))[:90]!r}. Try clicking its own close control "
+        f"by name, or work around it.",
+    )
+
+
+# ------------------------------------------------------------- login walls
+
+# How long a run will hold while the founder signs in, and how often it
+# looks. Long enough for a real login including a second factor; bounded
+# so a founder who walked away does not pin the browser thread forever.
+LOGIN_WAIT_SECONDS = int(os.environ.get("BROWSER_LOGIN_WAIT_SECONDS", "180"))
+LOGIN_POLL_SECONDS = 2.0
+
+
+def _on_login_wall(page) -> bool:
+    """True when the page is asking for credentials.
+
+    A password field is the signal. It is a heuristic, and the right kind:
+    it never asks a model 'is this a login page', it looks for the one
+    control that only exists on one kind of page.
+    """
+    try:
+        return page.evaluate(
+            "() => !!document.querySelector("
+            "'input[type=password]:not([disabled])')"
+        )
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _await_login_impl(args: Dict[str, Any]) -> str:
+    """Hold while the founder signs in, then carry on by itself.
+
+    WHY IT WATCHES RATHER THAN ASKS. The founder never hands over a
+    password and this codebase never types one -- so a login is the one
+    step an AI employee genuinely cannot do alone. The temptation is to
+    stop and ask for a tap when it is done, and that is the failure mode:
+    a run that stalls waiting on the founder has handed the work back.
+
+    So the window is already visible, the founder simply logs in, and
+    this notices the password field disappear and resumes. No tap, no
+    message, no approval queue. Detect the state; do not ask about it.
+    """
+    session, err = _session(args)
+    if err:
+        return err
+    try:
+        _policy().check_action("observe")
+        _policy().check_url(session.page.url)
+    except PolicyViolation as exc:
+        return str(exc)
+
+    if not _on_login_wall(session.page):
+        return ("(no login is being asked for on this page — nothing to wait "
+                "for. Carry on with the task.)")
+
+    try:
+        session.set_status("needs_login", f"Waiting for sign-in at {session.page.url}")
+    except Exception:  # noqa: BLE001
+        pass
+
+    deadline = time.monotonic() + LOGIN_WAIT_SECONDS
+    logger.info("waiting up to %ds for founder sign-in at %s",
+                LOGIN_WAIT_SECONDS, str(session.page.url)[:80])
+    while time.monotonic() < deadline:
+        session.page.wait_for_timeout(int(LOGIN_POLL_SECONDS * 1000))
+        if not _on_login_wall(session.page):
+            try:
+                session.set_status("navigated", f"Signed in at {session.page.url}")
+            except Exception:  # noqa: BLE001
+                pass
+            logger.info("sign-in detected — resuming")
+            return _describe(
+                session,
+                "Signed in. The password field is gone and the session is "
+                "authenticated — it will stay signed in for later steps and "
+                "later runs.",
+            )
+
+    return (
+        f"(still waiting for a sign-in after {LOGIN_WAIT_SECONDS}s. A browser "
+        f"window is open at {str(session.page.url)[:100]} and needs the "
+        f"founder to log in. Nothing was typed and no credentials were "
+        f"handled. Report honestly that this task needs a sign-in before it "
+        f"can continue, and say which site.)"
+    )
 
 
 # ------------------------------------------------------------------- find
@@ -552,6 +860,41 @@ OBSERVE_SPEC = ActionSpec(
     capability="web.page.observe",
 )
 
+DISMISS_SPEC = ActionSpec(
+    name="browser_dismiss_overlay",
+    description=(
+        "Close a cookie banner, consent wall, modal or popup that is covering "
+        "the page. Call this when clicks keep landing on nothing, or when the "
+        "page text mentions cookies or consent — an overlay swallows every "
+        "click while the content sits visible underneath, which looks exactly "
+        "like picking the wrong element. Declines non-essential cookies where "
+        "it can. Says so plainly if nothing was covering the page."
+    ),
+    parameters=[_TOKEN],
+    handler=_h(_dismiss_impl),
+    preview=lambda a: "Dismiss the overlay",
+    mutating=False,
+    capability="web.page.click",
+)
+
+AWAIT_LOGIN_SPEC = ActionSpec(
+    name="browser_await_login",
+    description=(
+        "Wait for the founder to sign in on a page that is asking for "
+        "credentials, then carry on. Call this the moment a page shows a "
+        "password field. A real browser window is already open on the "
+        "founder's screen; they log in there, and this returns by itself as "
+        "soon as the sign-in completes — there is no button for them to press "
+        "and nothing for you to ask. The AI never types a password. The "
+        "session stays signed in for the rest of this task and for later runs."
+    ),
+    parameters=[_TOKEN],
+    handler=_h(_await_login_impl),
+    preview=lambda a: "Wait for the founder to sign in",
+    mutating=False,
+    capability="web.form.login_continue",
+)
+
 FIND_SPEC = ActionSpec(
     name="browser_find",
     description=(
@@ -713,5 +1056,5 @@ BACK_SPEC = ActionSpec(
 )
 
 ALL_SPECS = [OBSERVE_SPEC, FIND_SPEC, CLICK_SPEC, TYPE_SPEC, SELECT_SPEC,
-             SCROLL_SPEC, PRESS_SPEC, WAIT_SPEC,
-             UPLOAD_SPEC, DOWNLOAD_SPEC, BACK_SPEC]
+             SCROLL_SPEC, PRESS_SPEC, WAIT_SPEC, AWAIT_LOGIN_SPEC,
+             UPLOAD_SPEC, DOWNLOAD_SPEC, BACK_SPEC, DISMISS_SPEC]

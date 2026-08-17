@@ -2305,6 +2305,17 @@ def _gate_deliverable(output: str, task: str = "",
         pass
 
     if not problems:
+        # The run produced a usable answer, so the path it took is worth
+        # keeping. Recorded HERE and nowhere else, deliberately: this is
+        # the only point in the system that knows the deliverable
+        # survived every check. Learning a path from a run that was
+        # refused would teach the agent to repeat the failure.
+        try:
+            from backend.app.browser.playbook import get_store
+            from backend.app.tools.tool_call_ledger import get_call_ledger
+            get_store().record(task, get_call_ledger().calls(since=since))
+        except Exception:  # noqa: BLE001
+            pass
         return output
 
     from backend.app.chat.async_runs import DeliverableBlocked

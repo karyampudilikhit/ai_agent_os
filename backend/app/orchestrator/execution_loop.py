@@ -69,6 +69,13 @@ from backend.app.orchestrator.output_contract import (
     task_wants_ranking,
     unsatisfied_kinds,
 )
+from backend.app.orchestrator.step_outcome import (
+    ACHIEVED,
+    MAX_STEP_RETRIES,
+    MISSED,
+    judge_step,
+    retry_note,
+)
 from backend.app.tools.http_tool_runner import HTTPToolRunner
 from backend.app.tools.tool_registry import get_registry as get_tool_registry
 
@@ -260,7 +267,7 @@ def _loop_adapter(default: Any, configured: Optional[str] = None) -> Any:
 STEP_PROMPT = """You are {role}, working on a task. You can call tools one at a time.
 After each call you SEE the result, then decide the next action. Work
 step by step until the task is genuinely done.
-{standing_rules}{browser_rules}
+{standing_rules}{browser_rules}{playbook}
 YOUR TASK:
 "{task}"
 
@@ -298,9 +305,17 @@ Rules:
   remaining tool would help, return the DONE action. Do not keep
   calling tools just to look busy.
 - You have used {steps_used} of {max_steps} steps.
+- SAY WHAT SHOULD BE TRUE AFTERWARDS. Every action carries an "expect"
+  describing the state you are trying to reach, in plain words — "the
+  table is sorted by weekly change", "the login form is filled in", "the
+  search results show Product Manager roles". This is checked against the
+  page. If the state does not arrive you are told so and you retry THAT
+  step, rather than carrying on as though it worked. Guessing at the
+  expectation to satisfy the format is worse than useless: it is the
+  thing that decides whether a step is repeated or accepted.
 
 Return JSON only, one of these two shapes:
-{{"thought": "<one sentence: why this action next>", "action": "<connection.tool_name>", "arguments": {{...}}}}
+{{"thought": "<one sentence: why this action next>", "action": "<connection.tool_name>", "arguments": {{...}}, "expect": "<what should be true after this>"}}
 {{"thought": "<one sentence: why you're finished>", "action": "DONE"}}
 
 JSON only."""
@@ -570,6 +585,28 @@ class AgenticExecutor:
         ineffective_interactions = 0
         browser_rules_block = ""
 
+        # What worked last time on a task like this. Looked up ONCE, at
+        # the start, because it changes where the agent goes first --
+        # by the time a browser call has succeeded it has already chosen
+        # a site, and the most valuable thing a playbook carries is which
+        # site to open.
+        playbook_block = ""
+        try:
+            from backend.app.browser.playbook import hint_for
+            playbook_block = hint_for(ranking_text)
+            if playbook_block:
+                logger.info("[%s] recalled a playbook for this task", role)
+        except Exception:  # noqa: BLE001
+            playbook_block = ""
+
+        # Per-step recovery. `step_retries` counts how many times the
+        # CURRENT step has been sent back; it resets the moment a step
+        # reaches the state it declared. Without this the loop could only
+        # multiply its failures -- one wrong step at minute fifteen wasted
+        # everything after it, because nothing sent the agent back to the
+        # step rather than onward.
+        step_retries = 0
+
         step_i = -1
         while True:
             step_i += 1
@@ -612,6 +649,7 @@ class AgenticExecutor:
                             max_steps=max_steps,
                             standing_rules=standing_block,
                             browser_rules=browser_rules_block,
+                            playbook=playbook_block,
                         ),
                         temperature=0.1,
                         max_tokens=step_tokens,
@@ -660,6 +698,7 @@ class AgenticExecutor:
             decision = _extract_json(raw) or {}
             action = str(decision.get("action") or "").strip()
             thought = str(decision.get("thought") or "").strip()
+            expect = str(decision.get("expect") or "").strip()
 
             if not action or action.upper() == "DONE":
                 # REFUSE a DONE that leaves a required output unproduced.
@@ -818,6 +857,10 @@ class AgenticExecutor:
             seen_calls[fingerprint] = last_page_view
 
             logger.info("[%s] agentic step %d: %s(%s)", role, step_i + 1, action, json.dumps(args)[:120])
+            # The page as it was BEFORE this action, captured before any
+            # bookkeeping below moves it on. This is what the step's
+            # declared expectation gets judged against.
+            view_before = last_page_view
             result = self._execute(action, args)
             acted = True
             steps.append({
@@ -984,6 +1027,48 @@ class AgenticExecutor:
 
                     if comparable and result:
                         last_page_view = result
+
+            # DID THE STEP REACH THE STATE IT DECLARED?
+            #
+            # Last, so the bookkeeping above has already run: a step that
+            # missed still counts as a browser call, still widens the
+            # budget, still moves the recorded view. Only the loop's
+            # POSITION is rolled back.
+            #
+            # Judged from the page, never from the model's account of its
+            # own action -- a model that has just acted is the least
+            # reliable witness to whether the action landed, and every
+            # guard here that asked the model something has had to be
+            # rewritten as one that reads a record.
+            #
+            # UNKNOWN is the common case and never retries: "the results
+            # show Product Manager roles" is a claim about content that no
+            # mechanical check settles. A check that guessed there would
+            # stall honest runs on every page it could not read, which is
+            # a worse failure than the one it set out to fix.
+            if expect and is_browser_tool(action):
+                verdict, miss_reason = judge_step(
+                    expect=expect,
+                    result=result,
+                    before_view=view_before,
+                    after_view=result,
+                    call_failed=_call_failed(result),
+                )
+                if verdict == MISSED and step_retries < MAX_STEP_RETRIES:
+                    step_retries += 1
+                    logger.info(
+                        "[%s] step missed its expectation (%s) — retry %d/%d",
+                        role, miss_reason, step_retries, MAX_STEP_RETRIES,
+                    )
+                    steps.append({"note": retry_note(
+                        expect, miss_reason or "the state did not arrive",
+                        step_retries)})
+                    continue
+                if verdict == ACHIEVED:
+                    if step_retries:
+                        logger.info("[%s] step recovered after %d retry(ies)",
+                                    role, step_retries)
+                    step_retries = 0
 
         _release_browser_sessions(role)
 
