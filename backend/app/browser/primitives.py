@@ -259,6 +259,50 @@ _OVERLAY_JS = r"""
 """
 
 
+def _follow_new_tab(session) -> bool:
+    """Move the session to a tab the last action opened, if any.
+
+    A click on target="_blank" — every "open in new tab" link, and every
+    OAuth popup — leaves the session pointing at the ORIGINAL page. From
+    the agent's side the click succeeded and nothing changed, so it
+    retries on a page that will never move while the thing it wanted sits
+    in a tab nobody is looking at. It is the same class of failure as the
+    hidden sort control: the state is real, and unreachable.
+
+    Returns True when the session moved.
+    """
+    try:
+        pages = [p for p in session.context.pages if not p.is_closed()]
+    except Exception:  # noqa: BLE001
+        return False
+    if len(pages) < 2 or pages[-1] is session.page:
+        return False
+
+    newest = pages[-1]
+    try:
+        newest.wait_for_load_state("domcontentloaded", timeout=ACTION_TIMEOUT_MS)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        _policy().check_url(newest.url)
+    except PolicyViolation:
+        # A new tab outside the task's scope is closed rather than
+        # followed. An ad or a tracker must not become the page the agent
+        # is working on.
+        try:
+            newest.close()
+        except Exception:  # noqa: BLE001
+            pass
+        return False
+
+    session.page = newest
+    # Ids belong to a document. Carrying the old map onto a new tab would
+    # resolve e17 against whatever now sits in that position.
+    session.element_map.new_generation()
+    logger.info("followed a new tab to %s", str(newest.url)[:80])
+    return True
+
+
 def _frames(page):
     """The main document plus every iframe, main document first.
 
@@ -591,6 +635,16 @@ def _click_impl(args: Dict[str, Any]) -> str:
         session.page.wait_for_load_state("domcontentloaded", timeout=ACTION_TIMEOUT_MS)
     except Exception as exc:  # noqa: BLE001
         return f"(click on {element_id} failed: {exc})"
+
+    # A click can open a TAB rather than change this one.
+    if _follow_new_tab(session):
+        return _describe(
+            session,
+            f"Clicked {element_id} \"{el.get('name', '')}\" — it opened a new "
+            f"tab and you are now on it ({str(session.page.url)[:100]}). The "
+            f"element ids below are for this tab; the previous page's ids are "
+            f"no longer valid.",
+        )
 
     url_after = session.page.url
     moved = f" — navigated to {url_after}" if url_after != url_before else ""
