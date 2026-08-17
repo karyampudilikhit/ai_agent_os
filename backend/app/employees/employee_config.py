@@ -143,9 +143,16 @@ DEFAULTS: Dict[str, Any] = {
     },
     "model": {"loop_model": None},
     "tools": {"allow": [], "deny": []},
+    # Domains this employee's browser work may reach. Empty means "any
+    # public site" -- open by default because a founder who cannot ask it
+    # to visit an ordinary website without editing config first is a
+    # founder who turns the guard off. The hard floor (internal
+    # addresses, cloud metadata) is enforced regardless and cannot be
+    # granted here. See tools/browser_policy.BrowserPolicy.
+    "browser": {"allowed_domains": [], "allow_high_risk": False},
 }
 
-_NESTED_KEYS = ("budget", "model", "tools")
+_NESTED_KEYS = ("budget", "model", "tools", "browser")
 
 
 @dataclass(frozen=True)
@@ -161,6 +168,22 @@ class ResolvedConfig:
     step_max_tokens: int = STEP_MAX_TOKENS
     loop_model: Optional[str] = None
     template_id: Optional[str] = None
+    allowed_domains: Tuple[str, ...] = ()
+    allow_high_risk_browser: bool = False
+
+    def browser_policy(self):
+        """This employee's browser scope, as an enforceable object.
+
+        Built here rather than in the browser layer so the policy is
+        constructed BEFORE the run and handed down — a scope assembled
+        mid-run from anything the model saw is a scope an injected
+        instruction can influence.
+        """
+        from backend.app.tools.browser_policy import BrowserPolicy
+        return BrowserPolicy.for_task(
+            domains=self.allowed_domains or None,
+            allow_high_risk=self.allow_high_risk_browser,
+        )
 
     @property
     def effective_collaboration(self) -> str:
@@ -264,6 +287,23 @@ def validate(patch: Dict[str, Any]) -> Dict[str, Any]:
             if not isinstance(value, dict):
                 raise EmployeeConfigError(f"{key} must be an object")
             out[key] = dict(value)
+        elif key == "browser":
+            if not isinstance(value, dict):
+                raise EmployeeConfigError("browser must be an object")
+            b: Dict[str, Any] = {}
+            if "allowed_domains" in value:
+                doms = value["allowed_domains"]
+                b["allowed_domains"] = (
+                    None if doms is None
+                    # Strip scheme/path if a founder pastes a whole URL —
+                    # "https://vercel.com/new" is a domain they meant.
+                    else [d.split("//")[-1].split("/")[0].strip().lstrip("*.").lower()
+                          for d in _clean_str_list(doms, "allowed_domains")]
+                )
+            if "allow_high_risk" in value:
+                b["allow_high_risk"] = (None if value["allow_high_risk"] is None
+                                        else bool(value["allow_high_risk"]))
+            out[key] = b
         elif key == "prompt_override":
             text = str(value)
             out[key] = text if text.strip() else None
@@ -344,6 +384,7 @@ def resolve(spec: Optional[Dict[str, Any]]) -> ResolvedConfig:
 
     budget = merged.get("budget") or {}
     model = merged.get("model") or {}
+    browser = merged.get("browser") or {}
 
     # Template rules come first, then the employee's own. Rules are
     # additive by nature -- a specialist's personal standard should not
@@ -368,6 +409,8 @@ def resolve(spec: Optional[Dict[str, Any]]) -> ResolvedConfig:
         step_max_tokens=int(budget.get("step_max_tokens", STEP_MAX_TOKENS)),
         loop_model=model.get("loop_model"),
         template_id=merged.get("template_id"),
+        allowed_domains=tuple(browser.get("allowed_domains") or ()),
+        allow_high_risk_browser=bool(browser.get("allow_high_risk")),
     )
 
 

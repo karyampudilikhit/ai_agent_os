@@ -234,6 +234,17 @@ class EmployeeModelCfg(BaseModel):
         None, description="Model for this employee's agentic loop. Reserved.")
 
 
+class EmployeeBrowserCfg(BaseModel):
+    """Browser scope for this employee. Empty domains means any public
+    site; the internal-address floor is enforced regardless and cannot
+    be granted here."""
+
+    allowed_domains: Optional[List[str]] = Field(
+        None, description="Domains this employee may browse, e.g. ['vercel.com'].")
+    allow_high_risk: Optional[bool] = Field(
+        None, description="Permit high-risk browser verbs (delete, purchase).")
+
+
 class EmployeeConfigSpec(BaseModel):
     """Behavioural settings for one employee.
 
@@ -255,6 +266,7 @@ class EmployeeConfigSpec(BaseModel):
     template_id: Optional[str] = None
     budget: Optional[EmployeeBudget] = None
     model: Optional[EmployeeModelCfg] = None
+    browser: Optional[EmployeeBrowserCfg] = None
 
 
 class EmployeeCreateRequest(BaseModel):

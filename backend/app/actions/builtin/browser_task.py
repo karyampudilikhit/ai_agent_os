@@ -897,16 +897,47 @@ def _browser_navigate_impl(args: Dict[str, Any]) -> str:
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
 
+    # Headless is right for reading a page and wrong for operating one.
+    # A live run opened TradingView's screener headless, then spent four
+    # steps failing to find a sort control -- sites commonly serve a
+    # reduced view to a headless browser, and an element that never
+    # rendered cannot be clicked no matter how good the observer is.
+    interactive = str(args.get("interactive") or "").strip().lower() in (
+        "true", "1", "yes", "y")
+
     mgr = get_manager()
     mgr.sweep_idle()
-    try:
-        session = mgr.create(url, prefer_headless=True)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("browser_navigate: failed to open %s: %s", url[:80], exc)
-        return (
-            f"(browser_navigate failed: could not open a browser session — "
-            f"{_classify_open_error(exc)})"
-        )
+
+    # REUSE the window that is already open rather than launching another.
+    #
+    # One on-disk profile can be held by exactly one context, so a second
+    # launch does not merely waste a browser -- it CANNOT succeed while the
+    # first is alive. A live trace caught the consequence: on the step where
+    # the agent finally tried the URL shortcut, having already found the
+    # column header and opened the screener's settings, this raised
+    # "profile is already in use", the loop fell back to a fresh headless
+    # session, and every bit of state it had built up was gone. The right
+    # strategy was defeated by the plumbing under it.
+    #
+    # An explicit session_token wins; otherwise the open session is used.
+    # Only when nothing is open does this launch.
+    token = str(args.get("session_token") or "").strip()
+    session = mgr.get(token) if token else mgr.current()
+    if session is not None:
+        try:
+            mgr.goto(session, url)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("browser_navigate: goto %s failed: %s", url[:80], exc)
+            return f"(browser_navigate failed: could not open {url} — {exc})"
+    else:
+        try:
+            session = mgr.create(url, prefer_headless=not interactive)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("browser_navigate: failed to open %s: %s", url[:80], exc)
+            return (
+                f"(browser_navigate failed: could not open a browser session — "
+                f"{_classify_open_error(exc)})"
+            )
 
     try:
         snapshot = _snapshot_page(session.page)
@@ -1106,16 +1137,27 @@ def _browser_click_impl(args: Dict[str, Any]) -> str:
 BROWSER_NAVIGATE_SPEC = ActionSpec(
     name="browser_navigate",
     description=(
-        "Open a URL in a browser — headless (no visible window) unless the "
-        "page needs a login, in which case it automatically upgrades to a "
-        "visible window so the founder can log in. Returns the page's "
-        "fields/buttons and a session_token for browser_extract/"
-        "browser_click. For exploratory multi-step browsing — reading a "
-        "page, following links — not for filling out and submitting a "
-        "form (use browser_task_async for that)."
+        "Open a URL in a browser and get a session_token for the other browser "
+        "tools. Pass interactive=true whenever you intend to OPERATE the page — "
+        "sort a table, apply a filter, fill a field, work through a flow — which "
+        "opens a real visible window; sites routinely serve a reduced or "
+        "bot-checked view to a headless browser, and a sort control that never "
+        "rendered cannot be clicked. Leave it off to simply read a page. Either "
+        "way it upgrades to a visible window automatically if a login is needed. "
+        "Call it again with a new url to move the SAME window there, keeping the "
+        "session and any login — so if a sort, filter or search can be written "
+        "into the address, going there directly beats operating the controls."
     ),
     parameters=[
         {"name": "url", "type": "string", "description": "The page to open.", "required": True},
+        {"name": "interactive", "type": "boolean",
+         "description": ("true if you will click, type, sort or filter on this "
+                         "page. Opens a real visible window."),
+         "required": False},
+        {"name": "session_token", "type": "string",
+         "description": ("Optional. Move this existing session to the url "
+                         "instead of opening a new window."),
+         "required": False},
     ],
     handler=_browser_navigate_handler,
     preview=lambda args: f"Navigate to {args.get('url')}",
@@ -1154,7 +1196,7 @@ BROWSER_EXTRACT_TABLE_SPEC = ActionSpec(
     ),
     parameters=[
         {"name": "session_token", "type": "string", "description": "Token from browser_navigate or browser_click.", "required": True},
-        {"name": "table_index", "type": "string", "description": "Optional: which table to read, if the page has several. Omit for all.", "required": False},
+        {"name": "table_index", "type": "integer", "description": "Optional: which table to read, if the page has several. Omit for all.", "required": False},
     ],
     handler=_browser_extract_table_handler,
     preview=lambda args: "Read page tables",

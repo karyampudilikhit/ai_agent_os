@@ -90,6 +90,23 @@ class LiveSessionManager(Generic[T]):
             resource.touch()
         return resource
 
+    def newest(self) -> Optional[T]:
+        """The most recently registered live resource, or None.
+
+        Exists for resources that are exclusive by nature. A browser
+        holding one on-disk profile can have exactly one live context, so
+        a caller asked to open a second URL has only two options: fail, or
+        continue in the one that is already open. Failing is what used to
+        happen, and it cost an agent the entire page state it had built up
+        -- it "recovered" into a fresh browser and silently lost the work.
+        """
+        with self._lock:
+            if not self._resources:
+                return None
+            resource = next(reversed(self._resources.values()))
+        resource.touch()
+        return resource
+
     def close(self, token: str) -> bool:
         """Returns True if a resource was actually found and closed,
         False if the token was already gone — lets callers avoid logging

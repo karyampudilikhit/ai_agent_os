@@ -212,6 +212,13 @@ def looks_like_login_page(snapshot: Dict[str, Any]) -> bool:
     return any(f.get("type") == "password" for f in snapshot.get("fields") or [])
 
 
+def _new_element_map():
+    """Imported lazily so browser_observation can import types from here
+    without a cycle."""
+    from backend.app.tools.browser_observation import ElementMap
+    return ElementMap()
+
+
 @dataclass
 class BrowserSession:
     token: str
@@ -231,6 +238,13 @@ class BrowserSession:
     status: str = "opening"
     last_message: str = ""
     _status_lock: threading.Lock = field(default_factory=threading.Lock)
+    # Semantic element ids (e17 -> locator) for this page, and the
+    # generation they belong to. Lives on the session because ids are
+    # only meaningful for the page this session is currently showing —
+    # a map shared across sessions would resolve e17 against whichever
+    # page observed last, which is the exact bug per-observation ids
+    # exist to prevent.
+    element_map: Any = field(default_factory=lambda: _new_element_map())
 
     def touch(self) -> None:
         self.last_touched_at = time.time()
@@ -413,6 +427,31 @@ class BrowserSessionManager:
 
     def get(self, token: str) -> Optional[BrowserSession]:
         return self._live.get(token)
+
+    def current(self) -> Optional[BrowserSession]:
+        """The session already open, if any.
+
+        One on-disk profile means one live context, so "open another URL"
+        can only ever mean "go there in the window that is already open".
+        See LiveSessionManager.newest for what the alternative cost.
+        """
+        return self._live.newest()
+
+    def goto(self, session: BrowserSession, url: str) -> None:
+        """Move an EXISTING session to `url`. Browser thread only.
+
+        Keeps the context, the profile, the cookies and the login. The
+        only thing that changes is the page -- which is the whole point
+        of preferring a URL over operating controls.
+        """
+        session.page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        session.touch()
+        try:
+            from backend.app.tools.source_ledger import get_ledger
+            get_ledger().record_fetched(session.page.url or url)
+        except Exception:  # noqa: BLE001
+            pass
+        logger.info("Browser session %s navigated to %s", session.token, url[:80])
 
     def close(self, token: str) -> None:
         if self._live.close(token):

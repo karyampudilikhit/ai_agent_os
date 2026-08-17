@@ -152,6 +152,14 @@ class DynamicEmployee(Employee):
         # running with no config at all would silently lose its budgets
         # and its output contract.
         self.config = config if config is not None else _resolve_config(employee_id)
+        # Publish this employee's browser scope for the thread it runs
+        # on, BEFORE any task starts. Built from stored config, never
+        # from anything read during the run.
+        try:
+            from backend.app.tools.browser_policy import set_active_policy
+            set_active_policy(self.config.browser_policy())
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("could not set browser scope for %s: %s", role, exc)
 
     def build_objective(
         self,
@@ -208,6 +216,17 @@ class DynamicEmployee(Employee):
             if teammates_context
             else ""
         )
+        # The artifact manifest: real paths, from the registry, checked to
+        # exist. This is the half of the fix that changes behaviour —
+        # registering files matters only if the next specialist is
+        # actually handed them. Placed with teammates' work because that
+        # is conceptually what it is: what the rest of the team made.
+        try:
+            from backend.app.state.run_artifacts import manifest_for_current
+            _manifest = manifest_for_current()
+        except Exception:  # noqa: BLE001
+            _manifest = ""
+        artifacts_block = f"\n\n{_manifest}" if _manifest else ""
         web_block = (
             f"\n\nReal web search results, provided as SUPPLEMENTARY source "
             f"material (cite by URL if you quote specific numbers):\n{web_context}"
@@ -247,7 +266,7 @@ class DynamicEmployee(Employee):
         # The runtime blocks are DATA, not persona, so they are appended
         # outside the override. An employee that cannot see its fetched
         # pages or its teammates' work is broken, not customized.
-        appended = f"{web_block}{teammates_block}{history_block}{recalled_block}"
+        appended = f"{web_block}{artifacts_block}{teammates_block}{history_block}{recalled_block}"
 
         if cfg.prompt_override:
             # Full override, nothing protected — including the
@@ -663,6 +682,7 @@ real one).{appended}"""
                     step_max_tokens=self.config.step_max_tokens,
                     required_outputs=self.config.required_outputs,
                     standing_rules=self.config.domain_rules,
+                    loop_model=self.config.loop_model,
                 ).run(
                     task=task, role=self.role, original_task=original_task,
                 )
