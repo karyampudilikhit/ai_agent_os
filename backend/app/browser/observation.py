@@ -126,12 +126,32 @@ _DATA_FN_JS = r"""
     return true;
   };
 
-  let best = null, bestCells = 0;
+  // THE BIGGEST TABLE IS NOT ALWAYS THE DATA.
+  //
+  // Finviz's screener puts its FILTER PANEL in a table with 55 rows and
+  // the results in one with 21, so "most cells" picked the controls and
+  // measured the sort on a page of dropdowns. A data table is
+  // distinguished by its CONTENT: many of its cells parse as numbers,
+  // and every row is the same width. A control panel is neither.
+  let best = null, bestScore = 0;
   document.querySelectorAll('table').forEach((tbl) => {
     const trs = Array.from(tbl.querySelectorAll('tr'));
-    if (trs.length < 2) return;                 // layout markup, not data
-    const cells = trs.reduce((n, tr) => n + tr.querySelectorAll('th,td').length, 0);
-    if (cells > bestCells) { bestCells = cells; best = trs; }
+    if (trs.length < 3) return;                 // layout markup, not data
+    const sample = trs.slice(0, 12).map(
+      tr => Array.from(tr.querySelectorAll('th,td')).map(c => clean(c.innerText)));
+    const widths = sample.map(r => r.length).filter(w => w > 0);
+    if (widths.length < 3) return;
+    const flat = sample.flat();
+    if (!flat.length) return;
+    const numeric = flat.filter(c => num(c) !== null).length / flat.length;
+    // Consistent row width: a real table is rectangular, a layout table
+    // is whatever fitted.
+    const modal = widths.sort((a, b) =>
+      widths.filter(w => w === a).length - widths.filter(w => w === b).length).pop();
+    const regular = widths.filter(w => w === modal).length / widths.length;
+    if (numeric < 0.15 || regular < 0.6) return;
+    const score = trs.length * (0.5 + numeric) * regular;
+    if (score > bestScore) { bestScore = score; best = trs; }
   });
   if (!best) return null;
 
