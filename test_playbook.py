@@ -177,3 +177,47 @@ def test_the_loop_asks_for_a_playbook():
     src = inspect.getsource(execution_loop.AgenticExecutor.run)
     assert "hint_for" in src
     assert "{playbook}" in execution_loop.STEP_PROMPT
+
+
+# ------------------- what a live run taught about matching
+
+def test_an_unrelated_task_never_gets_this_recipe(monkeypatch, store):
+    """Caught live: a TradingView screener path was recalled for "find 5
+    recent Product Manager job listings in India", on little more than a
+    shared "5" and "find". Handing a job search a stock-screener path is
+    worse than handing it nothing."""
+    from backend.app.browser import playbook
+    monkeypatch.setattr(playbook, "get_store", lambda: store)
+    store.record(TASK, WINNING_RUN)
+    assert playbook.hint_for(
+        "Find 5 RECENT job listings for Product Manager roles in India "
+        "from any public job platform") == ""
+    assert playbook.hint_for("Draft a cold email to seed investors") == ""
+
+
+def test_the_same_task_still_recalls_its_own_path(monkeypatch, store):
+    from backend.app.browser import playbook
+    monkeypatch.setattr(playbook, "get_store", lambda: store)
+    store.record(TASK, WINNING_RUN)
+    assert playbook.hint_for(TASK) != ""
+
+
+def test_the_decision_does_not_rest_on_the_bm25_score():
+    """The measurement that settled the design. Against the real store
+    the screener task scored 0.479 against its OWN path while the job
+    search scored 0.486 against that same path -- the unrelated task
+    scored HIGHER than the identical one. No threshold separates those,
+    so subject-term overlap is the gate and relevance only ranks."""
+    from backend.app.browser.playbook import MIN_RELEVANCE, MIN_SHARED_TERMS
+    assert MIN_RELEVANCE <= 0.1, "relevance ranks candidates, it does not judge them"
+    assert MIN_SHARED_TERMS >= 2
+
+
+def test_scaffolding_words_are_not_subject_words():
+    """"top", "find", "5" and "page" appear in every task and are exactly
+    what let two unrelated ones match."""
+    from backend.app.browser.playbook import _subject_terms
+    terms = _subject_terms("Find the top 5 listings on any page and report them")
+    assert "listings" in terms
+    for noise in ("find", "top", "five", "page", "report", "any"):
+        assert noise not in terms, noise

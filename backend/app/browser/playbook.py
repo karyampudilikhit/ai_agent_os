@@ -50,9 +50,33 @@ MAX_STEPS_KEPT = 24
 # How many playbooks are kept in total, newest first. A cap rather than
 # unbounded growth, because a stale recipe is worse than none.
 MAX_PLAYBOOKS = 200
-# A recalled playbook has to be genuinely about the same job. Below this
-# the match is noise, and a wrong recipe is worse than no recipe.
-MIN_RELEVANCE = 0.28
+# BM25 RANKS candidates; it does not decide whether any of them belong.
+#
+# Measured against the real store: the TradingView screener task scored
+# 0.479 against its OWN recorded path, while "find 5 recent Product
+# Manager job listings in India" scored 0.486 against that same path --
+# the unrelated task scored HIGHER than the identical one. No threshold
+# separates those, so tuning one is the wrong fix. It stays low enough to
+# surface candidates and nothing rests on it.
+MIN_RELEVANCE = 0.05
+
+# THE ACTUAL GATE. A recalled path must share real subject words with the
+# task -- the nouns saying what the work is about, not the scaffolding
+# every task contains. On the same pair: 11 shared terms for the screener
+# task, 0 for the job search. That is the signal BM25 could not see, and
+# a wrong recipe is worse than no recipe.
+MIN_SHARED_TERMS = 2
+_TASK_STOPWORDS = frozenset({
+    "the", "and", "for", "from", "with", "into", "give", "get", "find",
+    "want", "need", "please", "use", "using", "its", "that", "this",
+    "any", "all", "some", "each", "every", "you", "your", "then",
+    "can", "cannot", "does", "not", "yes", "are", "was", "been", "will",
+    "would", "should", "must", "may", "step", "steps", "page", "site",
+    "actually", "only", "report", "say", "list", "show", "top", "recent",
+    "new", "first", "last", "next", "one", "two", "three", "four", "five",
+    "off", "read", "them", "there", "which", "what", "when", "where",
+    "also", "make", "give", "look", "open", "work", "working", "plainly",
+})
 
 
 def _store_path() -> Path:
@@ -73,6 +97,17 @@ def domain_of(url: str) -> str:
     except Exception:  # noqa: BLE001
         return ""
     return host[4:] if host.startswith("www.") else host
+
+
+def _subject_terms(text: str) -> set:
+    """The words that say what a task is ABOUT.
+
+    Scaffolding words appear in every task and are what let a stock
+    screener match a job search. Numbers go too: "top 5" is shape, not
+    subject.
+    """
+    words = re.findall(r"[a-z][a-z0-9-]{2,}", (text or "").lower())
+    return {w for w in words if w not in _TASK_STOPWORDS}
 
 
 def _args(call: Dict[str, Any]) -> Dict[str, Any]:
@@ -235,8 +270,17 @@ class PlaybookStore:
             return None
         wanted = ranked[0][0]
         for i in items:
-            if str(i) == wanted:
-                return i
+            if str(i) != wanted:
+                continue
+            # Second gate: real subject overlap, not just a BM25 score.
+            shared = _subject_terms(task) & _subject_terms(i.get("task", ""))
+            if len(shared) < MIN_SHARED_TERMS:
+                logger.info(
+                    "playbook for %s rejected — shares only %s with this task",
+                    (i.get("domains") or ["?"])[0], sorted(shared) or "nothing",
+                )
+                return None
+            return i
         return None
 
     def all(self) -> List[Dict[str, Any]]:

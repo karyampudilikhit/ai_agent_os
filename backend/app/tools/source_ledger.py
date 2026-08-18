@@ -67,7 +67,13 @@ MAX_ENTRIES = 4000
 # Excluding them outright split that DOI into two bogus entries and
 # turned one real citation into two phantom "fabricated" flags.
 _URL_RE = re.compile(r"https?://[^\s<>\"'\]\}【】,;]+", re.IGNORECASE)
-_TRAILING_JUNK = ".,;:!?'\")]}>*_"
+# Punctuation that ends a sentence or closes a markdown span, never a
+# URL. The BACKTICK was missing, and deliverables put URLs in code spans
+# constantly -- so `https://…?sort=date` was extracted WITH the closing
+# backtick, never matched the URL the run had really opened, and the run
+# was blocked for citing a page it had genuinely visited. Accusing an
+# honest run of fabrication is the worst failure this check can have.
+_TRAILING_JUNK = ".,;:!?'\")]}>*_`’”"
 
 # Bare DOIs as they appear in API payloads — Crossref returns
 # "10.2139/ssrn.2622782", not a doi.org link. Without this, a DOI handed

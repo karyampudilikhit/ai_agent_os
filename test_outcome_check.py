@@ -372,3 +372,36 @@ def test_the_fingerprint_has_exactly_one_definition():
     assert "__DATA_FN__" not in _OBSERVE_JS, "placeholder must be interpolated"
     assert _DATA_FN_JS in _OBSERVE_JS, "the observer uses the shared function"
     assert _DATA_FN_JS in _DATA_JS, "so does the standalone form"
+
+
+# ---------------- a citation must not be broken by markdown formatting
+
+def test_a_url_in_a_code_span_is_extracted_cleanly():
+    """Caught live, and it was a FALSE ACCUSATION -- the worst kind.
+
+    A run opened https://in.indeed.com/jobs?q=product+manager&l=India&sort=date
+    and wrote it into the deliverable inside a markdown code span. The
+    extractor kept the closing backtick, the URL never matched the one
+    the run had really fetched, and the run was blocked for citing a page
+    it had genuinely visited."""
+    from backend.app.tools.source_ledger import extract_urls
+    md = ("See `https://in.indeed.com/jobs?q=product+manager&l=India&sort=date` "
+          "for the listings.")
+    assert extract_urls(md) == [
+        "https://in.indeed.com/jobs?q=product+manager&l=India&sort=date"]
+
+
+def test_other_markdown_punctuation_is_stripped_too():
+    from backend.app.tools.source_ledger import extract_urls
+    assert extract_urls("**https://example.com/a**") == ["https://example.com/a"]
+    assert extract_urls("ends here https://example.com/b.") == ["https://example.com/b"]
+    assert extract_urls("“https://example.com/c”") == ["https://example.com/c"]
+    assert extract_urls("[label](https://example.com/d)") == ["https://example.com/d"]
+
+
+def test_a_genuinely_visited_url_is_not_reported_as_fabricated():
+    from backend.app.tools.source_ledger import SourceLedger
+    led = SourceLedger()
+    led.record_fetched("https://in.indeed.com/jobs?q=product+manager&l=India&sort=date")
+    text = ("Source: `https://in.indeed.com/jobs?q=product+manager&l=India&sort=date`")
+    assert led.unretrieved_urls(text) == []

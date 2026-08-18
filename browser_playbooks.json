@@ -1,0 +1,21 @@
+[
+  {
+    "task": "Open https://www.tradingview.com/screener/ and use the stock screener to find the top 5 gainers and the top 5 losers by WEEKLY percentage change.\n\nWork the page step by step: observe it, change the change-% column or filter to the weekly period, sort by that column, and read the rows off the actual table.\n\nFor each of the 10 stocks give me: ticker, company name, weekly % change, and last price. Re",
+    "domains": [
+      "tradingview.com"
+    ],
+    "entry_url": "https://www.tradingview.com/screener/",
+    "steps": [
+      "go to https://www.tradingview.com/screener/",
+      "click \"Screener settings\"",
+      "search the page for \"weekly change column or columns tab in screener settings\"",
+      "click \"Performance\"",
+      "search the page for \"weekly change or week change column header\"",
+      "click \"Perf % 1W\"",
+      "click \"Perf % 1W\"",
+      "read the table",
+      "click \"Perf % 1W\""
+    ],
+    "recorded_at": 1787025380.870986
+  }
+]
