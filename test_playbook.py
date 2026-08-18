@@ -221,3 +221,33 @@ def test_scaffolding_words_are_not_subject_words():
     assert "listings" in terms
     for noise in ("find", "top", "five", "page", "report", "any"):
         assert noise not in terms, noise
+
+
+def test_method_words_do_not_make_a_match(monkeypatch, store):
+    """The second miss, on the REAL task text. A job search shared five
+    terms with the screener path -- "sort", "filter", "actual", "name",
+    "company" -- every one of them method wording from the prompt
+    boilerplate rather than anything either task is about. A raw count
+    could not tell that from a real match; a proportion can. Measured on
+    this exact pair: 1.000 for the screener against its own path, 0.200
+    for the job search against it."""
+    from backend.app.browser import playbook
+    monkeypatch.setattr(playbook, "get_store", lambda: store)
+    store.record(
+        "Open https://www.tradingview.com/screener/ and use the stock screener "
+        "to find the top 5 gainers and losers by weekly percentage change. "
+        "Sort or filter the column and read the rows off the actual table. "
+        "For each give ticker, company name, weekly change and last price.",
+        WINNING_RUN)
+    jobs = ("Find 5 recent job listings for Product Manager roles in India from "
+            "any public job platform. Search or filter for Product Manager "
+            "roles, sort to the most recently posted, and read the listings off "
+            "the actual page. For each give the job title, company name, "
+            "location and how recently it was posted.")
+    assert playbook.hint_for(jobs) == "", "method words are not subject words"
+
+
+def test_the_gate_is_a_proportion_not_a_count():
+    from backend.app.browser.playbook import MIN_SHARED_TERMS, MIN_SUBJECT_OVERLAP
+    assert 0.4 <= MIN_SUBJECT_OVERLAP <= 0.8
+    assert MIN_SHARED_TERMS >= 3

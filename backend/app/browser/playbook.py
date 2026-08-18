@@ -60,12 +60,21 @@ MAX_PLAYBOOKS = 200
 # surface candidates and nothing rests on it.
 MIN_RELEVANCE = 0.05
 
-# THE ACTUAL GATE. A recalled path must share real subject words with the
-# task -- the nouns saying what the work is about, not the scaffolding
-# every task contains. On the same pair: 11 shared terms for the screener
-# task, 0 for the job search. That is the signal BM25 could not see, and
-# a wrong recipe is worse than no recipe.
-MIN_SHARED_TERMS = 2
+# THE ACTUAL GATE: how much of the SMALLER task's subject the two share.
+#
+# A raw count could not do it. The job search shares five terms with the
+# screener path -- "sort", "filter", "actual", "name", "company" -- and
+# every one of those is method wording from the prompt boilerplate ("sort
+# or filter", "company name", "read it off the actual page"), not
+# something either task is ABOUT. Raising the count would only have
+# raised the bar for honest matches too.
+#
+# As a proportion the two separate cleanly, measured on exactly this
+# pair: 1.000 for the screener task against its own path, 0.200 for the
+# job search against it. Relative to the smaller set, so a long task and
+# a short one can still match.
+MIN_SUBJECT_OVERLAP = 0.5
+MIN_SHARED_TERMS = 3
 _TASK_STOPWORDS = frozenset({
     "the", "and", "for", "from", "with", "into", "give", "get", "find",
     "want", "need", "please", "use", "using", "its", "that", "this",
@@ -273,11 +282,13 @@ class PlaybookStore:
             if str(i) != wanted:
                 continue
             # Second gate: real subject overlap, not just a BM25 score.
-            shared = _subject_terms(task) & _subject_terms(i.get("task", ""))
-            if len(shared) < MIN_SHARED_TERMS:
+            mine, theirs = _subject_terms(task), _subject_terms(i.get("task", ""))
+            shared = mine & theirs
+            overlap = len(shared) / max(1, min(len(mine), len(theirs)))
+            if len(shared) < MIN_SHARED_TERMS or overlap < MIN_SUBJECT_OVERLAP:
                 logger.info(
-                    "playbook for %s rejected — shares only %s with this task",
-                    (i.get("domains") or ["?"])[0], sorted(shared) or "nothing",
+                    "playbook for %s rejected — %d shared term(s), %.0f%% overlap",
+                    (i.get("domains") or ["?"])[0], len(shared), overlap * 100,
                 )
                 return None
             return i
