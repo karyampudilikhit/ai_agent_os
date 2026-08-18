@@ -37,6 +37,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from typing import Any, Dict, Iterable, List, Sequence, Set
 
 logger = logging.getLogger(__name__)
@@ -354,8 +355,25 @@ def _produced_a_ranking(ledger_calls: Iterable[Dict[str, Any]]) -> bool:
 
     if not measured:
         return _changed_the_page_before_reading(ledger_calls)
+
+    # A RANKING CAN BE ASKED FOR IN THE URL.
+    #
+    # Requiring the ordering to CHANGE is right when the agent operates
+    # controls, and wrong when it navigates to an address that carries
+    # the sort -- finviz.com/screener.ashx?...&o=-perf1w arrives sorted
+    # and never changes, so a ranking the agent genuinely produced read
+    # as "the table was never reordered".
+    #
+    # The distinction that matters is whether the AGENT ASKED for the
+    # ordering. A URL carrying an explicit sort parameter is the agent
+    # asking, exactly as a click on a column header is. Landing on a page
+    # that merely happens to be sorted -- TradingView's default market-cap
+    # view -- is not, and still does not count.
     if not changed_at:
-        return False
+        asked_at = _asked_for_the_order_in_a_url(ledger_calls)
+        if not asked_at:
+            return False
+        changed_at = asked_at
 
     # The rows have to be READ at or after the moment the order changed.
     # Reading first and sorting afterwards answers a question nobody
@@ -437,6 +455,38 @@ def _changed_the_page_before_reading(ledger_calls: Iterable[Dict[str, Any]]) -> 
             if view:
                 prev_view = view
     return False
+
+
+# Query parameters that mean "order the results like this". A URL
+# carrying one is the agent asking for a ranking, not stumbling onto one.
+_SORT_PARAMS = ("sort=", "sortby=", "sort_by=", "order=", "orderby=",
+                "order_by=", "&o=", "?o=", "sortorder=", "sortcolumn=",
+                "ordering=", "sort_dir=", "sortdir=")
+
+
+def _asked_for_the_order_in_a_url(ledger_calls: Iterable[Dict[str, Any]]) -> float:
+    """When the run navigated to a URL that asked for a specific order,
+    and the page that came back really was sorted. 0.0 if never."""
+    try:
+        from backend.app.browser.observation import parse_sorted_columns
+    except Exception:  # noqa: BLE001
+        return 0.0
+    for call in _browser_views(ledger_calls):
+        if "browser_navigate" not in call["tool"]:
+            continue
+        url = ""
+        m = _URL_LINE_RE.search(call["view"]) or _NOW_ON_RE.search(call["view"])
+        if m:
+            url = m.group(1)
+        if not any(p in url.lower() for p in _SORT_PARAMS):
+            continue
+        if parse_sorted_columns(call["view"]):
+            return call["at"]
+    return 0.0
+
+
+_URL_LINE_RE = re.compile(r"^URL:\s*(\S+)", re.MULTILINE)
+_NOW_ON_RE = re.compile(r"Now on:.*?\((\S+?)\)")
 
 
 def _verified_a_result_url(ledger_calls: Iterable[Dict[str, Any]]) -> bool:

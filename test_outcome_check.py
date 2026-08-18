@@ -405,3 +405,48 @@ def test_a_genuinely_visited_url_is_not_reported_as_fabricated():
     led.record_fetched("https://in.indeed.com/jobs?q=product+manager&l=India&sort=date")
     text = ("Source: `https://in.indeed.com/jobs?q=product+manager&l=India&sort=date`")
     assert led.unretrieved_urls(text) == []
+
+
+# ------------------- a ranking can be asked for in the URL
+
+SORTED_BY_URL = (
+    "URL: https://finviz.com/screener.ashx?v=141&f=cap_midover&o=-perf1w\n"
+    "TITLE: Stock Screener\n"
+    "DATA: 20 row(s) | EROC · ARX · NIQ · NBIS · SHAZ\n"
+    "SORTED: Perf Week descending"
+)
+
+
+def test_a_url_that_asks_for_the_order_produces_a_ranking():
+    """Requiring the ordering to CHANGE is right when the agent operates
+    controls and wrong when it navigates to an address carrying the sort.
+    finviz.com/...&o=-perf1w arrives sorted and never changes, so a
+    ranking the agent genuinely produced read as "never reordered"."""
+    from backend.app.orchestrator.output_contract import RANKED_RESULT, satisfied_kinds
+    trace = [_c("action.browser_navigate", 1, SORTED_BY_URL),
+             _c("action.browser_extract_table", 2, SORTED_BY_URL)]
+    assert RANKED_RESULT in satisfied_kinds(set(), False, trace)
+
+
+def test_landing_on_a_default_sort_still_is_not_a_ranking():
+    """The distinction that keeps the check worth having: the agent has
+    to have ASKED for the ordering. TradingView's screener arrives sorted
+    by market cap and reading that is not a ranking."""
+    from backend.app.orchestrator.output_contract import RANKED_RESULT, satisfied_kinds
+    trace = [_c("action.browser_navigate", 1, SORTED_BY_CAP),
+             _c("action.browser_extract_table", 2, SORTED_BY_CAP)]
+    assert RANKED_RESULT not in satisfied_kinds(set(), False, trace)
+
+
+def test_a_sort_parameter_on_an_unsorted_page_does_not_count():
+    """The URL asked, and the page did not deliver -- exactly the
+    invented-parameter case that started all of this."""
+    from backend.app.orchestrator.output_contract import RANKED_RESULT, satisfied_kinds
+    ignored = (
+        "URL: https://tradingview.com/screener?sort=Perf&order=desc\n"
+        "DATA: 100 row(s) | NVDA · AAPL · GOOG\n"
+        "SORTED: (no column is in order)"
+    )
+    trace = [_c("action.browser_navigate", 1, ignored),
+             _c("action.browser_extract_table", 2, ignored)]
+    assert RANKED_RESULT not in satisfied_kinds(set(), False, trace)
