@@ -599,6 +599,127 @@ def _await_login_impl(args: Dict[str, Any]) -> str:
     )
 
 
+# ---------------------------------------------------------------- records
+
+# REPEATED CARDS THAT ARE NOT A TABLE.
+#
+# browser_extract_table reads <table> elements, and most of the web does
+# not use them. Job boards, product grids, search results and feeds all
+# render a list of records as repeated divs -- so a run reached
+# Wellfound's Product Manager results, called extract_table, got nothing,
+# and reported "zero listings captured". The listings were on screen.
+#
+# Found by STRUCTURE rather than by class name: a container whose
+# children share a shape, repeated enough times to be a list rather than
+# a coincidence. Class names differ on every site and change without
+# notice; "many siblings that look alike" does not.
+_RECORDS_JS = r"""
+(args) => {
+  const LIMIT = args.limit || 25;
+  const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+
+  const signature = (el) => {
+    // What KIND of node this is, ignoring the content inside it.
+    const kids = Array.from(el.children).slice(0, 6)
+      .map(c => c.tagName).join('>');
+    return el.tagName + '|' + kids;
+  };
+
+  const visible = (el) => {
+    const r = el.getBoundingClientRect();
+    if (r.width < 80 || r.height < 30) return false;
+    const s = getComputedStyle(el);
+    return s.display !== 'none' && s.visibility !== 'hidden';
+  };
+
+  // Group every element's children by shape, and keep the groups with
+  // enough lookalikes to be a real list.
+  let best = null, bestScore = 0;
+  const containers = document.querySelectorAll('div,ul,ol,section,main,tbody');
+  containers.forEach(parent => {
+    const kids = Array.from(parent.children).filter(visible);
+    if (kids.length < 3) return;
+    const groups = new Map();
+    kids.forEach(k => {
+      const sig = signature(k);
+      if (!groups.has(sig)) groups.set(sig, []);
+      groups.get(sig).push(k);
+    });
+    groups.forEach(group => {
+      if (group.length < 3) return;
+      const text = group.map(g => clean(g.innerText)).filter(t => t.length > 25);
+      if (text.length < 3) return;
+      // Prefer many records with substantial text: that is a results
+      // list rather than a nav bar or a row of icons.
+      const score = text.length * Math.min(400, text.join(' ').length / text.length);
+      if (score > bestScore) { bestScore = score; best = group; }
+    });
+  });
+
+  if (!best) return { records: [], total: 0 };
+
+  const records = best.slice(0, LIMIT).map(el => {
+    const link = el.querySelector('a[href]');
+    const heading = el.querySelector('h1,h2,h3,h4,[role=heading]');
+    return {
+      title: clean(heading ? heading.innerText : (link ? link.innerText : '')).slice(0, 120),
+      // Every visible line, so nothing the page showed is silently lost.
+      lines: clean(el.innerText).split(' | ').length ? clean(el.innerText).slice(0, 400) : '',
+      href: link ? String(link.href).slice(0, 300) : '',
+    };
+  });
+  return { records: records, total: best.length };
+}
+"""
+
+
+def _extract_records_impl(args: Dict[str, Any]) -> str:
+    session, err = _session(args)
+    if err:
+        return err
+    try:
+        _policy().check_action("extract")
+        _policy().check_url(session.page.url)
+    except PolicyViolation as exc:
+        return str(exc)
+
+    try:
+        limit = max(1, int(args.get("limit", 25)))
+    except (TypeError, ValueError):
+        limit = 25
+
+    try:
+        raw = session.page.evaluate(_RECORDS_JS, {"limit": limit}) or {}
+    except Exception as exc:  # noqa: BLE001
+        return f"(could not read records from this page: {exc})"
+
+    records = raw.get("records") or []
+    if not records:
+        return wrap_untrusted(
+            f"[records — {session.page.url}]\n"
+            "NO REPEATED RECORDS FOUND. This page does not show a list of "
+            "similar items — or they load as you scroll. Try "
+            "action.browser_scroll first, or action.browser_extract_table if "
+            "the data really is in a table, or read the page text with "
+            "action.browser_extract.",
+            session.page.url,
+        )
+
+    lines = [f"[records — {session.page.url}]",
+             f"{raw.get('total', len(records))} similar item(s) on the page, "
+             f"showing {len(records)}. Each block is ONE record exactly as the "
+             f"page rendered it. Quote only what appears here.", ""]
+    for i, r in enumerate(records, 1):
+        lines.append(f"--- record {i} ---")
+        if r.get("title"):
+            lines.append(f"title: {r['title']}")
+        if r.get("href"):
+            lines.append(f"link: {r['href']}")
+        if r.get("lines"):
+            lines.append(f"text: {r['lines']}")
+        lines.append("")
+    return wrap_untrusted(chr(10).join(lines), session.page.url)
+
 # ------------------------------------------------------------------- find
 
 def _find_impl(args: Dict[str, Any]) -> str:
@@ -1067,6 +1188,26 @@ AWAIT_LOGIN_SPEC = ActionSpec(
     capability="web.form.login_continue",
 )
 
+EXTRACT_RECORDS_SPEC = ActionSpec(
+    name="browser_extract_records",
+    description=(
+        "Read a list of repeated items off a page that does NOT use a table — "
+        "job listings, search results, product cards, a feed. Most of the web "
+        "renders lists this way, so reach for this when browser_extract_table "
+        "returns nothing. Finds the records by their repeated STRUCTURE rather "
+        "than by class names, and returns each one's title, link and visible "
+        "text exactly as rendered."
+    ),
+    parameters=[_TOKEN,
+                {"name": "limit", "type": "integer",
+                 "description": "How many records to return (default 25).",
+                 "required": False}],
+    handler=_h(_extract_records_impl),
+    preview=lambda a: "Extract the repeated records on this page",
+    mutating=False,
+    capability="web.page.extract",
+)
+
 FIND_SPEC = ActionSpec(
     name="browser_find",
     description=(
@@ -1227,6 +1368,6 @@ BACK_SPEC = ActionSpec(
     capability="web.page.navigate",
 )
 
-ALL_SPECS = [OBSERVE_SPEC, FIND_SPEC, CLICK_SPEC, TYPE_SPEC, SELECT_SPEC,
+ALL_SPECS = [OBSERVE_SPEC, FIND_SPEC, EXTRACT_RECORDS_SPEC, CLICK_SPEC, TYPE_SPEC, SELECT_SPEC,
              SCROLL_SPEC, PRESS_SPEC, WAIT_SPEC, AWAIT_LOGIN_SPEC,
              UPLOAD_SPEC, DOWNLOAD_SPEC, BACK_SPEC, DISMISS_SPEC]

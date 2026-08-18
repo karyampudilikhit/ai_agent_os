@@ -824,31 +824,53 @@ _EXTRACT_TABLES_JS = r"""
 """
 
 
-def _render_tables(tables: List[Dict[str, Any]], limit: int) -> str:
+def _render_tables(tables: List[Dict[str, Any]], limit: int,
+                   head: int = 0, tail: int = 0) -> str:
     """Pipe-delimit every row so column boundaries are unambiguous, and
     name empty cells rather than leaving a gap — the gap is exactly what
-    the model misread last time."""
+    the model misread last time.
+
+    HEAD AND TAIL RATHER THAN A FLAT CUT. A 100-row sorted table holds its
+    answer at both ENDS: the top rows are the gainers and the bottom rows
+    are the losers. Truncating at a character count keeps the top and
+    throws the bottom away, which is exactly how a run reported three
+    gainers, zero losers, and blamed the site for "truncating before the
+    bottom 5 appear". The rows were there. The renderer discarded them.
+    """
     chunks: List[str] = []
     for t in tables:
-        rows = t.get("rows") or []
+        rows = list(t.get("rows") or [])
         width = max((len(r) for r in rows), default=0)
-        lines = [f"--- table {t.get('index')} ({len(rows)} rows x {width} cols) ---"]
-        for r in rows:
-            # Pad short rows so a row with fewer cells can't look like a
-            # complete one; mark blanks so they're impossible to skip.
+        total = len(rows)
+        lines = [f"--- table {t.get('index')} ({total} rows x {width} cols) ---"]
+
+        keep, gap_after = rows, -1
+        if head and tail and total > head + tail + 1:
+            keep = rows[:head] + rows[-tail:]
+            gap_after = head
+
+        for i, r in enumerate(keep):
+            if i == gap_after:
+                lines.append(
+                    f"… {total - head - tail} middle row(s) omitted — you are "
+                    f"seeing the FIRST {head} and the LAST {tail} …"
+                )
             padded = list(r) + [""] * (width - len(r))
             lines.append(" | ".join(c if c else "(blank)" for c in padded))
-        chunks.append("\n".join(lines))
-    text = "\n\n".join(chunks)
+        chunks.append(chr(10).join(lines))
+
+    text = (chr(10) * 2).join(chunks)
     if len(text) > limit:
         return (
             text[:limit].rstrip()
             + f"\n[…TABLE TRUNCATED at {limit} of {len(text)} chars. You are NOT "
               f"seeing every row. Do not describe this as a complete list, and do "
               f"not call the rows you can see 'the top N' unless the page itself "
-              f"says so — page through the site for the rest.]"
+              f"says so — ask for fewer rows with head/tail, or page through the "
+              f"site for the rest.]"
         )
     return text
+
 
 _LIKELY_IRREVERSIBLE_CLICK_WORDS = (
     "submit", "buy now", "buy", "purchase", "pay", "confirm order",
@@ -1085,7 +1107,7 @@ def _browser_extract_table_impl(args: Dict[str, Any]) -> str:
         f"row has the same number of columns. Read values by COLUMN POSITION; "
         f"never shift a value across a (blank) to fill a gap, and never infer a "
         f"value — a ticker, an ID — that is not printed in a cell.)\n"
-        + _render_tables(tables, _MAX_TABLE_CHARS)
+        + _render_tables(tables, _MAX_TABLE_CHARS, head=head, tail=tail)
     )
 
 
@@ -1211,23 +1233,32 @@ BROWSER_EXTRACT_SPEC = ActionSpec(
 BROWSER_EXTRACT_TABLE_SPEC = ActionSpec(
     name="browser_extract_table",
     description=(
-        "Read the current page's data TABLES as exact rows and columns. "
-        "ALWAYS prefer this over browser_extract when you are going to "
-        "quote figures, rows, tickers, prices or any tabular data — it "
-        "reads real table cells, so empty cells and column alignment are "
-        "preserved. browser_extract returns flowed text where an empty "
-        "cell disappears and columns silently shift."
+        "Read the page's tables as rows and cells, preserving column positions "
+        "and blanks. Use this for anything you intend to quote as data — rows, "
+        "figures, tickers, prices. By default it returns the FIRST 12 and LAST "
+        "12 rows of each table, which is what a sorted table's question usually "
+        "needs: the top rows are the biggest and the bottom rows are the "
+        "smallest. Raise head or tail if you need more of one end, or set the "
+        "other to 0 if you only care about one."
     ),
     parameters=[
-        {"name": "session_token", "type": "string", "description": "Token from browser_navigate or browser_click.", "required": True},
-        {"name": "table_index", "type": "integer", "description": "Optional: which table to read, if the page has several. Omit for all.", "required": False},
+        {"name": "session_token", "type": "string",
+         "description": "Token from action.browser_navigate.", "required": True},
+        {"name": "table_index", "type": "integer",
+         "description": "Which table, if the page has several. Omit for all.",
+         "required": False},
+        {"name": "head", "type": "integer",
+         "description": "How many rows from the TOP (default 12).", "required": False},
+        {"name": "tail", "type": "integer",
+         "description": "How many rows from the BOTTOM (default 12). 0 for none.",
+         "required": False},
     ],
     handler=_browser_extract_table_handler,
-    preview=lambda args: "Read page tables",
+    preview=lambda args: "Extract tables from the current page",
     mutating=False,
-    planner_excluded=False,
     capability="web.page.extract_table",
 )
+
 
 
 BROWSER_CLICK_SPEC = ActionSpec(

@@ -156,6 +156,16 @@ RELEVANT_TOOLS_SHOWN = _env_int("AGENT_RELEVANT_TOOLS_SHOWN", 5)
 MAX_STEPS = _env_int("AGENT_MAX_STEPS", 10)               # THINK->ACT ceiling
 DEADLINE_SECONDS = _env_float("AGENT_DEADLINE_SECONDS", 240.0)  # wall-clock
 MAX_OBSERVATION_CHARS = _env_int("AGENT_MAX_OBSERVATION_CHARS", 1500)
+# DATA results get far more room than a page description.
+#
+# 1500 characters is a sensible budget for "what is on this page" and a
+# catastrophic one for "here are the rows". A live run extracted 100 rows
+# and THREE survived into what the model could see -- it then reported
+# three gainers and wrote "unknown" for the rest, blaming the site. The
+# rows were there; the transcript cut them off.
+MAX_DATA_OBSERVATION_CHARS = _env_int("AGENT_MAX_DATA_OBSERVATION_CHARS", 9000)
+_DATA_TOOLS = ("browser_extract_table", "browser_extract_records",
+               "browser_extract", "run_python")
 MAX_TRANSCRIPT_CHARS = _env_int("AGENT_MAX_TRANSCRIPT_CHARS", 9000)
 STEP_MAX_TOKENS = _env_int("AGENT_STEP_MAX_TOKENS", 700)
 # How many times to re-attempt a step's model call before giving up on
@@ -220,6 +230,18 @@ WORKING IN A BROWSER — read these before your next action:
 - Read the rows LAST. Anything you extract before sorting is the site's
   default view, not the answer to the question you were asked.
 """
+
+
+def _obs_cap(action: str) -> int:
+    """How much of a tool result the model gets to see.
+
+    A page description is summarised fine at 1500 characters. A table is
+    not: the answer IS the rows, and cutting them off makes an agent
+    report three of ten and call the rest unavailable.
+    """
+    name = (action or "").lower()
+    return (MAX_DATA_OBSERVATION_CHARS
+            if any(t in name for t in _DATA_TOOLS) else MAX_OBSERVATION_CHARS)
 
 
 def _loop_adapter(default: Any, configured: Optional[str] = None) -> Any:
@@ -606,6 +628,7 @@ class AgenticExecutor:
         # everything after it, because nothing sent the agent back to the
         # step rather than onward.
         step_retries = 0
+        plausibility_warned = False
 
         step_i = -1
         while True:
@@ -866,7 +889,7 @@ class AgenticExecutor:
             steps.append({
                 "thought": thought,
                 "call": f"{action}({json.dumps(args, ensure_ascii=False)[:300]})",
-                "result": _truncate(result, MAX_OBSERVATION_CHARS),
+                "result": _truncate(result, _obs_cap(action)),
             })
 
             # Degenerate-sweep guard.
@@ -1027,6 +1050,23 @@ class AgenticExecutor:
 
                     if comparable and result:
                         last_page_view = result
+
+                    # A ranking of impossible figures, caught while the
+                    # agent can still filter the page. At the gate this
+                    # only fails the run; here it can be fixed.
+                    if "extract" in action and not plausibility_warned:
+                        try:
+                            from backend.app.orchestrator.plausibility import (
+                                RETRY_NOTE, check as _plausible,
+                            )
+                            if _plausible(ranking_text, result):
+                                plausibility_warned = True
+                                logger.info(
+                                    "[%s] extracted ranking is implausible — "
+                                    "telling it to filter", role)
+                                steps.append({"note": RETRY_NOTE})
+                        except Exception:  # noqa: BLE001
+                            pass
 
             # DID THE STEP REACH THE STATE IT DECLARED?
             #

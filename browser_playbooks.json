@@ -1,5 +1,22 @@
 [
   {
+    "task": "Find 5 RECENT job listings for Product Manager roles in India, from any public job platform you can reach (for example Naukri, Indeed, Wellfound, Instahyre, or a company careers page). Pick a site that does not require a login.\n\nWork the page step by step: open the site, search or filter for Product Manager roles located in India, sort or filter to the most recently posted if the site offers it, a",
+    "domains": [
+      "in.indeed.com"
+    ],
+    "entry_url": "https://in.indeed.com",
+    "steps": [
+      "go to https://in.indeed.com",
+      "type into the field",
+      "click \"Date posted filter\"",
+      "click \"Sort by: date\"",
+      "go to https://in.indeed.com/jobs?q=Product+Manager&l=India&sort=date",
+      "search the page for \"Apply on company site link\"",
+      "click \"Apply on company site (opens in a new tab)\""
+    ],
+    "recorded_at": 1787028728.0291169
+  },
+  {
     "task": "Open https://www.tradingview.com/screener/ and use the stock screener to find the top 5 gainers and the top 5 losers by WEEKLY percentage change.\n\nWork the page step by step: observe it, change the change-% column or filter to the weekly period, sort by that column, and read the rows off the actual table.\n\nFor each of the 10 stocks give me: ticker, company name, weekly % change, and last price. Re",
     "domains": [
       "tradingview.com"
@@ -8,14 +25,15 @@
     "steps": [
       "go to https://www.tradingview.com/screener/",
       "click \"Screener settings\"",
-      "search the page for \"weekly change column or columns tab in screener settings\"",
+      "click \"Perf %\"",
+      "search the page for \"weekly change or week change or Perf % 1W or 1W column\"",
       "click \"Performance\"",
-      "search the page for \"weekly change or week change column header\"",
-      "click \"Perf % 1W\"",
+      "click \"Column setup\"",
+      "search the page for \"Perf % 1W or 1W or weekly change or week change\"",
       "click \"Perf % 1W\"",
       "read the table",
-      "click \"Perf % 1W\""
+      "read the table"
     ],
-    "recorded_at": 1787025380.870986
+    "recorded_at": 1787028291.5700488
   }
 ]

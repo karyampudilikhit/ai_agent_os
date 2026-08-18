@@ -2304,6 +2304,20 @@ def _gate_deliverable(output: str, task: str = "",
     except Exception:  # noqa: BLE001
         pass
 
+    # A ranking of things that cannot be real.
+    #
+    # Every check above asks whether the work was DONE. This one asks
+    # whether the answer makes sense -- the gap that let a run ship
+    # +9,999,900% weekly "gains" on delisted sub-penny shells, correctly
+    # sorted, every figure genuinely on the page.
+    try:
+        from backend.app.orchestrator.plausibility import check as _plausible
+        problem = _plausible(task, text)
+        if problem:
+            problems.append(problem)
+    except Exception:  # noqa: BLE001
+        pass
+
     if not problems:
         # The run produced a usable answer, so the path it took is worth
         # keeping. Recorded HERE and nowhere else, deliberately: this is
