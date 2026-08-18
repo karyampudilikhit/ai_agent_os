@@ -259,6 +259,101 @@ _OVERLAY_JS = r"""
 """
 
 
+# CLICKS THAT CANNOT BE TAKEN BACK.
+#
+# browser_click_element is mutating=False, which is right for the
+# ninety-nine clicks in a run that sort a table or open a menu — and
+# wrong for the one that sends a message, places an order or deletes
+# something. Those went straight through, because the approval queue
+# keys on the TOOL and this tool is usually harmless.
+#
+# So the check is on the BUTTON, not the tool. It has to be, given what
+# this layer is for: the outreach flow ends in "Send", the ad flow ends
+# in "Publish", and both spend something the founder cannot get back.
+_IRREVERSIBLE_CLICK_WORDS = (
+    # sending and posting
+    "send", "send message", "send invite", "send request", "post", "publish",
+    "share", "tweet", "reply", "comment", "submit",
+    # money
+    "buy", "buy now", "purchase", "pay", "pay now", "place order",
+    "confirm order", "complete order", "checkout", "subscribe", "upgrade",
+    "add funds", "withdraw", "transfer", "donate", "confirm payment",
+    # destruction and commitment. "sign" is deliberately absent: "Sign
+    # in" and "Sign up" are the two most common buttons on the web and
+    # neither is irreversible.
+    "delete", "remove", "deactivate", "close account", "cancel subscription",
+    "accept offer", "agree and continue", "confirm and",
+    # ads specifically
+    "go live", "set live", "launch campaign", "publish campaign",
+)
+
+
+# Verbs where "verb + object" is unambiguously the action itself.
+# Deliberately shorter than the list above.
+_PREFIX_VERBS = (
+    "send", "delete", "remove", "buy", "pay", "publish", "confirm",
+    "launch", "withdraw", "transfer", "donate", "place order",
+)
+
+
+def _approved(args: Dict[str, Any]) -> bool:
+    """True when this call IS the founder's approved one firing.
+
+    The approval path re-invokes the same handler with the flag set, so
+    the check has to let the second call through or an approved action
+    would queue itself forever.
+    """
+    return bool(args.get("_approved"))
+
+
+def _queue_for_approval(session, element_id: str, name: str) -> Optional[str]:
+    """Put the click in front of the founder. Returns the receipt, or
+    None if the queue is unavailable — in which case the click proceeds,
+    because breaking every run over an unreachable queue is worse than
+    the risk it manages, and every other guard still applies."""
+    try:
+        from backend.app.actions.approval_queue import get_queue
+        record = get_queue().enqueue(
+            action_name="browser_click_element",
+            arguments={"session_token": session.token,
+                       "element_id": element_id, "_approved": True},
+            preview=f'Click "{name}" on {str(session.page.url)[:90]}',
+            origin={"kind": "browser", "url": session.page.url, "label": name},
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("could not queue %r for approval (%s) — allowing", name, exc)
+        return None
+    logger.info("queued an irreversible click for approval: %r", name)
+    return (
+        f'[queued for founder approval] "{name}" looks like it cannot be '
+        f'undone — sending, publishing, paying or deleting — so it has NOT '
+        f'been clicked. The founder approves it in the app '
+        f'(pending id {record.get("id")}). '
+        f'This is expected and correct: treat it as done-for-now, do not '
+        f'queue it again, and carry on with anything else the task needs.'
+    )
+
+
+def _looks_irreversible(name: str) -> bool:
+    """True when a control's own label says it does something final.
+
+    Matched on the normalised WHOLE label, not a substring: "Send" is
+    irreversible and "Sender name" is a field, "Post" is irreversible and
+    "Posted 3 days ago" is a timestamp. Substring matching turned every
+    job listing into a payment confirmation.
+    """
+    label = _norm_label(name)
+    if not label:
+        return False
+    if label in _IRREVERSIBLE_CLICK_WORDS:
+        return True
+    # "Send message to Priya" — the verb leads the label. Only for verbs
+    # where verb-plus-object is unambiguously an action: matching every
+    # word this way made "Post code" a publish button and "Sign in" a
+    # contract signature.
+    return any(label.startswith(v + " ") for v in _PREFIX_VERBS)
+
+
 def _follow_new_tab(session) -> bool:
     """Move the session to a tab the last action opened, if any.
 
@@ -628,6 +723,13 @@ def _click_impl(args: Dict[str, Any]) -> str:
     if el.get("enabled") is False:
         return (f"({element_id} \"{el.get('name', '')}\" is disabled — something else on "
                 "the page probably has to be filled in first.)")
+
+    # An irreversible click goes to the founder, not through.
+    name = str(el.get("name") or "")
+    if _looks_irreversible(name) and not _approved(args):
+        queued = _queue_for_approval(session, element_id, name)
+        if queued:
+            return queued
 
     url_before = session.page.url
     try:

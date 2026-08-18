@@ -10,7 +10,7 @@ adds.
 
 ---
 
-## The five modules and how they depend on each other
+## The modules and how they depend on each other
 
 ```
         ┌─────────────────────────────────────────────┐
@@ -31,11 +31,17 @@ adds.
 
 | File | Owns | Size |
 |---|---|---|
-| `session_manager.py` | The one Playwright instance, the one thread, session lifecycle | ~470 |
-| `observation.py` | Turning a page into addressable elements; `browser_find` search | ~450 |
-| `policy.py` | Scope: which verbs, which URLs; untrusted-content fencing | ~200 |
-| `primitives.py` | The 11 tools the model calls | ~640 |
-| `task_flow.py` | Founder-present login/fill/approve flow, plus navigate/extract | ~1,290 |
+| `session_manager.py` | The one Playwright instance, the one thread, session lifecycle |
+| `observation.py` | Pages into addressable elements — across iframes — plus the data fingerprint and `browser_find` |
+| `policy.py` | Scope: which verbs, which URLs; untrusted-content fencing |
+| `primitives.py` | The 14 tools the model calls |
+| `playbook.py` | What worked last time on this site |
+| `task_flow.py` | Founder-present login/fill/approve flow, plus navigate/extract |
+
+Outside this folder, because they are properties of the LOOP rather than
+of the browser: `orchestrator/step_outcome.py` (did a step reach the
+state it declared) and the budget/feedback logic in
+`orchestrator/execution_loop.py`.
 
 ---
 
@@ -65,7 +71,7 @@ presented as content.
 **4. Every primitive re-observes after acting.** The model is never told
 "the click succeeded" — it is shown the page the click produced. This is
 the whole reliability argument for the layer, and it is what makes the
-outcome check in "Known gap" below possible to build.
+per-step outcome check possible to build.
 
 ---
 
@@ -85,6 +91,20 @@ context at a time — headless or headed, same profile. So a second
 This is why `browser_navigate` reuses the open window rather than
 launching (see blocker 2 below), and why parallel browser workers are not
 possible without per-worker profiles.
+
+---
+
+## What it handles that a naive layer does not
+
+| | |
+|---|---|
+| **Iframes** | Elements inside frames get frame-prefixed ids (`f1e3`) and resolve into the right document. Consent walls and embedded forms live there. |
+| **Blocking overlays** | `browser_dismiss_overlay` finds the real buttons across every frame and declines cookies before accepting. Detected by what a click in the middle of the page would actually hit, so a sticky site header is not mistaken for a wall. |
+| **Login walls** | Detected on every observation. `browser_await_login` opens nothing and asks nothing — the window is already visible, the founder signs in, and it notices the password field disappear. No password is ever typed by the AI. |
+| **New tabs** | A click on `target="_blank"` moves the session to the new tab and starts a fresh id generation. A tab outside scope is closed rather than followed. |
+| **Hover-revealed controls** | A sort arrow that is `visibility:hidden` until hovered is still clickable — Playwright's actionability checks run *before* it hovers, so the fallback hovers first and forces. |
+| **Irreversible clicks** | "Send", "Publish", "Pay", "Delete" queue for founder approval instead of firing. The check is on the BUTTON, because the tool is `mutating=False` and usually harmless. |
+| **Repeat work** | A verified path is recorded per site and replayed as a hint, so a site solved once is not re-solved. |
 
 ---
 
@@ -129,15 +149,30 @@ a run *actually did*, never from the deliverable's account of itself.
 
 ---
 
+## What verifies what
+
+| Check | Question | Where |
+|---|---|---|
+| Provenance | Did a tool run? | `ToolCallLedger` |
+| Activity | Did the page change? | `page_view_changed` |
+| Outcome, per step | Did this step reach the state it declared? | `step_outcome.judge_step` |
+| Outcome, per run | Is the table actually reordered? | `output_contract.RANKED_RESULT` |
+| Row provenance | Were the reported records ever on a page it opened? | `compute_gate.unbacked_row_labels` |
+
+Every one answers from a RECORDED FACT — a tool that really succeeded, a
+page that really moved, a file that really exists. None asks the model
+whether its own work went well. That is the single rule in this codebase
+that has held every time it was applied and failed every time it was not.
+
 ## Known gap — read this before concluding the layer works
 
-**Nothing checks the OUTCOME. Only that something happened.**
+**No check asks whether an answer is SENSIBLE.**
 
-| Check | Question | Status |
-|---|---|---|
-| Provenance | Did a tool run? | ✅ |
-| Activity | Did the page change? | ✅ |
-| **Outcome** | **Is the page showing what was asked for?** | ❌ |
+A correctly-sorted list of delisted sub-penny shells passes every check
+above: the column really was reordered, the rows really were read, every
+ticker really exists. It is verified and useless. The one time a run
+caught this, the judgement came from the model writing the deliverable,
+not from any guard.
 
 Every check here compares **page views** — element lists, URL, chrome,
 text. None compares **the data**. Consequences seen live:
