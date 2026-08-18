@@ -64,14 +64,30 @@ def _num(text: str) -> Optional[float]:
 
 
 def implausible_percentages(text: str) -> List[str]:
-    """Percentage figures too large to be a real move."""
+    """Percentage figures too large to be a real move.
+
+    ONLY inside a data row. A deliverable that says "I must not report a
+    weekly move above 1000%" is quoting its instructions, not reporting a
+    figure -- and reading that sentence as data blocked a run for a
+    threshold this module itself had asked it to respect. Prose about the
+    rule is not a breach of the rule.
+    """
     out: List[str] = []
-    for raw in _PERCENT.findall(text or ""):
-        v = _num(raw)
-        if v is not None and abs(v) >= IMPLAUSIBLE_PERCENT:
-            shown = f"{raw.strip()}%"
-            if shown not in out:
-                out.append(shown)
+    for line in (text or "").splitlines():
+        # A data row: pipe-delimited, and led by something that looks
+        # like an identifier rather than a sentence.
+        if line.count("|") < 3:
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        head = cells[0].split()[0] if cells and cells[0].split() else ""
+        if not re.match(r"^[A-Z][A-Z0-9.-]{0,8}$", head):
+            continue
+        for raw in _PERCENT.findall(line):
+            v = _num(raw)
+            if v is not None and abs(v) >= IMPLAUSIBLE_PERCENT:
+                shown = f"{raw.strip()}%"
+                if shown not in out:
+                    out.append(shown)
     return out
 
 

@@ -222,3 +222,22 @@ def test_the_retry_note_says_filter_not_delete():
     from backend.app.orchestrator.plausibility import RETRY_NOTE
     assert "FILTER THE PAGE FIRST" in RETRY_NOTE
     assert "Do not simply delete" in RETRY_NOTE
+
+
+def test_prose_about_the_threshold_is_not_a_breach_of_it():
+    """A false positive of this module's own making. A deliverable that
+    said "I must not report a weekly move above 1000%" -- quoting the
+    instruction it had been given -- was read as REPORTING a 1000% move,
+    and the run was blocked for respecting the very rule this check
+    asks for. Prose about the rule is not a breach of the rule."""
+    from backend.app.orchestrator.plausibility import check, implausible_percentages
+    prose = ("Per the instruction I must not report any stock showing a weekly "
+             "move above 1000%, and every row I could reach exceeded that.")
+    assert implausible_percentages(prose) == []
+    assert check(RANK_TASK, prose) is None
+
+
+def test_a_figure_still_counts_when_it_is_in_a_row():
+    from backend.app.orchestrator.plausibility import implausible_percentages
+    assert implausible_percentages(
+        "| VALV | Shengkai | +9,999,900.00% | 0.1000 USD |") == ["+9,999,900.00%"]

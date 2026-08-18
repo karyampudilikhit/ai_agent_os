@@ -952,6 +952,28 @@ def observe_page(page, element_map: ElementMap,
         element_map.record_frame(frame_index, frame)
 
     element_map.record(obs)
+
+    # LINKS THE PAGE SHOWED ARE "SEEN", NOT INVENTED.
+    #
+    # The source ledger has always had two states -- fetched, and
+    # surfaced-by-a-search-but-never-opened -- and nothing recorded the
+    # second for a link read off a page. So an agent that read a results
+    # page, saw each listing's href, and cited one was reported as
+    # fabricating it. That is the same false accusation the trailing
+    # backtick caused, and it blocks honest work.
+    #
+    # A citation to a link the page displayed is verifiable and true. A
+    # citation to a URL that appeared nowhere still is not.
+    try:
+        from backend.app.tools.source_ledger import get_ledger
+        ledger = get_ledger()
+        for el in obs.elements:
+            href = el.get("href")
+            if href:
+                ledger.record_seen(str(href))
+    except Exception:  # noqa: BLE001
+        pass
+
     logger.info(
         "observed %s — %d interactive element(s) across %d frame(s), gen %d",
         obs.url[:80], len(obs.elements), frame_index + 1, gen,

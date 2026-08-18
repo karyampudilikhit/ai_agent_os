@@ -649,9 +649,16 @@ _RECORDS_JS = r"""
       if (group.length < 3) return;
       const text = group.map(g => clean(g.innerText)).filter(t => t.length > 25);
       if (text.length < 3) return;
-      // Prefer many records with substantial text: that is a results
-      // list rather than a nav bar or a row of icons.
-      const score = text.length * Math.min(400, text.join(' ').length / text.length);
+      // COUNT DOMINATES. A promo strip and a results list both hold
+      // repeated blocks of text, and on wellfound.com the first version
+      // picked "Trending startup jobs" over the listings because that
+      // block had longer text. A results list is the LONGEST repetition
+      // on a results page, near enough always.
+      const avg = Math.min(300, text.join(' ').length / text.length);
+      // Records almost always link somewhere; navigation furniture and
+      // promo copy often do not.
+      const linked = group.filter(g => g.querySelector('a[href]')).length / group.length;
+      const score = Math.pow(text.length, 1.6) * avg * (0.4 + linked);
       if (score > bestScore) { bestScore = score; best = group; }
     });
   });
@@ -688,12 +695,32 @@ def _extract_records_impl(args: Dict[str, Any]) -> str:
     except (TypeError, ValueError):
         limit = 25
 
-    try:
-        raw = session.page.evaluate(_RECORDS_JS, {"limit": limit}) or {}
-    except Exception as exc:  # noqa: BLE001
-        return f"(could not read records from this page: {exc})"
+    # Job boards, search results and feeds render after first paint, so a
+    # single immediate read finds an empty shell. Look, wait, look again
+    # -- a run that reported "zero listings captured" was reading a page
+    # that had not finished drawing them.
+    raw: Dict[str, Any] = {}
+    for attempt in range(3):
+        try:
+            raw = session.page.evaluate(_RECORDS_JS, {"limit": limit}) or {}
+        except Exception as exc:  # noqa: BLE001
+            return f"(could not read records from this page: {exc})"
+        if raw.get("records"):
+            break
+        if attempt < 2:
+            session.page.wait_for_timeout(2500)
 
     records = raw.get("records") or []
+    # Same reasoning as the observer: a link this tool put in front of
+    # the model was on the page, so citing it is honest.
+    try:
+        from backend.app.tools.source_ledger import get_ledger
+        ledger = get_ledger()
+        for r in records:
+            if r.get("href"):
+                ledger.record_seen(str(r["href"]))
+    except Exception:  # noqa: BLE001
+        pass
     if not records:
         return wrap_untrusted(
             f"[records — {session.page.url}]\n"
