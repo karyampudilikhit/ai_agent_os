@@ -38,6 +38,7 @@ from __future__ import annotations
 import logging
 import os
 import random
+import threading
 import time
 from typing import Any, Dict, Optional
 
@@ -69,11 +70,115 @@ RETRY_BASE_DELAY = float(os.environ.get("OPENAI_ADAPTER_RETRY_DELAY", "2.0"))
 EMPTY_RETRY_MULTIPLIER = 3
 EMPTY_RETRY_CEILING = 8000
 
+# WHAT A REASONING MODEL ACTUALLY NEEDS, LEARNED ONCE PER PROCESS.
+#
+# A thinking model spends its budget reasoning and can return EMPTY
+# content with finish_reason="length" -- the retry above exists for
+# exactly that, and it works. What it did not do was remember.
+#
+# Measured on a live screener run: deepseek-v4-flash came back empty at
+# the step budget SIX times, retried to 8000 and succeeded every time,
+# and then began the next step at the same too-small number. Eight steps
+# took 865 seconds against a 600-second deadline, and the run died with
+# the data already on screen. The retries were not the failure; paying
+# for them once per step was.
+#
+# So the first floor that works for a model is remembered and used as
+# the starting point. Per process, not persisted: it is a fact about a
+# model's current behaviour, not about the world.
+_token_floor: Dict[str, int] = {}
+_token_floor_lock = threading.Lock()
+
+
+def _remembered_floor(model: str) -> int:
+    with _token_floor_lock:
+        return _token_floor.get(model, 0)
+
+
+def _remember_floor(model: str, tokens: int) -> None:
+    with _token_floor_lock:
+        if tokens > _token_floor.get(model, 0):
+            _token_floor[model] = tokens
+
 
 class OpenAIAdapterError(Exception):
     def __init__(self, message: str, context: Optional[Dict[str, Any]] = None):
         super().__init__(message)
         self.context = context or {}
+
+
+# A QUOTA IS NOT A BUSY MOMENT.
+#
+# 429 covers two unrelated things, and treating them alike wasted a live
+# run. OpenRouter's free tier allows 50 model requests PER DAY; when that
+# is spent every call returns 429 with `X-RateLimit-Remaining: 0` and a
+# reset timestamp at the next UTC midnight. The backoff ladder then slept
+# 3s, 5s, 8s, 17s per attempt, four attempts per step, four steps -- ~90
+# seconds of waiting per step for a limit that would not clear for ten
+# hours -- and the founder watched a progress log that looked like
+# recovery in progress.
+#
+# So a limit with a reset FURTHER OUT than the ladder could ever cover is
+# raised immediately, naming the reset time. Waiting is right for a
+# shared pool that is momentarily busy; it is never right for a quota.
+_LADDER_CEILING_SECONDS = 120.0
+
+
+def _quota_exhausted_until(response: httpx.Response) -> Optional[float]:
+    """Seconds until the limit clears, when this 429 is a spent quota.
+
+    None when it is an ordinary busy-upstream 429 that backing off can
+    actually fix.
+    """
+    if response.status_code != 429:
+        return None
+
+    remaining = response.headers.get("x-ratelimit-remaining")
+    reset_raw = response.headers.get("x-ratelimit-reset")
+    body = ""
+    try:
+        body = response.text or ""
+    except Exception:  # noqa: BLE001
+        pass
+
+    # OpenRouter puts the same headers inside the JSON body as well, so
+    # both shapes are read rather than trusting one.
+    if not reset_raw or remaining is None:
+        try:
+            meta = (response.json().get("error") or {}).get("metadata") or {}
+            headers = meta.get("headers") or {}
+            remaining = headers.get("X-RateLimit-Remaining", remaining)
+            reset_raw = headers.get("X-RateLimit-Reset", reset_raw)
+        except Exception:  # noqa: BLE001
+            pass
+
+    if remaining is None or str(remaining).strip() not in ("0", "0.0"):
+        # Some providers omit the header entirely; fall back to wording
+        # that only ever appears on a spent allowance.
+        if "per-day" not in body and "daily" not in body.lower():
+            return None
+
+    if not reset_raw:
+        return _LADDER_CEILING_SECONDS + 1.0 if "per-day" in body else None
+
+    try:
+        reset = float(reset_raw)
+    except (TypeError, ValueError):
+        return None
+    # Milliseconds since the epoch when it is far too large to be seconds.
+    if reset > 1e11:
+        reset /= 1000.0
+    seconds = reset - time.time()
+    # A reset in the past, or one the ladder could genuinely wait out, is
+    # an ordinary throttle.
+    return seconds if seconds > _LADDER_CEILING_SECONDS else None
+
+
+def _describe_wait(seconds: float) -> str:
+    if seconds >= 3600:
+        return f"{seconds / 3600:.1f} hour(s)"
+    return f"{seconds / 60:.0f} minute(s)"
+
 
 
 class OpenAICompatAdapter:
@@ -131,6 +236,18 @@ class OpenAICompatAdapter:
             if response.status_code not in RETRY_STATUSES or attempt >= RETRY_ATTEMPTS:
                 return response
 
+            exhausted = _quota_exhausted_until(response)
+            if exhausted is not None:
+                raise OpenAIAdapterError(
+                    f"{self.model}: the provider's request quota is spent — it "
+                    f"does not clear for another {_describe_wait(exhausted)}. "
+                    f"This is a billing limit, not a busy server, so retrying "
+                    f"cannot help.",
+                    {"model": self.model, "base_url": self.base_url,
+                     "quota_exhausted": True,
+                     "clears_in_seconds": round(exhausted)},
+                )
+
             last = response
             try:
                 delay = float(response.headers.get("retry-after") or 0)
@@ -153,7 +270,7 @@ class OpenAICompatAdapter:
         max_tokens = int(kwargs.get("max_tokens", 2000))
         want_json = kwargs.get("format", "json") == "json"
 
-        attempt_tokens = max_tokens
+        attempt_tokens = max(max_tokens, _remembered_floor(self.model))
         for attempt in range(3):
             payload: Dict[str, Any] = {
                 "model": self.model,
@@ -215,6 +332,9 @@ class OpenAICompatAdapter:
             # decision not to use tools.
             reasoning = str(message.get("reasoning") or "").strip()
             if attempt < 2 and (finish == "length" or reasoning):
+                _remember_floor(self.model,
+                                min(attempt_tokens * EMPTY_RETRY_MULTIPLIER,
+                                    EMPTY_RETRY_CEILING))
                 attempt_tokens = min(attempt_tokens * EMPTY_RETRY_MULTIPLIER,
                                      EMPTY_RETRY_CEILING)
                 logger.warning(

@@ -77,7 +77,34 @@ def _blocked(*a, **k):
         "data connector tool first, then pass it in and compute here."
     )
 
-_socket.socket = _blocked
+# A CLASS, NOT A FUNCTION.
+#
+# socket.socket is a CLASS, and the standard library subclasses it:
+# ssl.py line 943 is `class SSLSocket(socket)`. Replacing it with a
+# function made that subclassing raise
+#     TypeError: function() argument 'code' must be code, not str
+# at IMPORT time -- so any code touching ssl, urllib, requests or httpx
+# died with a cryptic message about code objects, and the clear
+# explanation written right above ("network access is disabled inside
+# run_python") was unreachable for exactly the code it was written for.
+#
+# Watched live: an agent trying to fetch a Wikipedia page got the
+# TypeError, could not tell a policy from a bug, and burned three of its
+# twenty calls retrying variations of the same blocked import.
+#
+# So the block now subclasses the real socket and refuses at
+# CONSTRUCTION. The module still imports, the subclass still builds, and
+# the failure arrives where it belongs -- when something actually tries
+# to open a connection -- carrying the message that says what to do.
+_real_socket = _socket.socket
+
+
+class _BlockedSocket(_real_socket):
+    def __init__(self, *a, **k):
+        _blocked()
+
+
+_socket.socket = _BlockedSocket
 _socket.create_connection = _blocked
 _socket.socketpair = _blocked
 del _socket
@@ -152,7 +179,24 @@ def _handler(args: Dict[str, Any]) -> str:
             # isolated and completely useless for the one job this tool
             # exists to do. The env is already stripped in _child_env,
             # which is where the isolation that matters comes from.
-            [sys.executable, "-E", "-B", "-c", _PREAMBLE + "\n" + code],
+            # -X utf8, and it HAS to be a flag rather than the env var.
+            #
+            # _child_env sets PYTHONIOENCODING=utf-8 and -E ignores every
+            # PYTHON* variable — including that one. So the child's stdout
+            # fell back to the console codepage (cp1252 here) and any
+            # non-ASCII print died on the way out with a UnicodeEncodeError
+            # raised INSIDE the child, which surfaced to the agent as an
+            # unexplained crash rather than as an encoding problem.
+            #
+            # Measured: printing "café — naïve ✓" under -E returns an EMPTY
+            # string and sys.stdout.encoding reads cp1252; the same print
+            # under -E -X utf8 returns it intact at utf-8. A live run met
+            # this reading a Wikipedia page and burned three calls on it.
+            #
+            # -X is a command-line flag, so -E cannot strip it, and UTF-8
+            # mode is exactly what PYTHONIOENCODING was reaching for.
+            [sys.executable, "-E", "-B", "-X", "utf8",
+             "-c", _PREAMBLE + "\n" + code],
             cwd=cwd,
             env=_child_env(),
             capture_output=True,

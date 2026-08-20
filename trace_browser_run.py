@@ -25,6 +25,7 @@ import logging
 import os
 import sys
 import time
+from pathlib import Path
 
 TASK = (
     "Open https://www.tradingview.com/screener/ and use the stock screener to "
@@ -40,13 +41,16 @@ TASK = (
 
 
 def _adapter():
-    from backend.app.models.provider_adapters.ollama_adapter import OllamaAdapter
-    # Same defaults main._build_adapter uses, so this exercises the model
-    # the server actually runs rather than a lookalike.
-    return OllamaAdapter(
-        base_url=os.environ.get("OLLAMA_HOST", "").strip() or "http://localhost:11434",
+    # Routed exactly as the server routes it, rather than pinned to
+    # Ollama. This built an OllamaAdapter directly and so quietly
+    # ignored PIPELINE_MODEL whenever it named an OpenRouter model --
+    # which made the fallback adapter a dead one, and a trace whose
+    # fallback is dead reports a model problem that is really a
+    # configuration problem.
+    from backend.app.main import _build_adapter
+    return _build_adapter(
         model=os.environ.get("PIPELINE_MODEL", "").strip() or "gpt-oss:120b-cloud",
-        api_key=os.environ.get("OLLAMA_API_KEY", "").strip() or None,
+        use_mock=False,
     )
 
 
@@ -54,8 +58,13 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default=None, help="loop model override")
     ap.add_argument("--task", default=TASK)
+    ap.add_argument("--task-file", default=None,
+                    help="read the task from a file (multi-line tasks do not "
+                         "survive a Windows command line intact)")
     ap.add_argument("--role", default="Market Screener Analyst")
     args = ap.parse_args()
+    if args.task_file:
+        args.task = Path(args.task_file).read_text(encoding="utf-8").strip()
 
     # Page text carries en-dashes and minus signs; the Windows console is
     # cp1252 and raises on them. A trace that dies while PRINTING the

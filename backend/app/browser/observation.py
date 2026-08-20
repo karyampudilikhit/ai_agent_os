@@ -92,8 +92,25 @@ _DATA_FN_JS = r"""
   // like it had changed. Collapse whitespace too — real headers carry
   // non-breaking spaces ("Chg %"), and a column name differing only by
   // an invisible character reads as a DIFFERENT column.
-  const key = (s) => (s || '').replace(/·/g, ' ').replace(/\s+/g, ' ')
-                              .trim().slice(0, 18);
+  // A ONE-LETTER BADGE IS NOT PART OF THE NAME.
+  //
+  // Finviz puts a single-character marker in the ticker cell, so
+  // innerText reads "N NBIL", "S SNDU", "E EROC" -- and with whitespace
+  // collapsed, "NNBIL". Four live screener runs built their row keys
+  // that way, which means every "did the rows move" comparison was run
+  // on identifiers that match nothing on the page and nothing in the
+  // deliverable.
+  //
+  // Dropped only when a LONE leading letter is followed by a longer
+  // token starting with the same letter: that is a badge, not a name.
+  // "S SNDU" goes, "A B Corp" and "E EROC" go, "US Steel" and
+  // "JP Morgan" stay -- neither is a repeat of its own first letter.
+  const key = (s) => {
+    let t = (s || '').replace(/·/g, ' ').replace(/\s+/g, ' ').trim();
+    const m = t.match(/^([A-Za-z]) ([A-Za-z][A-Za-z0-9.\-]{1,})$/);
+    if (m && m[2].toUpperCase().startsWith(m[1].toUpperCase())) t = m[2];
+    return t.slice(0, 18);
+  };
 
   // Real cells this has to survive, from a live extraction:
   //   "225.16 USD"  "−0.06%"  "75.68 M"  "5.45 T USD"  "1,180.16 USD"

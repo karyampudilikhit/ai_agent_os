@@ -213,7 +213,29 @@ class ToolRegistry:
                 qualified_name.endswith(f".{name}") or qualified_name == name
                 for name in DATASET_COMPUTE_TOOLS
             )
-            keep_whole = is_compute or ".browser_" in qualified_name
+            # RETRIEVAL IS EVIDENCE, WHATEVER FETCHED IT.
+            #
+            # This read `".browser_" in qualified_name`, which was right
+            # when the browser was the only way to reach a page and
+            # became wrong the moment web_read existed. The consequence
+            # was not cosmetic: _gate_deliverable checks reported rows
+            # against the ledger's stored output, so a run that read its
+            # pages with web_read had 200 CHARACTERS of each page kept --
+            # the untrusted-content banner, and none of the content.
+            # Every fact it correctly read off a page would have looked
+            # unbacked, and the fabrication check it was meant to face
+            # would have been checking nothing at all.
+            #
+            # Measured on the first live run after the tool shipped: six
+            # web_read calls, every one storing the banner and nothing
+            # else. Named by what the tool DOES rather than by which
+            # subsystem it came from, so the next retrieval tool inherits
+            # this instead of quietly losing its evidence.
+            is_retrieval = any(
+                marker in qualified_name
+                for marker in (".browser_", ".web_read", ".web_search")
+            )
+            keep_whole = is_compute or is_retrieval
 
             # Handlers report failure as TEXT beginning with "(" rather
             # than raising -- so success cannot be inferred from the

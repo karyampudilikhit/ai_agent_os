@@ -41,6 +41,34 @@ _adapters: Dict[str, Any] = {}
 _failed: Dict[str, str] = {}
 
 
+# DeepSeek's first-party endpoint names its models WITHOUT a vendor
+# prefix -- `deepseek-v4-flash`, not `deepseek/deepseek-v4-flash` --
+# because on their own API there is no other vendor to distinguish from.
+# The prefixed spelling is OpenRouter's catalogue name for the same
+# model. Both are in use here, and they need different endpoints.
+#
+# So a first-party spelling implies the first-party endpoint. This is the
+# same route-by-name rule the rest of this module uses, extended to a
+# provider whose names happen to be unambiguous -- nothing else is called
+# `deepseek-v4-*`. An explicit OPENAI_BASE_URL still wins, so pointing at
+# a proxy or a self-hosted gateway is one variable.
+DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+
+def _is_first_party_deepseek(name: str) -> bool:
+    return (name or "").strip().lower().startswith("deepseek-")
+
+
+def _base_url_for(name: str) -> str:
+    explicit = os.environ.get("OPENAI_BASE_URL", "").strip()
+    if explicit:
+        return explicit
+    if _is_first_party_deepseek(name):
+        return DEEPSEEK_BASE_URL
+    return OPENROUTER_BASE_URL
+
+
 def _build(name: str) -> Any:
     """Pick the provider from the model NAME, and never guess wrong.
 
@@ -52,20 +80,36 @@ def _build(name: str) -> Any:
 
     An explicit override wins over the convention, because a
     self-hosted vLLM can serve a model whose name has no slash at all.
+
+    An EXPLICIT BASE URL also means OpenAI-compatible, whatever the name
+    looks like. DeepSeek's own endpoint calls its models `deepseek-chat`
+    and `deepseek-reasoner` -- no vendor prefix, because on their API
+    there is no other vendor to distinguish from. Under the slash rule
+    alone those names route to the local Ollama daemon, which does not
+    have them, and the failure reads as "model not found" rather than
+    "you pointed this at the wrong provider". Setting OPENAI_BASE_URL is
+    not something anyone does by accident.
     """
     explicit = os.environ.get("MODEL_PROVIDER", "").strip().lower()
-    openai_compatible = explicit == "openai" or (not explicit and "/" in name)
+    base_url_set = bool(os.environ.get("OPENAI_BASE_URL", "").strip())
+    openai_compatible = (
+        explicit == "openai"
+        or (not explicit and (base_url_set or "/" in name
+                              or _is_first_party_deepseek(name)))
+    )
 
     if openai_compatible:
         from backend.app.models.provider_adapters.openai_adapter import (
             OpenAICompatAdapter,
         )
         return OpenAICompatAdapter(
-            base_url=os.environ.get("OPENAI_BASE_URL", "").strip()
-            or "https://openrouter.ai/api/v1",
+            base_url=_base_url_for(name),
             model=name,
-            api_key=(os.environ.get("OPENROUTER_API_KEY")
-                     or os.environ.get("OPENAI_API_KEY") or None),
+            api_key=(os.environ.get("DEEPSEEK_API_KEY")
+                     if _is_first_party_deepseek(name) else None)
+            or os.environ.get("OPENROUTER_API_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+            or None,
         )
 
     from backend.app.models.provider_adapters.ollama_adapter import OllamaAdapter

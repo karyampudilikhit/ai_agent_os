@@ -60,8 +60,17 @@ approves, Units + specialists auto-hire).
 
 ## Where things stand
 
+> **Session handoff:** [`docs/CLAUDE_HANDOFF.md`](docs/CLAUDE_HANDOFF.md) is the
+> live state snapshot — phase status, what is proven live vs only unit-tested,
+> prioritised bugs, and next-session instructions. Read it before planning work.
+
 | | |
 |---|---|
+| **Browser layer** | ✅ hardened this session — section / TOC / page-structure extraction (generic, no site-specific rules), data-table selection, `head`/`tail` row windows, blocked-page detection, headless→headed upgrade, UTF-8 subprocess fix, `web_search`/`web_read` registered as loop-selectable tools alongside the browser. Live: W1–W5 pass, 0 site-API calls. Ceiling is bot detection, not capability — Finviz ~2-in-3 headless, Reddit blocks every headless route. |
+| **Orchestration Phase 1 — GoalSpec** | ✅ live — a founder request becomes an object (item count, per-item work, fields, recency, ranking) instead of a string in a prompt. Deterministic; `confident=False` means the run behaves exactly as before. |
+| **Orchestration Phase 2 — feasibility gate** | ⚠️ verdict live, enforcement not — `task_graph` estimates cost and returns RUN / DESCOPE / REFUSE *before* spending, and recomputes when the browser budget widens. The verdict is correct on every real task; the DESCOPE instruction did **not** change model behaviour. |
+| **Orchestration Phase 3 — item state** | ⚠️ half live — per-item progress derived from the tool ledger. The end-of-run honest count works (a run that verified 2 of 8 says so). The mid-run nudge has **never fired in 4 live runs**; see P0-1 in the handoff. |
+| **Completion gate** | ✅ live — `goal_state` stops a run on ledger evidence, not on the model saying DONE. W5 went 16 calls → 3. Covers navigation goals only; content and item-count goals are still silent. |
 | **Foundation** | Committed on `feat/phase-4-orchestration`: contracts, agent creation, orchestration engine, memory. Then the five audit phases — 1: adapter raises instead of returning errors as content + `calculate` built-in; 2: shared run workspace so specialists see upstream work; 3: four confirmed bugs; 4: relevance-based memory recall; 5: coverage for the four untested subsystems + the Dockerfile's missing Chromium. |
 | **Employee abstraction** | ✅ live — `Employee`, `DynamicEmployee`, per-employee memory, min/max tier verification floor. |
 | **AI hierarchy — Phase 1** | ✅ live — Employees have persistent UUIDs in a shared registry; same Employee can be hired into multiple Units. Companies exist as structural containers with auto-created "Personal" default. v1 team files auto-migrate to v2 on first load. |

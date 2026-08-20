@@ -98,7 +98,7 @@ from backend.app.browser.session_manager import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gpt-oss:120b-cloud"
+DEFAULT_MODEL = "deepseek-v4-flash"
 # How long to let the founder actually type credentials before we start
 # checking whether the login form is gone. Guards against "detecting"
 # completion in the split second before the login page finishes render.
@@ -108,26 +108,35 @@ POST_SUBMIT_WAIT_MS = 2500
 
 
 # ----------------------------------------------------------------
-# Lazy module-level adapter. Mirrors the _web_search/_web_fetch
-# singleton pattern in dynamic_employee.py — this file needs an LLM to
-# map "fill this out with X, Y, Z" onto real form fields, but
-# ActionSpec.handler's fixed (args) -> str signature has no channel to
-# receive the calling specialist's pipeline/adapter. Building a fresh
-# OllamaAdapter here (not via routes._build_adapter, which probes the
-# server on every call) is cheap and reads the same env vars every
-# other adapter in this app reads.
+# The model this file talks to. It needs an LLM to map "fill this out
+# with X, Y, Z" onto real form fields, but ActionSpec.handler's fixed
+# (args) -> str signature has no channel to receive the calling
+# specialist's pipeline/adapter, so it resolves one itself.
+#
+# IT MUST RESOLVE THE SAME MODEL THE LOOP IS RUNNING. This used to
+# construct an OllamaAdapter directly, and so stayed pinned to the local
+# daemon no matter what the rest of the system had been pointed at. The
+# symptom was exact: with the free Ollama tier exhausted (HTTP 429) and
+# every other component happily running on OpenRouter, form-filling
+# alone returned {"fills": []} and the page was reported as having no
+# mappable fields. A quota on a provider nobody selected became "the
+# form could not be read".
+#
+# So it goes through the same pool and the same AGENT_LOOP_MODEL as
+# execution_loop, which routes by model name -- a slash means the
+# OpenAI-compatible endpoint, no slash means Ollama.
 # ----------------------------------------------------------------
-_adapter = None
+
+
+def _model_name() -> str:
+    return (os.environ.get("AGENT_LOOP_MODEL", "").strip()
+            or os.environ.get("BROWSER_TASK_MODEL", "").strip()
+            or DEFAULT_MODEL)
 
 
 def _get_adapter():
-    global _adapter
-    if _adapter is None:
-        from backend.app.models.provider_adapters.ollama_adapter import OllamaAdapter
-        base_url = os.environ.get("OLLAMA_HOST", "").strip() or "http://localhost:11434"
-        api_key = os.environ.get("OLLAMA_API_KEY", "").strip() or None
-        _adapter = OllamaAdapter(base_url=base_url, model=DEFAULT_MODEL, api_key=api_key)
-    return _adapter
+    from backend.app.models.adapter_pool import get_adapter
+    return get_adapter(_model_name())
 
 
 # ----------------------------------------------------------------
@@ -214,10 +223,18 @@ def _map_goal_to_fills(goal: str, snapshot: Dict[str, Any]) -> Dict[str, Any]:
         fields_block=_fields_block(fields),
         buttons_block=_buttons_block(buttons),
     )
+    adapter = _get_adapter()
+    if adapter is None:
+        logger.warning("browser_task field-mapping has no usable model (%s)",
+                       _model_name())
+        return {"fills": [], "submit_label": "", "missing": []}
     try:
-        raw = _get_adapter().chat_completion(prompt, temperature=0.1, max_tokens=1200)
+        raw = adapter.chat_completion(prompt, temperature=0.1, max_tokens=1200)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("browser_task field-mapping LLM call failed: %s", exc)
+        # Named, because "field-mapping failed" read as a page problem for
+        # a whole afternoon when it was a provider quota.
+        logger.warning("browser_task field-mapping LLM call failed on %s: %s",
+                       _model_name(), exc)
         return {"fills": [], "submit_label": "", "missing": []}
     data = _extract_json(raw) or {}
     fills = data.get("fills") or []
@@ -789,6 +806,30 @@ _EXTRACT_TEXT_JS = "() => document.body ? document.body.innerText : ''"
 # payload, and clipping it is what produces a confidently wrong answer.
 _MAX_TABLE_CHARS = 14000
 
+# A sorted table answers at BOTH ends -- the gainers are on top and the
+# losers at the bottom -- so a caller that names neither still gets both.
+# Zero would mean "flat cut", which is the truncation that made a run
+# report "the table truncates before the bottom 5 appear".
+_DEFAULT_TABLE_HEAD = 12
+_DEFAULT_TABLE_TAIL = 12
+
+
+def _int_arg(value: Any, default: int) -> int:
+    """A count, from whatever shape the model sent it in.
+
+    Models send 12, "12" and "" for the same intent, and this is a
+    row count -- there is no reading of "12" that is not twelve. Anything
+    that is not a number at all falls back rather than failing the call,
+    because losing a whole page read over a malformed row count is a
+    worse outcome than reading the default number of rows.
+    """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return default
+    try:
+        return max(0, int(float(str(value).strip())))
+    except (TypeError, ValueError):
+        return default
+
 # Structured table extraction.
 #
 # Why this exists, from a real failure: asked for stocks up >30%, a run
@@ -816,8 +857,46 @@ _EXTRACT_TABLES_JS = r"""
       );
       if (cells.length) rows.push(cells);
     });
+
+    // HOW LIKELY IS THIS THE DATA TABLE?
+    //
+    // Scored here with the same test observation.py uses for the DATA
+    // fingerprint, because the two disagreeing is what cost the screener
+    // test four runs. The fingerprint found Finviz's results grid every
+    // time -- "DATA: 20 row(s) | IPST · BOXL · XHLD", "SORTED: Perf Week
+    // descending" -- while this function returned tables in raw DOM
+    // order and made the caller guess an index. Finviz's table 0 is a
+    // layout spacer, so a live run guessed 0, 1, 2, 0, 1 and printed
+    // five rows of (blank) from a page whose real rows were already
+    // known one line above.
+    //
+    // A data table is distinguished by CONTENT: many cells parse as
+    // numbers, and every row is the same width. A filter panel is
+    // neither -- Finviz's has 55 rows to the results' 21.
+    const sample = rows.slice(0, 12);
+    const widths = sample.map(r => r.length).filter(w => w > 0);
+    const flat = sample.flat();
+    let score = 0;
+    if (widths.length >= 3 && flat.length) {
+      const numeric = flat.filter(c => {
+        const t = (c || '').replace(/[,$%\s]/g, '');
+        return t !== '' && !isNaN(Number(t));
+      }).length / flat.length;
+      const modal = widths.slice().sort((a, b) =>
+        widths.filter(w => w === a).length - widths.filter(w => w === b).length).pop();
+      const regular = widths.filter(w => w === modal).length / widths.length;
+      if (numeric >= 0.15 && regular >= 0.6) {
+        score = rows.length * (0.5 + numeric) * regular;
+      }
+    }
+    // Whether row 0 is a HEADER, not data. head/tail are row counts a
+    // person asked for -- "the top 20" means twenty stocks, and spending
+    // one of them on the column titles quietly returns nineteen.
+    const first = tbl.querySelector('tr');
+    const hasHeader = !!first && first.querySelectorAll('th').length > 0;
     // A "table" of one row is almost always layout markup, not data.
-    if (rows.length >= 2) out.push({ index: idx, rows: rows });
+    if (rows.length >= 2) out.push({ index: idx, rows: rows, header: hasHeader,
+                                     score: score });
   });
   return out;
 }
@@ -844,19 +923,49 @@ def _render_tables(tables: List[Dict[str, Any]], limit: int,
         total = len(rows)
         lines = [f"--- table {t.get('index')} ({total} rows x {width} cols) ---"]
 
-        keep, gap_after = rows, -1
-        if head and tail and total > head + tail + 1:
-            keep = rows[:head] + rows[-tail:]
-            gap_after = head
+        # HEAD ALONE AND TAIL ALONE ARE REAL REQUESTS.
+        #
+        # This read `if head and tail`, so a caller asking for the top 20
+        # of a 300-row screener silently got all 300 -- the exact
+        # truncation this feature exists to prevent, and the exact call a
+        # live run made ({"head": 20, "tail": 0}). Zero means "none of
+        # that end", not "ignore the whole request"; both zero means
+        # "everything", which is the no-argument default.
+        # The column titles are not one of the rows anybody asked for.
+        # `head=20` on a screener means twenty STOCKS; counting the
+        # header among them silently returns nineteen.
+        header = list(rows[:1]) if t.get("header") and rows else []
+        body = rows[len(header):]
+
+        keep, gap_after, omitted = rows, -1, 0
+        if (head or tail) and len(body) > head + tail + 1:
+            keep = header + body[:head] + (body[-tail:] if tail else [])
+            gap_after = len(header) + head
+            omitted = len(body) - head - tail
+
+        # "middle" only when there are two ends. With tail=0 the omitted
+        # rows are the TAIL of the table, and the note sits after the
+        # last row rather than between two blocks -- which is also why it
+        # cannot be emitted from inside the loop: `gap_after` then points
+        # one past the end and the loop never reaches it, so the run was
+        # silently truncated with no note at all.
+        if head and tail:
+            gap_note = (f"… {omitted} middle row(s) omitted — you are seeing "
+                        f"the FIRST {head} and the LAST {tail} …")
+        elif head:
+            gap_note = (f"… {omitted} further row(s) omitted — you are seeing "
+                        f"the FIRST {head} …")
+        else:
+            gap_note = (f"… {omitted} earlier row(s) omitted — you are seeing "
+                        f"the LAST {tail} …")
 
         for i, r in enumerate(keep):
-            if i == gap_after:
-                lines.append(
-                    f"… {total - head - tail} middle row(s) omitted — you are "
-                    f"seeing the FIRST {head} and the LAST {tail} …"
-                )
+            if i == gap_after and omitted > 0:
+                lines.append(gap_note)
             padded = list(r) + [""] * (width - len(r))
             lines.append(" | ".join(c if c else "(blank)" for c in padded))
+        if omitted > 0 and gap_after >= len(keep):
+            lines.append(gap_note)
         chunks.append(chr(10).join(lines))
 
     text = (chr(10) * 2).join(chunks)
@@ -965,6 +1074,30 @@ def _browser_navigate_impl(args: Dict[str, Any]) -> str:
     # Only when nothing is open does this launch.
     token = str(args.get("session_token") or "").strip()
     session = mgr.get(token) if token else mgr.current()
+
+    # ASKING FOR A REAL WINDOW HAS TO GET ONE.
+    #
+    # Session reuse above is right -- a fresh session throws away every
+    # click the run has made -- but it made `interactive` a no-op on
+    # every call after the first: the flag was only ever read on the
+    # create() path. A live Reddit run hit "You've been blocked by
+    # network security" headless, correctly decided to retry with
+    # interactive=true, and was silently handed back the same invisible
+    # window. It then concluded the site was unreachable by any means,
+    # which was a conclusion about plumbing rather than about Reddit.
+    #
+    # An upgrade is worth the lost state; a DOWNGRADE never is, so this
+    # only ever goes headless -> headed. One profile can back one context
+    # at a time, so the old one has to go first.
+    if session is not None and interactive and getattr(session, "headless", False):
+        logger.info("browser_navigate: upgrading to a visible window for %s",
+                    url[:80])
+        try:
+            mgr.close(session.token)
+        except Exception:  # noqa: BLE001
+            pass
+        session = None
+
     if session is not None:
         try:
             mgr.goto(session, url)
@@ -1018,6 +1151,24 @@ def _browser_navigate_impl(args: Dict[str, Any]) -> str:
     )
 
 
+# Below this, a page has not given us its content. A real page runs to
+# thousands of characters; a bot wall, an unrendered app shell and a
+# paywall stub all land in the low hundreds.
+_MIN_REAL_PAGE_CHARS = 300
+
+# Interstitial titles, verbatim from live runs: Cloudflare serves "Just a
+# moment...", Indeed "Security Check", Naukri "Access Denied".
+_WALL_TITLES = (
+    "just a moment", "security check", "access denied", "attention required",
+    "are you a robot", "verify you are human", "checking your browser",
+    "captcha", "403 forbidden", "blocked",
+)
+
+
+def _looks_like_a_wall(title: str, text: str) -> bool:
+    return any(m in f"{title} {text}".lower() for m in _WALL_TITLES)
+
+
 def _browser_extract_handler(args: Dict[str, Any]) -> str:
     return _on_browser_thread(_browser_extract_impl, args, "browser_extract")
 
@@ -1060,6 +1211,45 @@ def _browser_extract_impl(args: Dict[str, Any]) -> str:
         )
     else:
         suffix = ""
+    # AN EMPTY PAGE HAS A REASON, AND THE REASON IS THE USEFUL PART.
+    #
+    # Measured on a live news run: reuters.com returned EIGHTY-THREE
+    # characters -- the header line and "no data table on this page" --
+    # because the site serves headless Chrome an empty shell. Nothing in
+    # that reply says "blocked", so the agent read it as "this page has no
+    # content", tried the same site three more ways, and spent four of its
+    # twenty-two steps before moving on.
+    #
+    # The signal is unambiguous and cheap: a real page is never a few dozen
+    # characters. Whether it is a bot wall, a paywall or a JavaScript app
+    # that never rendered does not change what to do next, so the note
+    # names all three rather than guessing between them.
+    if len(text) < _MIN_REAL_PAGE_CHARS:
+        try:
+            title = (session.page.title() or "").strip()
+        except Exception:  # noqa: BLE001
+            title = ""
+        named = f", title {title!r}" if title else ""
+        why = (
+            "That title is a bot-check interstitial -- the site is refusing "
+            "automated access.\n"
+            if _looks_like_a_wall(title, text) else
+            "That is not what a real page looks like. The site is most likely "
+            "blocking automated access, holding the content behind a login or "
+            "paywall, or rendering it with JavaScript that has not finished.\n"
+        )
+        return (
+            f"[page text - {page_url}]\n{_fp(session.page)}"
+            f"THIS PAGE RETURNED ALMOST NO TEXT ({len(text)} characters{named}).\n"
+            f"{why}"
+            "DO NOT keep trying this site. Either wait a few seconds and look "
+            "again if you have only just arrived, or go to a different source. "
+            "Report it as UNREACHABLE rather than as empty -- those are "
+            "different things, and only one of them is about the site having "
+            "no content.\n"
+            f"{text}"
+        )
+
     return (f"[page text — {page_url}]{table_hint}\n{_fp(session.page)}"
             f"{text[:_MAX_EXTRACT_CHARS]}{suffix}")
 
@@ -1099,6 +1289,39 @@ def _browser_extract_table_impl(args: Dict[str, Any]) -> str:
             tables = [t for t in tables if t.get("index") == idx] or tables
         except (TypeError, ValueError):
             pass
+    else:
+        # NO INDEX MEANS "THE DATA ONE", NOT "THE FIRST ONE".
+        #
+        # Every table on the page used to come back in DOM order, so a
+        # caller with no index got Finviz's layout spacer and five rows
+        # of (blank). The scoring above is the same one the DATA
+        # fingerprint uses, and the fingerprint had the right table all
+        # along -- two implementations of one question, disagreeing, on
+        # the page where it mattered most.
+        #
+        # Scored tables first, everything else after, so nothing is
+        # hidden: a page whose data lives somewhere unexpected is still
+        # fully readable, just not first.
+        scored = [t for t in tables if float(t.get("score") or 0) > 0]
+        if scored:
+            scored.sort(key=lambda t: float(t.get("score") or 0), reverse=True)
+            rest = [t for t in tables if float(t.get("score") or 0) <= 0]
+            tables = scored + rest
+
+    # READ THE PARAMETERS THIS TOOL ADVERTISES.
+    #
+    # `head` and `tail` were declared in the spec, documented in the
+    # description, and never read here -- the render call passed bare
+    # `head=head, tail=tail`, two names that exist nowhere in this
+    # function. Every call carrying either one died with
+    # "(action failed: name 'head' is not defined)".
+    #
+    # It survived because the test asserted the SPEC declared them and
+    # never invoked the handler: a check on the advertisement rather than
+    # the behaviour. A live screener run lost three of its steps to it,
+    # on a page that had already loaded the twenty rows it wanted.
+    head = _int_arg(args.get("head"), _DEFAULT_TABLE_HEAD)
+    tail = _int_arg(args.get("tail"), _DEFAULT_TABLE_TAIL)
 
     return (
         f"[tables — {page_url}]\n"
@@ -1235,7 +1458,10 @@ BROWSER_EXTRACT_TABLE_SPEC = ActionSpec(
     description=(
         "Read the page's tables as rows and cells, preserving column positions "
         "and blanks. Use this for anything you intend to quote as data — rows, "
-        "figures, tickers, prices. By default it returns the FIRST 12 and LAST "
+        "figures, tickers, prices. CALL IT WITH JUST THE SESSION TOKEN: the "
+        "page's real data table is identified for you and returned first, so "
+        "do not go hunting through table_index values. By default it returns "
+        "the FIRST 12 and LAST "
         "12 rows of each table, which is what a sorted table's question usually "
         "needs: the top rows are the biggest and the bottom rows are the "
         "smallest. Raise head or tail if you need more of one end, or set the "
@@ -1245,7 +1471,12 @@ BROWSER_EXTRACT_TABLE_SPEC = ActionSpec(
         {"name": "session_token", "type": "string",
          "description": "Token from action.browser_navigate.", "required": True},
         {"name": "table_index", "type": "integer",
-         "description": "Which table, if the page has several. Omit for all.",
+         "description": ("OMIT THIS unless a previous call showed you the "
+                         "wrong table. Left out, the page's real DATA table "
+                         "comes first automatically — a screener's results "
+                         "rather than its filter panel or a layout spacer. "
+                         "Passing 0 means 'the first table in the page "
+                         "source', which on most sites is not the data."),
          "required": False},
         {"name": "head", "type": "integer",
          "description": "How many rows from the TOP (default 12).", "required": False},

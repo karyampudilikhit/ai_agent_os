@@ -658,7 +658,39 @@ _RECORDS_JS = r"""
       // Records almost always link somewhere; navigation furniture and
       // promo copy often do not.
       const linked = group.filter(g => g.querySelector('a[href]')).length / group.length;
-      const score = Math.pow(text.length, 1.6) * avg * (0.4 + linked);
+
+      // A RECORD IS BOUNDED. A SECTION IS NOT.
+      //
+      // Measured on livemint.com/market and cnbc.com section pages: this
+      // returned SEVEN "records" that were the site's navigation
+      // sections -- "Markets News", "US Market", "IPO" -- each carrying
+      // every headline beneath it crushed into one blob, so the actual
+      // articles were unreachable inside record 1. The run then spent
+      // six steps trying other URLs to get at them.
+      //
+      // The `avg` cap at 300 is what hid it: a 40-character headline and
+      // a 4,000-character section blob both score 300, so a container
+      // level and a record level look identical to the ranking above.
+      //
+      // Two things separate them, and neither is length alone:
+      //   - a record set is HOMOGENEOUS. Article cards run to similar
+      //     lengths; a nav group has one item holding everything and
+      //     several holding almost nothing.
+      //   - a record is BOUNDED. Past about 1,500 characters an item is
+      //     not a row in a list, it is the list.
+      const raw = text.map(t => t.length);
+      const mean = raw.reduce((a, b) => a + b, 0) / raw.length;
+      const sd = Math.sqrt(raw.reduce((a, b) => a + (b - mean) * (b - mean), 0) / raw.length);
+      // Coefficient of variation, floored so a perfectly uniform group
+      // is not rewarded infinitely.
+      const spread = mean > 0 ? sd / mean : 1;
+      const uniform = 1 / (1 + Math.min(2, spread));
+      // Sustained over-long items are a container level, not records.
+      const oversized = raw.filter(n => n > 1500).length / raw.length;
+      const bounded = oversized > 0.5 ? 0.15 : (1 - oversized * 0.7);
+
+      const score = Math.pow(text.length, 1.6) * avg * (0.4 + linked)
+                    * uniform * bounded;
       if (score > bestScore) { bestScore = score; best = group; }
     });
   });
@@ -666,16 +698,61 @@ _RECORDS_JS = r"""
   if (!best) return { records: [], total: 0 };
 
   const records = best.slice(0, LIMIT).map(el => {
-    const link = el.querySelector('a[href]');
+    const links = Array.from(el.querySelectorAll('a[href]'));
     const heading = el.querySelector('h1,h2,h3,h4,[role=heading]');
+
+    // THE FIRST LINK IS OFTEN NOT THE TITLE.
+    //
+    // Measured on old.reddit.com: a link post's first anchor is the
+    // thumbnail, whose text is empty, so `title` came back blank for
+    // every image post in r/SaaS and r/ycombinator while the headline
+    // sat two nodes away in <a class="title">. The titles were on the
+    // page and in the blob; they just were not returned as titles.
+    //
+    // So: a real heading if there is one, then a link that CALLS itself
+    // the title, then the link with the most text -- which is what a
+    // reader's eye lands on when a card has no heading markup.
+    const titled = links.find(a => /(^|[\s-])title([\s-]|$)/i.test(a.className || ''));
+    const wordiest = links
+      .map(a => ({ a: a, t: clean(a.innerText) }))
+      .filter(x => x.t.length > 2)
+      .sort((x, y) => y.t.length - x.t.length)[0];
+    const titleEl = heading || titled || (wordiest ? wordiest.a : null);
+
+    // The link that IS the record, not merely the first one present.
+    const primary = (titled || (heading && heading.querySelector('a[href]'))
+                     || (wordiest ? wordiest.a : null) || links[0]) || null;
+
+    // COUNTS THAT RUN TOGETHER IN THE PARENT ARE CLEAN IN THE CHILD.
+    //
+    // old.reddit renders its action row as inline list items with no
+    // separating whitespace, so the parent's innerText reads
+    // "19 commentssharesavehidereport" and the comment count is
+    // unreadable. Each anchor's OWN text is "19 comments", so they are
+    // read individually and joined with a separator the model can see.
+    const meta = [];
+    el.querySelectorAll('a, span, li, p, time').forEach(n => {
+      const t = clean(n.innerText);
+      if (t.length < 40 && /^[\d,.]+[kKmM]?\s*(comments?|points?|upvotes?|votes?|answers?|replies|views?)$/i.test(t)) {
+        if (meta.indexOf(t) === -1) meta.push(t);
+      }
+    });
+
     return {
-      title: clean(heading ? heading.innerText : (link ? link.innerText : '')).slice(0, 120),
+      title: clean(titleEl ? titleEl.innerText : '').slice(0, 120),
       // Every visible line, so nothing the page showed is silently lost.
       lines: clean(el.innerText).split(' | ').length ? clean(el.innerText).slice(0, 400) : '',
-      href: link ? String(link.href).slice(0, 300) : '',
+      href: primary ? String(primary.href).slice(0, 300) : '',
+      meta: meta.slice(0, 4).join(' | '),
     };
   });
-  return { records: records, total: best.length };
+  // Report the shape of what won, so the Python side can WARN rather
+  // than silently pass a container level off as a list of records.
+  // Returning nothing here would be worse: the text really is on the
+  // page, and hiding it sends the agent hunting for data it already has.
+  const bestRaw = best.map(g => clean(g.innerText).length);
+  const oversizedShare = bestRaw.filter(n => n > 1500).length / bestRaw.length;
+  return { records: records, total: best.length, oversized: oversizedShare };
 }
 """
 
@@ -736,12 +813,33 @@ def _extract_records_impl(args: Dict[str, Any]) -> str:
              f"{raw.get('total', len(records))} similar item(s) on the page, "
              f"showing {len(records)}. Each block is ONE record exactly as the "
              f"page rendered it. Quote only what appears here.", ""]
+    # A CONTAINER LEVEL, LABELLED AS ONE.
+    #
+    # When the best group on the page is still made of very long blocks,
+    # what came back is most likely sections that CONTAIN the records
+    # rather than the records -- livemint.com/market returns its nav
+    # sections this way, each holding every headline beneath it. The text
+    # is genuinely there, so it is handed over; what changes is that the
+    # agent is told to look closer instead of concluding the page had
+    # nothing and wandering off to another URL, which is what a live run
+    # did for six steps.
+    if float(raw.get("oversized") or 0) > 0.5:
+        lines.insert(2, (
+            "NOTE: these blocks are very long, so they are probably the "
+            "SECTIONS that contain the individual items rather than the items "
+            "themselves — the real records are likely nested inside the text "
+            "below. The individual items may be reachable from a more specific "
+            "URL (a section or category page), or by reading the text below "
+            "directly. Do not report these blocks as if each were one record."
+        ))
     for i, r in enumerate(records, 1):
         lines.append(f"--- record {i} ---")
         if r.get("title"):
             lines.append(f"title: {r['title']}")
         if r.get("href"):
             lines.append(f"link: {r['href']}")
+        if r.get("meta"):
+            lines.append(f"counts: {r['meta']}")
         if r.get("lines"):
             lines.append(f"text: {r['lines']}")
         lines.append("")
@@ -1344,7 +1442,17 @@ WAIT_SPEC = ActionSpec(
     parameters=[_TOKEN,
                 {"name": "text", "type": "string",
                  "description": "Text to wait for on the page.", "required": False},
-                {"name": "seconds", "type": "string",
+                # A QUANTITY, DECLARED AS ONE. This said "string", and the
+                # registry's type check is right to be strict -- it exists
+                # because `0` passed where a game_id belonged. So the
+                # validator was not the bug; this line was. A live run met
+                # a Cloudflare interstitial, chose exactly the right
+                # recovery (wait 5 seconds for it to clear), sent
+                # `seconds: 5`, and was told "expected string, got int 5".
+                # It failed the same way twice, and waiting was the only
+                # move that could have cleared the wall. The run then
+                # spent 200s on retries and timed out.
+                {"name": "seconds", "type": "number",
                  "description": "Seconds to wait if no text given (max 30).", "required": False}],
     handler=_h(_wait_impl),
     preview=lambda a: f"Wait for {a.get('text') or (str(a.get('seconds') or 3) + 's')}",

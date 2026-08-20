@@ -292,6 +292,25 @@ def _check_arg_types(spec: "ActionSpec", args: Dict[str, Any]) -> Optional[str]:
             # "0" would hand it straight back downstream.
             args[name] = "true" if value else "false"
             continue
+        if expected in ("number", "integer") and isinstance(value, str):
+            # A NUMERIC STRING WHERE A NUMBER IS DECLARED. "5" is the
+            # number five and nothing else, so this is a format nit of
+            # the same kind as the boolean above, and coerced rather
+            # than rejected.
+            #
+            # Note the ASYMMETRY with the integer-into-string case a few
+            # lines up, which is deliberately NOT coerced. Coercing
+            # TOWARDS a declared quantity is information-preserving;
+            # coercing an int into a declared string identifier is how
+            # `0` got to pass for a game_id. The direction is the whole
+            # difference.
+            text = value.strip()
+            try:
+                args[name] = int(text) if expected == "integer" else float(text)
+                continue
+            except ValueError:
+                pass  # "soon" is not a number — fall through and be rejected
+
         if expected != "boolean" and isinstance(value, bool):
             ok = False  # True is not a sensible string/int/number here
         elif expected == "string":
@@ -364,6 +383,20 @@ def _load_builtins(registry: ActionRegistry) -> None:
     # scroll/press/wait. Registered as one list so adding a primitive is
     # a one-line change in browser_primitives rather than two here.
     for _spec in browser_primitives.ALL_SPECS:
+        registry.register(_spec)
+    # web_search / web_read. Registered ALONGSIDE the browser, not
+    # instead of it: reading a page and operating one are different
+    # jobs, and three of five live tests failed on bot detection while
+    # asking only to read. See web_research_specs for the routing rule.
+    from backend.app.tools import web_research_specs
+    for _spec in web_research_specs.ALL_SPECS:
+        registry.register(_spec)
+    # Read ONE section, and read the outline. The reading tools were
+    # whole-page / tables / repeated records with nothing in between, so
+    # "the History section" had no instrument and a live run burned its
+    # whole budget routing around us to the MediaWiki API.
+    from backend.app.browser import structure as browser_structure
+    for _spec in browser_structure.ALL_SPECS:
         registry.register(_spec)
     registry.register(create_pptx.SPEC)
     registry.register(create_docx.SPEC)

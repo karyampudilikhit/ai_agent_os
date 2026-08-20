@@ -58,9 +58,22 @@ from backend.app.critique.compute_gate import (
     DATASET_COMPUTE_TOOLS,
     task_requires_computation,
 )
+from backend.app.orchestrator.goal_spec import from_task as goal_spec_from_task
+from backend.app.orchestrator.goal_state import check as goal_check
+from backend.app.orchestrator.task_graph import REFUSE, build as build_plan, describe as describe_plan
+from backend.app.orchestrator.item_state import (
+    derive as derive_items,
+    progress_note as item_progress_note,
+    shortfall_note as item_shortfall_note,
+)
+from backend.app.orchestrator.instrument_memory import (
+    get_memory as get_instrument_memory,
+    reset as reset_instrument_memory,
+)
 from backend.app.orchestrator.output_contract import (
     EXECUTED_CODE,
     RANKED_RESULT,
+    run_saw_a_data_table,
     REFUSAL_TEXT,
     is_browser_tool,
     is_interaction_tool,
@@ -214,6 +227,11 @@ MAX_INEFFECTIVE_INTERACTIONS = _env_int("AGENT_MAX_INEFFECTIVE_INTERACTIONS", 2)
 # the URL, which encodes the sort directly and cannot mis-click.
 BROWSER_RULES = """
 WORKING IN A BROWSER — read these before your next action:
+- A BLOCKED PAGE IS A REASON TO CHANGE INSTRUMENT, NOT SITE. If a page
+  comes back blocked, empty, or as a bot check, do not keep trying that
+  site in the browser and do not conclude it has no content: read the
+  SAME URL with action.web_read, which reaches many sites a browser
+  cannot. Only move on to a different source once that has failed too.
 - PREFER A URL OVER CLICKING. If a sort, filter, search, date range or
   page number can be written in the address, navigate straight to it
   instead of operating controls. Look at the current URL for the
@@ -229,6 +247,17 @@ WORKING IN A BROWSER — read these before your next action:
   nothing: do not click it again with different hopes.
 - Read the rows LAST. Anything you extract before sorting is the site's
   default view, not the answer to the question you were asked.
+- PICK THE READER THAT MATCHES WHAT WAS ASKED FOR. Calling the same tool
+  again cannot turn it into a different tool:
+    whole page, prose            -> action.browser_extract
+    ONE named section            -> action.browser_extract_section
+    the contents / what it covers-> action.browser_extract_toc
+    every heading                -> action.browser_outline
+    rows and figures             -> action.browser_extract_table
+    repeated cards or listings   -> action.browser_extract_records
+    "what shape is this page?"   -> action.browser_page_structure
+  If a reader returned the wrong thing twice, the answer is a DIFFERENT
+  reader, not the same one again.
 """
 
 
@@ -314,6 +343,12 @@ Rules:
   do what this task needs, say so plainly and return DONE — do not
   substitute a loosely related tool (do not send email, read the inbox,
   or read unrelated files just because those tools exist).
+- READING a page and OPERATING one are different jobs, so pick the
+  instrument before the first call. To find pages or read what is on
+  one, action.web_search and action.web_read do it in a single call and
+  reach sites that turn a browser away. Open a browser when you must ACT
+  on the page — click, sort by a control, filter, fill a form, sign in —
+  or when you need a table's cells rather than its flowed text.
 - Do not stop early while useful work remains. If you return DONE before
   the task is actually complete, your thought MUST state what stopped
   you.
@@ -531,6 +566,11 @@ class AgenticExecutor:
         # (qname, args-json) -> the page as it looked when that call was
         # last made. A dict rather than a set because for browser work
         # "the same call" is not the same question: see below.
+        # A wall is a fact about right now, not one worth carrying into
+        # the next run an hour later -- a bot check expires, a login
+        # completes. Cleared per run for the same reason element ids are.
+        reset_instrument_memory()
+
         seen_calls: Dict[Any, str] = {}
         repeat_counts: Dict[Any, int] = {}  # how often each call has been repeated
         consecutive_failures: Dict[str, int] = {}  # per-tool failure streak
@@ -538,6 +578,43 @@ class AgenticExecutor:
         succeeded_tools: set = set()  # qualified names that returned without error
         computed = False       # a compute tool ran AND printed something
         done_challenged = False
+        # Set once the ledger shows every state the task named has been
+        # reached; the loop stops on the same step it becomes true.
+        goal_done, goal_why = False, ""
+
+        # WHAT THIS GOAL COSTS, DECIDED BEFORE THE BUDGET IS SPENT.
+        #
+        # A live run was asked for ten items, each verified on its own
+        # page -- about twenty-five steps against a budget of twenty-two.
+        # It was unwinnable before its first call, spent all twenty on
+        # results pages, opened none of the ten and produced nothing.
+        # Twenty steps of silence is the worst available answer.
+        #
+        # The plan is rebuilt once if the browser budget widens, because
+        # the same goal is affordable at 22 steps and not at 10.
+        goal_spec = goal_spec_from_task(task)
+        plan = build_plan(task, max_steps, spec=goal_spec)
+        if plan.spec.confident:
+            logger.info("[%s] %s", role, describe_plan(plan).replace(chr(10), " | "))
+        plan_note = plan.note()
+
+        # A goal that cannot be done even once is refused BEFORE the
+        # first call. Beginning it would spend the whole budget to
+        # produce something that looks like an answer and is not one.
+        # ONLY WHEN THE BUDGET IS OURS TO JUDGE.
+        #
+        # A founder who sets a small budget on purpose has made a
+        # decision, and refusing their task because OUR estimate says it
+        # is tight would override it. Caught by
+        # test_a_founder_who_set_a_budget_keeps_it, which is exactly the
+        # intent it was written to protect.
+        if plan.verdict == REFUSE and self._budget_is_default:
+            logger.warning("[%s] refusing before starting — %s", role, plan.reason)
+            return (
+                f"TASK NOT ATTEMPTED — {plan.reason}\n\n"
+                f"Nothing was run, so there is nothing to report. Raise the "
+                f"step budget or narrow the request."
+            )
         done_refusals = 0      # times DONE was refused for missing computation
         acted = False
 
@@ -670,7 +747,13 @@ class AgenticExecutor:
                             transcript=transcript,
                             steps_used=step_i,
                             max_steps=max_steps,
-                            standing_rules=standing_block,
+                            # The budget verdict rides with the standing
+                            # rules because it IS one: "do 8 properly and
+                            # say so" is a constraint on the work, not a
+                            # hint about the page.
+                            standing_rules=(
+                                (plan_note + chr(10) + chr(10) + standing_block)
+                                if plan_note else standing_block),
                             browser_rules=browser_rules_block,
                             playbook=playbook_block,
                         ),
@@ -754,6 +837,31 @@ class AgenticExecutor:
                 missing_kinds = unsatisfied_kinds(
                     required, succeeded_tools, computed, _ledger_calls(),
                 ) if required else []
+                # A RANKING NEEDS ROWS TO RANK.
+                #
+                # _gate_deliverable already only demands this of a run
+                # that actually saw a data table; the loop demanded it of
+                # every ranking-shaped task, and the two disagreed.
+                #
+                # Measured on a live jobs run: the task said "sort or
+                # filter to the most recently posted IF THE SITE OFFERS
+                # IT", the words "most " tripped the ranking contract,
+                # and DONE was refused over a sort that (a) was optional
+                # and (b) had no table behind it -- Naukri renders job
+                # cards, not rows. The agent then burned seven of its
+                # twenty-two steps bouncing between three job boards
+                # hunting for a sort control to satisfy a requirement
+                # nothing on any of those pages could satisfy.
+                #
+                # So the loop now asks the same question the gate asks.
+                # Refusing DONE for an unsatisfiable reason does not make
+                # a run more honest, it just spends the budget before the
+                # run can finish -- and the gate still fails any run that
+                # really did report a default view as a ranking.
+                if RANKED_RESULT in missing_kinds and not run_saw_a_data_table(
+                    _ledger_calls()
+                ):
+                    missing_kinds = [k for k in missing_kinds if k != RANKED_RESULT]
                 if (
                     missing_kinds
                     and done_refusals < MAX_DONE_REFUSALS
@@ -884,13 +992,83 @@ class AgenticExecutor:
             # bookkeeping below moves it on. This is what the step's
             # declared expectation gets judged against.
             view_before = last_page_view
+
+            # WHAT ALREADY FAILED ON THIS HOST, THIS RUN.
+            #
+            # With two ways to reach a page, a waste appeared that
+            # neither tool could see alone: a live Reddit run learned at
+            # step 1 that web_read is blocked there, switched correctly
+            # to a headed browser, and then went BACK to web_read at
+            # steps 11, 12 and 19 -- five of nineteen calls spent
+            # re-learning a fact established in the first thirty seconds.
+            # The repeat guard could not catch it: every URL differed.
+            #
+            # The note is attached to the RESULT rather than refusing the
+            # call, because a wall can come down mid-run and a guard that
+            # cannot recover is worse than the waste it prevents.
+            _url = str(args.get("url") or "")
+            _instrument_note = get_instrument_memory().note_for(action, _url)
+
+            # HOW MANY OF THE ASKED-FOR ITEMS ARE ACTUALLY DONE.
+            #
+            # Phase 2 handed the model a verdict — "do 8 properly" — and
+            # the live re-run ignored it, spending 17 of 22 steps on
+            # results pages before opening one item. A note in a prompt is
+            # not enforcement. This reads the LEDGER instead: candidates
+            # found, candidates opened, candidates read. A run that has
+            # found plenty and opened none is told so at the moment it
+            # reaches for another list, rather than fifteen steps later.
+            _item_note = None
+            if plan.spec.per_item_work and plan.feasible_items > 1:
+                _item_note = item_progress_note(
+                    derive_items(_ledger_calls(), plan.feasible_items),
+                    action, max(0, max_steps - step_i))
+
             result = self._execute(action, args)
             acted = True
+            get_instrument_memory().record(action, _url, result)
+
             steps.append({
                 "thought": thought,
                 "call": f"{action}({json.dumps(args, ensure_ascii=False)[:300]})",
-                "result": _truncate(result, _obs_cap(action)),
+                "result": _truncate(
+                    "\n".join(x for x in (_instrument_note, _item_note, result) if x),
+                    _obs_cap(action),
+                ),
             })
+
+            # HAS THE TASK FINISHED, OR ONLY THE LAST ACTION?
+            #
+            # Asked to open a page, follow a link and go back, a live run
+            # did exactly that in three calls and then made TWELVE MORE --
+            # See also, scrolls, finds, clicks — ending where it already
+            # was at call three. Every one succeeded; none advanced the
+            # task. The loop could tell an ACTION had worked and had no
+            # way to tell the GOAL was reached, so success kept reading
+            # as "carry on".
+            #
+            # The stop is here, in the code, and rests on the LEDGER: the
+            # pages the task named have actually been landed on, and a
+            # required back-navigation was actually performed by the
+            # browser. Not on the model announcing it is finished.
+            #
+            # It fires only when the task states a finish line a page
+            # view can check, so open-ended work is untouched and still
+            # governed by the DONE handling above. Ending a run early is
+            # a worse failure than ending it late, so silence is the
+            # default.
+            if not goal_done:
+                goal_done, goal_why = goal_check(task, _ledger_calls())
+                if goal_done:
+                    logger.info("[%s] task complete at step %d — %s",
+                                role, step_i + 1, goal_why)
+                    steps.append({"note": (
+                        f"(TASK COMPLETE — verified from what this run "
+                        f"actually observed: {goal_why}. Every state the task "
+                        f"asked for has been reached, so the run stops here. "
+                        f"Report what you found.)"
+                    )})
+                    break
 
             # Degenerate-sweep guard.
             #
@@ -947,6 +1125,14 @@ class AgenticExecutor:
                             "[%s] browser budget: %d steps, %.0fs, %d tokens/step",
                             role, max_steps, BROWSER_DEADLINE_SECONDS, step_tokens,
                         )
+                        # The same goal is affordable at 22 steps and not
+                        # at 10, so the verdict is recomputed rather than
+                        # inherited from the pre-browser budget.
+                        plan = build_plan(task, max_steps, spec=goal_spec)
+                        plan_note = plan.note()
+                        if plan.spec.confident:
+                            logger.info("[%s] %s", role,
+                                        describe_plan(plan).replace(chr(10), " | "))
 
                     comparable = is_page_view_tool(action)
                     page_moved = (comparable and bool(last_page_view)
@@ -1093,6 +1279,7 @@ class AgenticExecutor:
                     before_view=view_before,
                     after_view=result,
                     call_failed=_call_failed(result),
+                    tool=action,
                 )
                 if verdict == MISSED and step_retries < MAX_STEP_RETRIES:
                     step_retries += 1
@@ -1114,6 +1301,26 @@ class AgenticExecutor:
 
         if not acted:
             return None
+
+        # A RUN THAT FINISHED SHORT SAYS SO, WITH A NUMBER.
+        #
+        # The prose is written from this transcript, so the real count has
+        # to reach it. Without this the writer sees a list of candidates
+        # and a handful of opened pages with nothing distinguishing them —
+        # which is the path by which a run that opened three items ends up
+        # presenting ten.
+        #
+        # Derived from the ledger at the end rather than counted as the
+        # run goes, for the same reason every other check here reads a
+        # record: a counter the loop maintains is a counter the loop can
+        # get wrong.
+        if plan.spec.per_item_work and plan.feasible_items > 1:
+            short = item_shortfall_note(
+                derive_items(_ledger_calls(), plan.feasible_items))
+            if short:
+                logger.info("[%s] finished short — %s", role, short[:110])
+                steps.append({"note": short})
+
         return self._wrap(steps)
 
     # ---- rendering ----------------------------------------------------

@@ -18,6 +18,8 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
+
 TEST_FORM_URL = "http://127.0.0.1:8899/test_form.html"
 TEST_LOGIN_URL = "http://127.0.0.1:8899/test_login_form.html"
 
@@ -38,6 +40,29 @@ def _isolated_queue(name: str):
     queue = ApprovalQueue(path=path)
     aq_mod._queue = queue
     return queue
+
+
+def _needs_a_model():
+    """Skip when no model is REACHABLE; still fail when one answers badly.
+
+    Two of the tests below map a goal onto real form fields, which is an
+    LLM call, and for a while they failed with an empty mapping whenever
+    the configured provider was out of quota. That failure reads exactly
+    like a broken mapper and is not one -- it is the same
+    infrastructure-versus-decision distinction the loop draws everywhere
+    else. So an unreachable provider skips, and a provider that replies
+    with the wrong fields still fails loudly.
+    """
+    from backend.app.browser.task_flow import _get_adapter, _model_name
+
+    adapter = _get_adapter()
+    if adapter is None:
+        pytest.skip(f"no usable model for {_model_name()!r}")
+    try:
+        adapter.chat_completion("Reply with the single word: ok",
+                                temperature=0.0, max_tokens=8)
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"model {_model_name()!r} unreachable: {exc}")
 
 
 def test_dom_snapshot() -> None:
@@ -61,6 +86,7 @@ def test_dom_snapshot() -> None:
 
 
 def test_field_mapping_and_locators() -> None:
+    _needs_a_model()
     from playwright.sync_api import sync_playwright
     from backend.app.browser.task_flow import (
         _snapshot_page, _map_goal_to_fills, _resolve_field_locator, _resolve_button_locator,
@@ -100,6 +126,7 @@ def test_field_mapping_and_locators() -> None:
 
 
 def test_full_fill_pause_approve_submit_loop() -> None:
+    _needs_a_model()
     """The core promise: filled BEFORE approval, NOT submitted until
     approval, resumes the SAME live session on approve."""
     queue = _isolated_queue("submit_loop")

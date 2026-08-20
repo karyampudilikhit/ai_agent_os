@@ -465,23 +465,38 @@ _SORT_PARAMS = ("sort=", "sortby=", "sort_by=", "order=", "orderby=",
 
 
 def _asked_for_the_order_in_a_url(ledger_calls: Iterable[Dict[str, Any]]) -> float:
-    """When the run navigated to a URL that asked for a specific order,
-    and the page that came back really was sorted. 0.0 if never."""
+    """When the run navigated to a URL that asked for an order, and the
+    page came back sorted DIFFERENTLY than before. 0.0 if never.
+
+    The "differently" is load-bearing and was missing at first. A run
+    navigated to tradingview.com/screener?sort=Perf&order=desc -- a
+    parameter the site ignores -- and got back the same default
+    market-cap ordering it already had. URL asked, page sorted, nothing
+    produced. Requiring the ordering to differ from what was already on
+    screen separates a request the site HONOURED from one it discarded,
+    and still lets a first navigation count when there was nothing
+    before it.
+    """
     try:
         from backend.app.browser.observation import parse_sorted_columns
     except Exception:  # noqa: BLE001
         return 0.0
+
+    previous = None
     for call in _browser_views(ledger_calls):
-        if "browser_navigate" not in call["tool"]:
-            continue
-        url = ""
-        m = _URL_LINE_RE.search(call["view"]) or _NOW_ON_RE.search(call["view"])
-        if m:
-            url = m.group(1)
-        if not any(p in url.lower() for p in _SORT_PARAMS):
-            continue
-        if parse_sorted_columns(call["view"]):
-            return call["at"]
+        cols = parse_sorted_columns(call["view"])
+        signature = (frozenset((c["column"], c["direction"]) for c in cols)
+                     if cols is not None else None)
+
+        if "browser_navigate" in call["tool"]:
+            m = _URL_LINE_RE.search(call["view"]) or _NOW_ON_RE.search(call["view"])
+            url = m.group(1) if m else ""
+            asked = any(p in url.lower() for p in _SORT_PARAMS)
+            if asked and signature and signature != previous:
+                return call["at"]
+
+        if signature is not None:
+            previous = signature
     return 0.0
 
 

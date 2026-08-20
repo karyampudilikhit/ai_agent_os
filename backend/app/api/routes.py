@@ -122,7 +122,24 @@ router = APIRouter()
 # free Ollama tier and no way to point anywhere else. AGENT_LOOP_MODEL
 # still overrides this for the agentic loop alone, so tool-selection and
 # prose can run on different models.
-DEFAULT_MODEL = os.environ.get("PIPELINE_MODEL", "").strip() or "gpt-oss:120b-cloud"
+# THE DEFAULT IS A PAID, TOOL-CAPABLE MODEL ON PURPOSE.
+#
+# It was "gpt-oss:120b-cloud" -- one of the two models alive on the free
+# Ollama tier -- and that default is what made model availability the
+# product's largest risk rather than a line of configuration. Both free
+# backends were exhausted within a single afternoon of browser testing
+# (Ollama: "session usage limit"; OpenRouter free tier: 50 requests per
+# DAY), and a browser run spends 13-22 model calls, so the free tiers buy
+# two runs and then the product stops.
+#
+# deepseek/deepseek-v4-flash is the cheapest model measured to be
+# worth pointing at this loop: ~$0.013 for a full 22-step browser run,
+# so $10 is ~600-800 runs rather than ~2. Its 1M context also removes the
+# growing-transcript ceiling that truncates a long run on smaller models.
+#
+# Still overridable by PIPELINE_MODEL, and still routed by name -- the
+# slash sends it to the OpenAI-compatible endpoint.
+DEFAULT_MODEL = os.environ.get("PIPELINE_MODEL", "").strip() or "deepseek-v4-flash"
 
 
 def _build_pipeline() -> Pipeline:

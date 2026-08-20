@@ -237,6 +237,12 @@ class BrowserSession:
     # still gets its answer as a normal return value, unchanged.
     status: str = "opening"
     last_message: str = ""
+    # WHETHER THIS WINDOW IS INVISIBLE. Recorded because a later step can
+    # ask to be upgraded to a real window -- browser_navigate's
+    # `interactive` flag -- and that request is meaningless unless
+    # something knows which kind is currently open. Without it the flag
+    # was silently a no-op on every call after the first.
+    headless: bool = True
     _status_lock: threading.Lock = field(default_factory=threading.Lock)
     # Semantic element ids (e17 -> locator) for this page, and the
     # generation they belong to. Lives on the session because ids are
@@ -386,6 +392,7 @@ class BrowserSessionManager:
         token = new_token("bsess")
         session = BrowserSession(
             token=token, playwright=pw, browser=None, context=context, page=page,
+            headless=headless,
         )
         session.set_status("opening", f"Opened a browser window at {url}.")
         self._live.register(token, session)

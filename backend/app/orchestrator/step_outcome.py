@@ -81,6 +81,7 @@ def judge_step(
     before_view: str,
     after_view: str,
     call_failed: bool,
+    tool: str = "",
 ) -> Tuple[str, Optional[str]]:
     """Return (verdict, reason). Reason is set only when MISSED.
 
@@ -103,8 +104,30 @@ def judge_step(
 
     try:
         from backend.app.browser.observation import rows_changed, sort_changed
-        from backend.app.orchestrator.output_contract import page_view_changed
+        from backend.app.orchestrator.output_contract import (
+            is_read_tool, page_view_changed,
+        )
     except Exception:  # noqa: BLE001
+        return UNKNOWN, None
+
+    # A READ DOES NOT MOVE THE PAGE, AND MUST NOT BE JUDGED AS IF IT
+    # SHOULD.
+    #
+    # browser_extract_table, browser_extract and browser_extract_records
+    # read what is already there. Measured on a live screener run: the
+    # sort was applied correctly at step 3, and at step 8 the agent
+    # extracted the rows and declared "the table shows the 5 stocks with
+    # the highest weekly percentage change". Both views read "SORTED:
+    # Perf Week descending" -- identical, because the sort had already
+    # happened and reading it again changes nothing -- so this reported
+    # "the rows are in exactly the same order as before" and told the
+    # run not to move on.
+    #
+    # A guard that fails a step for correctly reading an already-correct
+    # page is worse than no guard: it spends the budget arguing with a
+    # run that has the answer in hand. What a read is FOR is returning
+    # data, and whether it did that is the extraction's own business.
+    if is_read_tool(tool):
         return UNKNOWN, None
 
     page_moved = page_view_changed(before_view, after_view)

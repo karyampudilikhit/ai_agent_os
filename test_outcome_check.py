@@ -354,15 +354,32 @@ def test_every_page_view_tool_carries_the_fingerprint():
     and browser_click build their own output and never call observe_page,
     so they carried no fingerprint at all. It mattered most for navigate:
     going to a sort parameter the site ignores happens entirely inside
-    that tool, so the check was blind to its own motivating case."""
+    that tool, so the check was blind to its own motivating case.
+
+    Checked per RETURN PATH rather than by counting occurrences in the
+    file. The count was a proxy, and it broke the moment browser_extract
+    grew a second honest exit -- the blocked-page branch, which carries
+    the fingerprint correctly and pushed the total from 4 to 5. A guard
+    that fails when the code becomes MORE correct is measuring the wrong
+    thing."""
+    import ast
     import inspect
+    import textwrap
     from backend.app.browser import task_flow
-    src = inspect.getsource(task_flow)
-    assert src.count("_fp(session.page)") == 4, (
-        "navigate, extract, extract_table and click must all carry it")
+
     for fn in ("_browser_navigate_impl", "_browser_extract_impl",
                "_browser_extract_table_impl", "_browser_click_impl"):
-        assert "_fp(session.page)" in inspect.getsource(getattr(task_flow, fn)), fn
+        src = textwrap.dedent(inspect.getsource(getattr(task_flow, fn)))
+        assert "_fp(session.page)" in src, fn
+        for node in ast.walk(ast.parse(src)):
+            if not isinstance(node, ast.Return) or node.value is None:
+                continue
+            seg = ast.get_source_segment(src, node.value) or ""
+            # Only returns that hand back a VIEW of the page need one; an
+            # early "(no such session)" describes no page at all.
+            if "page text" in seg or "Now on:" in seg or "[tables" in seg:
+                assert "_fp(session.page)" in seg, (
+                    f"{fn}: a page-view return carrying no fingerprint:\n{seg[:200]}")
 
 
 def test_the_fingerprint_has_exactly_one_definition():
@@ -450,3 +467,107 @@ def test_a_sort_parameter_on_an_unsorted_page_does_not_count():
     trace = [_c("action.browser_navigate", 1, ignored),
              _c("action.browser_extract_table", 2, ignored)]
     assert RANKED_RESULT not in satisfied_kinds(set(), False, trace)
+
+
+# ------------------- a ranking demand needs rows to rank
+
+def test_the_loop_does_not_demand_a_sort_of_a_page_with_no_table():
+    """Measured on a live jobs run. The task said "sort or filter to the
+    most recently posted IF THE SITE OFFERS IT"; the bare words "most "
+    tripped the ranking contract; DONE was refused over a sort that was
+    optional and had no table behind it, because Naukri renders job
+    cards. The agent then spent seven of twenty-two steps bouncing
+    between three job boards hunting for a control that could satisfy a
+    requirement none of those pages could satisfy.
+
+    _gate_deliverable had always asked whether the run saw a table first.
+    The loop had not, and the two disagreed."""
+    import inspect
+    from backend.app.orchestrator import execution_loop
+    src = inspect.getsource(execution_loop.AgenticExecutor.run)
+    head, _, tail = src.partition("missing_kinds = unsatisfied_kinds")
+    assert "run_saw_a_data_table" in tail, "the loop must ask what the gate asks"
+    assert "RANKED_RESULT in missing_kinds" in tail
+
+
+def test_the_gate_and_the_loop_agree_on_when_a_ranking_is_owed():
+    """Two guards on one rule that disagree is a bug with a schedule."""
+    import inspect
+    from backend.app.api import routes
+    from backend.app.orchestrator import execution_loop
+    for src in (inspect.getsource(routes._gate_deliverable),
+                inspect.getsource(execution_loop.AgenticExecutor.run)):
+        assert "run_saw_a_data_table" in src
+
+
+def test_a_conditional_sort_still_counts_when_there_IS_a_table():
+    """The fix must not switch the guard off. A screener has rows, so a
+    ranking task against one is still owed a real reordering."""
+    from backend.app.orchestrator.output_contract import (
+        RANKED_RESULT, task_wants_ranking, unsatisfied_kinds,
+    )
+    assert task_wants_ranking("top 5 gainers by weekly percentage change")
+    missing = unsatisfied_kinds({RANKED_RESULT}, set(), False, [])
+    assert RANKED_RESULT in missing
+
+
+# ---------------------- a read does not move the page, and must not be
+# ---------------------- judged as though it should
+
+def test_a_read_tool_is_never_judged_by_whether_the_page_moved():
+    """Measured on a live screener run that had already succeeded.
+
+    The sort was applied correctly at step 3. At step 8 the agent
+    extracted the rows and declared "the table shows the 5 stocks with
+    the highest weekly percentage change". Both views read "SORTED: Perf
+    Week descending" -- identical, because the sort had already happened
+    and reading it again changes nothing -- so the check reported "the
+    rows are in exactly the same order as before" and told the run not
+    to move on. It then ran out of clock with the answer on screen.
+
+    A guard that fails a step for correctly reading an already-correct
+    page is worse than no guard: it spends the budget arguing with a run
+    that is finished."""
+    from backend.app.orchestrator.step_outcome import UNKNOWN, judge_step
+    same = "DATA: 20 row(s) | WETO\nSORTED: Perf Week descending"
+    for tool in ("action.browser_extract_table", "action.browser_extract",
+                 "action.browser_observe"):
+        verdict, reason = judge_step(
+            expect="the table shows the 5 highest weekly movers",
+            result=same, before_view=same, after_view=same,
+            call_failed=False, tool=tool,
+        )
+        assert verdict == UNKNOWN, f"{tool} judged {verdict} ({reason})"
+
+
+def test_an_interaction_that_changed_nothing_is_still_MISSED():
+    """The fix must not switch the check off. A CLICK that leaves the
+    order untouched is the failure this whole file exists for."""
+    from backend.app.orchestrator.step_outcome import MISSED, judge_step
+    same = "DATA: 20 row(s) | AAA\nSORTED: Market Cap descending"
+    verdict, reason = judge_step(
+        expect="the rows are reordered by weekly percentage change",
+        result=same, before_view=same, after_view=same,
+        call_failed=False, tool="action.browser_click_element",
+    )
+    assert verdict == MISSED
+    assert "did not reorder" in (reason or "")
+
+
+def test_a_failed_read_is_still_a_miss():
+    """Skipping the page-change test must not skip the failure test."""
+    from backend.app.orchestrator.step_outcome import MISSED, judge_step
+    verdict, reason = judge_step(
+        expect="the table is returned", result="(action failed: boom)",
+        before_view="x", after_view="y", call_failed=True,
+        tool="action.browser_extract_table",
+    )
+    assert verdict == MISSED
+
+
+def test_the_loop_tells_the_judge_which_tool_ran():
+    """It cannot make this distinction without knowing."""
+    import inspect
+    from backend.app.orchestrator import execution_loop
+    src = inspect.getsource(execution_loop.AgenticExecutor.run)
+    assert "tool=action," in src
