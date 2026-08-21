@@ -683,6 +683,8 @@ real one).{appended}"""
                     required_outputs=self.config.required_outputs,
                     standing_rules=self.config.domain_rules,
                     loop_model=self.config.loop_model,
+                    tools_allow=self.config.tools_allow,
+                    tools_deny=self.config.tools_deny,
                 ).run(
                     task=task, role=self.role, original_task=original_task,
                 )

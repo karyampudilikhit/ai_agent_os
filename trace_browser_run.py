@@ -128,11 +128,77 @@ def main() -> int:
     for label, fired in checks:
         print(f"  [{'YES' if fired else ' no'}]  {label}")
 
+    # WHY THE PER-ITEM NUDGE DID OR DID NOT FIRE.
+    #
+    # It has never fired across four live runs while passing nineteen
+    # unit tests, and every one of those runs reported the same thing:
+    # no note. Silence has six causes, indistinguishable from the
+    # transcript, which is how three fixes came to be proposed for the
+    # wrong one. This reads the same ledger the guard reads and names
+    # the clause that decided.
+    item_state: dict = {}
+    try:
+        from backend.app.orchestrator.execution_loop import BROWSER_MAX_STEPS
+        from backend.app.orchestrator.goal_spec import from_task as _spec_of
+        from backend.app.orchestrator.item_state import (
+            _LIST_TOOLS, derive, diagnose, verdict,
+        )
+        from backend.app.orchestrator.task_graph import build as _build_plan
+
+        budget = BROWSER_MAX_STEPS if ex._budget_widened else ex.max_steps
+        plan = _build_plan(args.task, budget, spec=_spec_of(args.task))
+        prog = derive(calls, plan.feasible_items)
+        # What the guard would say at the moment it matters: a call that
+        # gathers yet another list rather than opening a candidate.
+        would_say = verdict(prog, f"action.{_LIST_TOOLS[0]}")
+        eligible = bool(plan.spec.per_item_work) and plan.feasible_items > 1
+        item_state = {
+            "eligible": eligible,
+            "per_item_work": plan.spec.per_item_work,
+            "item_count": plan.spec.item_count,
+            "feasible_items": plan.feasible_items,
+            "examined": prog.examined,
+            "listings": prog.listings,
+            "discovered": prog.discovered,
+            "opened": sorted(prog.opened),
+            "read": sorted(prog.read),
+            "done": prog.done,
+            "unlocated": prog.unlocated,
+            "verdict_on_a_list_call": would_say,
+            "note_appeared_in_transcript": "NOTE BEFORE THIS CALL" in transcript,
+        }
+
+        print("\n" + "=" * 78)
+        print("PER-ITEM PROGRESS  (P0-1: why the nudge fires or stays silent)")
+        print("=" * 78)
+        print(f"  gate      : "
+              f"{'EVALUATED every step' if eligible else 'NEVER EVALUATED'}"
+              f"  (per_item_work={plan.spec.per_item_work}, "
+              f"feasible_items={plan.feasible_items})")
+        print(f"  ledger    : {diagnose(prog)}")
+        print(f"  verdict   : {would_say}")
+        print(f"  in output : "
+              f"{'yes' if item_state['note_appeared_in_transcript'] else 'no'}")
+        if prog.unlocated:
+            print(f"  no address: {', '.join(prog.unlocated[:10])}")
+            print("              ^ browser calls whose output carried no page "
+                  "address. An arrival this cannot see is an item it cannot "
+                  "count as opened.")
+        for u in prog.listings:
+            print(f"  listing   : {u}")
+        for u in prog.discovered[:12]:
+            mark = "read" if u in prog.read else ("open" if u in prog.opened else " -  ")
+            print(f"    [{mark}] {u}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"\n(per-item diagnosis unavailable: {exc})")
+        item_state = {"error": str(exc)}
+
     # Written BEFORE anything else is printed. The dump is the artefact
     # worth keeping, and it must survive whatever the console does next.
     with open("browser_trace.json", "w", encoding="utf-8") as fh:
         json.dump({"elapsed": elapsed, "calls": calls, "transcript": transcript,
-                   "budget_widened": ex._budget_widened}, fh, indent=1, default=str)
+                   "budget_widened": ex._budget_widened,
+                   "item_state": item_state}, fh, indent=1, default=str)
 
     print("\n" + "=" * 78)
     print(f"TRANSCRIPT  ({elapsed:.0f}s, {len(transcript)} chars)")

@@ -186,6 +186,34 @@ def is_browser_tool(qualified: str) -> bool:
     ))
 
 
+# The three markers that mean "this tool went and got something from the
+# open web". Kept identical to the set tool_registry uses to decide whose
+# output is worth keeping in FULL: the two answer different questions
+# about the same class of tool, and a run whose evidence is worth storing
+# is a run whose work is worth budgeting for.
+_RESEARCH_MARKERS = ("browser_", "web_read", "web_search")
+
+
+def is_research_tool(qualified: str) -> bool:
+    """True for anything that fetches from the open web.
+
+    WHY THIS IS WIDER THAN is_browser_tool. The larger step budget used
+    to be triggered by browser tools alone. Measured on a live run,
+    2026-08-21: asked to research ten AI startups, the loop did all its
+    work through web_search and web_read, never touched a browser, never
+    widened, and ran out at the default ten steps having found the right
+    source and not yet opened it. A second run of the same task reached
+    for the browser on step nine, widened to twenty-two, and got the
+    data.
+
+    Same task, same model, opposite outcomes, decided by which
+    instrument the model happened to pick. A budget should follow the
+    KIND OF WORK, not the choice of tool for it.
+    """
+    name = (qualified or "").lower()
+    return any(m in name for m in _RESEARCH_MARKERS)
+
+
 def is_page_view_tool(qualified: str) -> bool:
     """True for tools whose output is a RENDERING OF THE WHOLE PAGE, and
     is therefore comparable with the last one.

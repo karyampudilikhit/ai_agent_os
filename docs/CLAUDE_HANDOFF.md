@@ -1,372 +1,249 @@
 # Vision AI — Session Handoff
 
-**Written:** 2026-08-20 · **Branch:** `feat/phase-4-orchestration` · **Tests:** 707 passed, 2 skipped
+**Written:** 2026-08-21 · **Branch:** `feat/phase-4-orchestration` · **Tests:** 863 passed, 2 skipped
 
 This describes the repository **as it exists now**. Where something is planned
 rather than built, it says so. Where something passed a test but has not been
-proven in a live run, it says that too — several things today looked finished
-and were not.
+proven in a live run, it says that too — and this session, for the first time,
+several things were proven in live runs and are marked accordingly.
+
+**Supersedes the 2026-08-20 handoff.** Read §11 before planning work.
 
 ---
 
-## 1. PROJECT OVERVIEW
+## 1. WHAT CHANGED THIS SESSION
 
-### What Vision AI is becoming
-AI employees that do a founder's actual work — browse, extract, compute, draft,
-act — rather than advise. The differentiator is not capability but **honesty**:
-the system refuses to report what it cannot evidence.
+Two things happened: a full architecture audit, and V1 core work built on top of
+what it found. Then five live runs against real websites with a real model.
 
-### Current architecture (three layers, loosely coupled)
+### Built
+| Module | Purpose | Status |
+|---|---|---|
+| `orchestrator/strategy_memory.py` | stop re-asking a dead question | ✅ **live-proven** |
+| `orchestrator/relevance.py` | is this item what was asked for | ✅ built, unit-tested |
+| `orchestrator/item_verification.py` | per-item states + the overclaim refusal | ✅ built, replay-proven |
+| `orchestrator/run_report.py` | honest result counted from state | ✅ built, replay-proven |
+| `employees/capability.py` | capability → reuse-or-hire employees | ✅ **live-proven** |
+| `goal_state.py` broadened completion | content + item + field completion | ✅ **live-proven** |
+
+### Fixed (all found by replaying real traces, not by inspection)
+1. **P0-1 cause two — SOLVED.** `browser_extract` heads its output
+   `[page text — <url>]`, a fourth address shape nothing was reading. An extract
+   on an item page never registered as *reading* it. The 2026-08-20 handoff
+   guessed a `browser_click` route with no landing URL; **that was wrong.**
+2. **`routes.py` never defined `logger`.** `logger.warning` at line ~796 has
+   always been a `NameError` swallowed by its own `except`.
+3. **`tools: {allow, deny}`** was in the config schema, accepted by `validate()`,
+   shown in the UI, and dropped by `resolve()` — a setting that changed nothing.
+   Now carried through and enforced in `AgenticExecutor._scoped()`.
+4. **Budget widened only for browser tools.** A run doing research through
+   `web_search`/`web_read` never got the wider budget. Now keyed on
+   `is_research_tool` (browser + web_read + web_search).
+5. **`_FIELD_WORDS` missed `product`, `website`, `funding`, `pricing`.** A task
+   asking for four fields parsed as one, so completion fired on entry count
+   while two of four fields were absent.
+6. **`web_search` was in no strategy-memory family.** Eleven reworded searches
+   in one live run went completely unseen.
+
+---
+
+## 2. CURRENT ARCHITECTURE
 
 ```
-EMPLOYEES        ceo_manager, dynamic_employee, supervisor, company_store
-   │             (who does the work, with what mandate)
-   ▼
-ORCHESTRATION    two disconnected systems — see §5
-   │             (a) pipeline/contract path: ExecutionState, agent DAG
-   │             (b) AgenticExecutor loop: ALL browser work, no shared state
-   ▼
-TOOLS            47 registered actions: browser (23), web_search/web_read,
-                 run_python, documents, email/slack, github, arc_game
+FRONTEND    frontend/          — React scaffold, EVERY FILE 0 BYTES. Dead.
+            frontend_mvp/app/index.html — 4,059-line single file. The real UI.
+                │ HTTP (FastAPI, no app-level auth)
+API         api/routes.py (2,900 lines, ~60 endpoints)
+            _gate_deliverable() is the last-mile verification chokepoint
+                │
+        ┌───────┴────────┐
+   CEOManager        EmployeeCoordinator.run_with_supervisor()
+   (Company)         (Unit: Supervisor + Specialists)
+                            │ per specialist
+                     DynamicEmployee.run_task()
+                       1. heuristic pre-flight (URL fetch / Tavily / browser_task)
+                       2. AgenticExecutor.run()  ◄── THE tool loop
+                       3. build_objective()  — flattens transcript to a string
+                       4. Pipeline.run_objective() — SEPARATE LLM, NO TOOLS
 ```
 
-### Browser automation architecture
-Playwright, one shared instance on one thread (`session_manager.py`), one
-on-disk profile → one context. Semantic element ids (`data-vai-id`) stamped per
-observation. Headed/headless is a per-session property with a one-way upgrade.
-
-### Orchestration architecture
-`AgenticExecutor.run()` in `execution_loop.py` (~1,380 lines) is the real loop:
-THINK → ACT → OBSERVE, one tool per step, LLM picks the tool. Guards wrap it.
-As of today it is preceded by a goal spec and a feasibility verdict (§5).
-
-### Employees ↔ orchestration
-`dynamic_employee.py:678` constructs `AgenticExecutor` per specialist and passes
-`loop_model` from employee config. Employees own the mandate and standing rules;
-the orchestrator owns execution. **Employees do not share state with the loop** —
-they receive its transcript and write prose from it.
+**The load-bearing fact:** tool-gathering and answer-writing are **two separate
+LLM calls with no feedback loop**. `AgenticExecutor` gathers evidence; everything
+downstream (contract, agent DAG, synthesis, critique) is pure prose generation
+over a flattened transcript. `agent_executor.py` has no tool dispatch at all.
+If the writer needs one more fact, there is no way to go get it.
 
 ---
 
-## 2. CURRENT IMPLEMENTATION
-
-### Branch and commits
-- Branch `feat/phase-4-orchestration`, **not merged**, **not pushed**
-- Last 6 commits (all browser-layer, pre-today):
-  `0b7a398` A ranking can be asked for in the URL
-  `1020555` Pick the data table, not the biggest one
-  `eb838c6` Read the listings, and stop calling a real link a fabrication
-  `c908585` Get the rows out, and refuse a ranking of things that cannot be real
-  `99c3fd6` Match a playbook on proportion, not on a count of shared words
-  `e728f46` Stop blaming a run for a URL it really opened
-
-### Uncommitted work — ALL of today is uncommitted
-**16 modified:** `action_registry.py`, `builtin/run_python.py`, `api/routes.py`,
-`browser/observation.py`, `browser/primitives.py`, `browser/session_manager.py`,
-`browser/task_flow.py`, `models/adapter_pool.py`,
-`models/provider_adapters/openai_adapter.py`, `orchestrator/execution_loop.py`,
-`orchestrator/output_contract.py`, `orchestrator/step_outcome.py`,
-`tools/tool_registry.py`, `test_browser_task.py`, `test_outcome_check.py`,
-`trace_browser_run.py`
-
-**7 new source files:** `browser/structure.py`, `orchestrator/goal_spec.py`,
-`orchestrator/goal_state.py`, `orchestrator/instrument_memory.py`,
-`orchestrator/item_state.py`, `orchestrator/task_graph.py`,
-`tools/web_research_specs.py`
-
-**15 new test files:** `test_blocked_is_not_empty`, `test_extract_table_actually_runs`,
-`test_goal_completion`, `test_goal_spec_and_budget`, `test_headed_upgrade`,
-`test_instrument_memory`, `test_item_state`, `test_model_routing`,
-`test_page_structure`, `test_quota_not_a_retry`, `test_records_fields`,
-`test_records_picks_content`, `test_run_python_network_block`,
-`test_table_reachability`, `test_web_research_tools`
-
-### Tests
-`707 passed, 2 skipped`. The 2 skips are in `test_browser_task.py:65` — live-LLM
-tests that skip when no model is reachable. **They currently skip because the
-DeepSeek key returns HTTP 401** (rotated/expired). They fail loudly if a model
-answers wrongly; only unreachability skips.
-
-### Model configuration
-Default is `deepseek-v4-flash` (routes.py, task_flow.py). Bare `deepseek-*`
-names route to `api.deepseek.com`; `vendor/model` names route to OpenRouter.
-Ollama free tier exhausted; OpenRouter key expired; **DeepSeek key now 401**.
-A working key must be supplied before any live run.
-
----
-
-## 3. PHASE STATUS
-
-### Browser hardening (today, complete)
-Built: section/TOC/structure extraction, UTF-8 subprocess fix, network-block
-fix, headed upgrade, instrument memory, table selection, head/tail.
-Proven live: W1–W5, screener runs. See §8.
-
-### Phase 1 — GoalSpec ✅ built, ✅ live
-`goal_spec.py`. Rules-based extraction of item_count, per_item_work,
-per_item_fields, recency, ranking. `confident=False` → caller behaves exactly as
-before. `propose_refinement()` (LLM) exists but **is not wired in**.
-Live: logged correctly on internship runs 3 and 4.
-
-### Phase 2 — TaskGraph + feasibility ✅ built, ⚠️ partially live
-`task_graph.py`. Sub-goal expansion, coarse cost estimate, verdict
-RUN/DESCOPE/REFUSE. Recomputed when the browser budget widens.
-Live: verdict fired and recomputed correctly (`25 of 10 → DESCOPE 2`, then
-`25 of 22 → DESCOPE 8`).
-**NOT validated:** that the DESCOPE note changes behaviour. It did not.
-
-### Phase 3 — Item state ⚠️ half live
-`item_state.py`. Derives discovered/opened/read from the ledger.
-- `shortfall_note` — ✅ **proven live** (reported "2 of 8", then "1 of 8")
-- `progress_note` (mid-run nudge) — ❌ **never fired in 4 live runs**
-
-### Planned, not built
-Strategy memory (page,intent), relevance verification, broadened completion for
-content/item goals, persistence/resumption.
-
----
-
-## 4. BROWSER AUTOMATION
-
-### Stack
-`session_manager.py` — Playwright lifecycle, one instance/one thread, session
-registry, headed/headless with `headless` recorded on `BrowserSession` and a
-**one-way** headless→headed upgrade (`task_flow.py`, `_browser_navigate_impl`).
-
-### Capabilities (47 actions total; 23 browser)
-| Area | Tool | Notes |
-|---|---|---|
-| Navigate | `browser_navigate` | session reuse; `interactive:true` upgrades to headed |
-| Observe | `browser_observe` | semantic ids, iframes (≤8, `f1e3` ids) |
-| Find | `browser_find` | locate control by description |
-| Click | `browser_click`, `browser_click_element` | columnheader → inner-control path first |
-| Type/Select | `browser_type`, `browser_select`, `browser_press` | never types passwords |
-| Extraction | `browser_extract` | whole-page text; **blocked-page detection** |
-| Tables | `browser_extract_table` | scored data-table default; `head`/`tail`; header excluded from counts |
-| Records | `browser_extract_records` | card lists; homogeneity+boundedness scoring; `counts:` field |
-| Sections | `browser_extract_section` | TreeWalker; `include_subsections`; h1–h6 + `role=heading` |
-| TOC | `browser_extract_toc` | real widget detection; falls back to heading outline |
-| Outline | `browser_outline` | all headings + levels |
-| Structure | `browser_page_structure` | sections/tables/lists/cards + which reader to use |
-| Login | `browser_await_login`, `browser_login_wait` | 180s, watches for password field to vanish |
-| Misc | `browser_back`, `browser_scroll`, `browser_wait`, `browser_upload`, `browser_download`, `browser_dismiss_overlay` | |
-
-### Verification / guards in the browser path
-- **Data fingerprint** (`observation.py`) — row KEYS not values; `DATA:`/`SORTED:` lines
-- **Outcome check** (`step_outcome.judge_step`) — before/after page state; read tools return UNKNOWN
-- **Repeat guard** — `(tool, args)` fingerprint; allowed if page moved; 2nd repeat stops
-- **Consecutive failure guard** — per tool, any args, resets on success
-- **URL verification** — `source_ledger` records fetched vs seen
-- **Instrument memory** — host × instrument failure, nudge not block
-- **Item state** — see §5
-
-### Known browser limitations
-- **Bot walls are the real ceiling.** Finviz ~2-in-3 headless; Reddit blocks all
-  headless routes and blocks Tavily entirely; Indeed Cloudflare.
-- One profile → one context; no parallel sessions.
-- No CAPTCHA policy — reports and moves on.
-- No infinite-scroll pagination driver.
-- Tavily cannot read JS-rendered tables (Finviz returns chrome, no rows).
-
----
-
-## 5. ORCHESTRATION
-
-### AgenticExecutor (`execution_loop.py`)
-The only path browser work takes. Per-run state is **local variables**:
-`seen_calls`, `repeat_counts`, `consecutive_failures`, `step_retries`,
-`successful_calls`, `computed`, `done_refusals`, `goal_done`, `last_page_view`,
-`plan`, `plan_note`. Nothing persists.
-
-Budget: `MAX_STEPS=10`/240s default; widens to 22 steps/600s/3000 tokens on
-first browser tool, **only if the budget is default** (an explicit founder
-budget is never overridden).
-
-### What exists
-| Component | File | Status |
-|---|---|---|
-| GoalSpec | `goal_spec.py` | ✅ live |
-| TaskGraph + feasibility | `task_graph.py` | ✅ verdict live; enforcement not |
-| Item state | `item_state.py` | ⚠️ shortfall live; nudge never fires |
-| Completion gate | `goal_state.py` | ✅ live (navigation goals only) |
-| Instrument memory | `instrument_memory.py` | ✅ built, effect unmeasured |
-| Output contract | `output_contract.py` | ✅ live |
-| Step outcome | `step_outcome.py` | ✅ live |
-| Plausibility | `plausibility.py` | ✅ live |
-| Playbook | `browser/playbook.py` | ✅ live, cross-run |
-
-### What is planned only
-Strategy memory; relevance checking; content/item completion; persistence;
-`GoalSpec.propose_refinement` wiring; per-item enforcement (refusal).
-
-### The other orchestration system
-`pipeline_controller` → `dependency_validator` → `execution_engine` →
-`state_manager.ExecutionState`. Has real state (agent DAG, layering, status,
-cost). **`execution_loop.py` references none of it** (grep: 0 matches).
-`dependency_validator`'s own docstring notes the factory emits no real
-dependencies, so every plan today is one layer.
-
----
-
-## 6. EMPLOYEES
-
-**Implemented:** `employee.py`, `dynamic_employee.py`, `employee_config.py`,
-`employee_registry.py`, `employee_spawner.py`, `employee_coordinator.py`,
-`ceo_manager.py`, `supervisor.py`, `hierarchy_designer.py`, `company_store.py`,
-`team_store.py`, `memory_store.py`, `progress_store.py`, `playbooks.py`.
-
-**Relationship:** employee config carries `model.loop_model` (per-employee model)
-and standing rules, which reach the loop. `dynamic_employee` runs pre-flight
-Tavily enrichment, dispatches `browser_task` directly for founder-present work,
-and constructs `AgenticExecutor` for agentic work.
-
-**Architectural proposal, not built:** employees owning a GoalSpec, or sharing
-task/item state with the orchestrator.
-
----
-
-## 7. VERIFICATION MODEL
+## 3. VERIFICATION MODEL
 
 | Layer | Question | Where | Status |
 |---|---|---|---|
 | Provenance | did a tool run? | `tool_call_ledger`, `source_ledger` | ✅ |
 | Substance | did we get data? | `run_saw_a_data_table`, extractors | ✅ |
-| Correctness | is the data sane? | `plausibility.py`, `compute_gate` | ✅ domain-limited |
-| Outcome | did the state change? | `step_outcome.judge_step` | ✅ |
-| Fabrication | is every row backed? | `compute_gate.unbacked_row_labels` via `_gate_deliverable` | ✅ |
-| Goal completion | is the task done? | `goal_state.check` | ⚠️ navigation goals only |
-| **Relevance** | does this match the ask? | — | ❌ **planned** |
-| **Artifact detection** | is +320%/−95% a reverse split? | — | ❌ **planned** |
+| Correctness | is the data sane? | `plausibility.py`, `compute_gate` | ✅ |
+| Outcome | did state change? | `step_outcome.judge_step` | ✅ |
+| Fabrication (figures) | was it computed? | `compute_gate.untraceable_metric_values` | ✅ |
+| Fabrication (rows) | was the row seen? | `compute_gate.unbacked_row_labels` | ⚠️ **see §5** |
+| Fabrication (URLs) | was it fetched? | `source_ledger.unretrieved_urls` | ✅ **live-proven** |
+| Goal completion | is it done? | `goal_state.check` | ✅ nav + content + item + fields |
+| Item verification | N items really opened? | `item_verification.overclaim` | ✅ **wired to the gate** |
+| Relevance | does it match the ask? | `relevance.judge` | ⚠️ informs, does not block |
 
-The gate reads the output of **every** successful tool call, not only browser
-ones — which is why `web_read`/`web_search` are covered. That only holds because
-`tool_registry.py` keeps FULL output for retrieval tools (`is_retrieval`), not
-just a 200-char preview.
-
----
-
-## 8. RECENT TEST RESULTS
-
-| Test | Result | Worked | Failed | Root cause | Fixed | Live-validated |
-|---|---|---|---|---|---|---|
-| W1 AI page | PASS 3 calls | — | 1 redundant call | — | n/a | ✅ |
-| W2 search | PASS 5 calls | typed in real search box; earlier run recovered click→Enter | — | — | n/a | ✅ |
-| W3 History section | PASS 7 calls, **0 API** | `browser_extract_section` | 3 redundant calls | no section tool existed | ✅ | ✅ |
-| W4 Python TOC | PASS 12 calls, **0 API** | `browser_extract_toc` | 10 calls after answer | no completion for content goals | ❌ | — |
-| W5 back-nav | PASS **3 calls** (was 16) | `goal_state` hard stop | — | no completion concept | ✅ | ✅ |
-| TOC repeat | FAIL→PASS **2 calls** | — | returned `0 entries` | `innerText` empty in collapsed container; box non-zero so visibility passed | ✅ `textOf` fallback | ✅ |
-| Screener 1-month | PASS 2 calls | table selection, sort verified | — | — | n/a | ✅ (route was given) |
-| Worldwide gainers/losers | PARTIAL 10 calls | cross-view join; all 3 head/tail modes | no losers' company names | Overview read sorted descending | ❌ | — |
-| **Internship ×4** | **FAIL / 0,3,2,1 items** | shortfall note reports honest count | nudge never fires; budget over-committed | see §9 P0-1 | ⚠️ partial | ❌ |
+**The audit's #1 finding is closed.** `item_verification.overclaim` is now called
+from `_gate_deliverable`. Before, every per-item guard lived inside the loop and
+nothing connected them to the decision the founder sees.
 
 ---
 
-## 9. KNOWN BUGS / RISKS
+## 4. LIVE RUN RESULTS (2026-08-21, DeepSeek v4 + Tavily)
+
+| Test | Calls | Result | Fabrication |
+|---|---|---|---|
+| AI startups run 1 (no Tavily) | 13 (3 fail) | nothing produced | ✅ none |
+| AI startups run 2 | 9 | **10 startups w/ funding**, 2 of 4 fields | ✅ none |
+| AI startups run 3 | 8 | nothing — budget never widened | ✅ none |
+| AI startups run 4 | 16 | nothing — 11 reworded searches | ✅ none |
+| AI startups run 5 | 19 | table produced | ❌ **6 invented websites** |
+| Vellum competitors | 20 | real pricing analysis, 1 competitor | ✅ none |
+| **OpenAI research** | 15 | **complete, 4/4 fields** | ✅ **0 of 13 claims unbacked** |
+| **Supervity research** | **9** | **complete, 4/4 fields** | ✅ **0 of 14 claims unbacked** |
+
+**The pattern, stated plainly:** single-entity research off an authoritative site
+works reliably. Multi-item aggregation across many sources is where every
+failure has been. Five runs of the same multi-item task produced five different
+outcomes — variance is the dominant problem, not any single guard.
+
+**Run 5's fabrication is the important one.** It produced a 10-row table and
+invented six company websites and four product descriptions from model memory.
+`source_ledger.unretrieved_urls` catches the URLs (6 ≥ 2 → blocked). Nothing
+catches the invented product text.
+
+---
+
+## 5. KNOWN BUGS / RISKS
 
 ### P0
-1. **`progress_note` never fires in production** (`item_state.py`). 4 live runs,
-   0 firings, 19 unit tests pass. Cause 1 (`Source:` vs `URL:` header) fixed and
-   replay-verified. **Cause 2 open** — run 4 verified an item the detector didn't
-   see, likely a `browser_click` route with no landing URL. **Do not attempt
-   another blind fix; add logging first.**
-2. **Advice ≠ enforcement.** Every *note* built today failed to change behaviour;
-   every *hard stop* worked. Open decision: should `progress_note` refuse the
-   call rather than annotate it (recommend: refuse on the 2nd redundant list call).
-3. **Two disconnected state systems** — browser path uses neither
-   `ExecutionState` nor per-item state beyond the derived view.
+1. **`reported_row_labels` is blind to ranked tables.** It reads the FIRST cell
+   of each markdown row. When that cell is a rank number (`| 1 | Ola Krutrim |`)
+   it rejects it as not identifier-shaped and returns `[]` — so
+   `unbacked_row_labels` passes **vacuously**. Verified on run 5's real
+   deliverable. One of the six verification layers is currently doing nothing on
+   any table with a `#` column. **Fix this first.**
+2. **Nothing checks cell VALUES.** `Hyperautomation platform` was pure invention
+   with no URL attached and no gate looks at it. Row-backing checks labels only.
+3. **Multi-item variance.** Same task, same code, same model: 5 runs, 1 verified,
+   1 fabricated, 3 nothing. No fix has yet moved the success rate, because what
+   varies is which source the model reaches for and nothing steers that.
 
 ### P1
-4. **Evaluation unreliable** — same task, same code: 0/3/2/1 items. Variance
-   exceeds signal. Needs n≥3 runs or a deterministic replay harness.
-5. **Item detection is navigation-shaped** — misses click-through, SPA routes,
-   new tabs.
-6. **No strategy memory** — 5 rephrased `browser_find` calls survived every guard.
-7. **No relevance check** — accepted "Fashion Merchandising" as a PM internship.
-8. **Completion is navigation-only** — W1/W3/W4 get no signal; W4 wasted 10 calls.
+4. **Snippet evidence is treated as page evidence.** Both single-entity runs took
+   the HQ from a `web_search` snippet, not a fetched page. Correct both times,
+   but the system cannot tell the two apart.
+5. **Tool-gathering and writing are disconnected** (§2). A gap the loop leaves is
+   a hard failure, not a recoverable one.
+6. **Relevance informs, does not block.** Deliberate — a wrong rejection fails
+   honest work — but it means an irrelevant item still reaches the deliverable.
+7. **Task graph prices work, doesn't schedule it.** No task IDs, dependencies, or
+   per-task accountable employee. The Supervisor LLM still assigns.
+8. **No replan on failure.** Memories nudge and refuse; nothing re-plans.
 
 ### P2
-9. No persistence/resumption. 10. No parallel sessions. 11. `run_python` with
-stderr and no stdout discards stderr. 12. `execution_loop.run()` is one ~780-line
-function. 13. Plausibility misses reverse-split artefacts (+320% month/−95% year).
+9. No persistence (JSON files, no DB anywhere in the tree). 10. No app-level auth
+— `auth/` is OAuth for third-party tools only. 11. `frontend/` is dead code.
+12. `safety/constraints_enforcer.py` and `input_output_validator.py` have zero
+references anywhere. 13. `execution_loop.run()` is one ~800-line function.
 
 ---
 
-## 10. ARCHITECTURAL DECISIONS
+## 6. ARCHITECTURAL DECISIONS
 
 - **The model decides HOW; code decides WHETHER, WHAT'S NEXT, and WHEN DONE.**
-  The model is genuinely good at tool choice, query wording and source selection
-  (it chose Internshala over suggested boards, recovered a failed click by
-  pressing Enter). It is not trusted with stopping, budgeting, or completion.
 - **Model assertions are never trusted without evidence.** No guard asks the
-  model whether its own work succeeded. `goal_state` reads the ledger;
-  `item_state` reads the ledger; `judge_step` compares page state.
+  model whether its own work succeeded.
 - **Verification is ledger-based.** Guards that query a RECORD hold; guards that
-  match TEXT fail. Repeatedly proven — the false-accusation bugs all came from
-  text matching.
-- **Nudge, don't block — except where a hard stop is provably needed.**
-  `instrument_memory` nudges because walls come down mid-run. `goal_state` stops
-  hard because a finished task is finished. Today's evidence suggests item
-  progress may need to move to the stop side.
+  match TEXT fail.
+- **Nudge, don't block — except where a hard stop is provably safe.**
+  `goal_state` stops hard. `strategy_memory` refuses only on an unchanged page
+  (or, for searches, after four identical questions — the web does not change
+  between two of them).
 - **Silence is the default for new guards.** `confident=False`, `verdict=RUN`,
-  `check()→False` all mean "behave exactly as before". A wrong plan is worse
-  than no plan.
+  `check()→False` all mean "behave exactly as before".
 - **A founder's explicit budget is never overridden.**
-- **Employees sit above orchestration**; the browser is a tool, not the
-  intelligence layer.
-- **Fixtures must come from real traces.** Three bugs today passed unit tests
-  while failing in production because the fixture used a shape the system does
-  not emit (`head`/`tail`, `table_index`, `Source:`).
+- **Fixtures come from real traces.** Every bug fixed this session was found by
+  replaying a real trace; none was found by inspection or synthetic fixtures.
+- **A guard nothing calls does not exist.** Checked explicitly now — see the
+  wiring tests in `test_strategy_memory.py` and `test_relevance_and_items.py`.
 
 ---
 
-## 11. NEXT STEPS (recommended order)
+## 7. TESTS
 
-1. **Instrument `progress_note`** — log every evaluation and which clause
-   returned None. One diagnostic run beats three speculative fixes.
-2. **Decide advice vs enforcement** for item progress; if enforcement, refuse the
-   2nd redundant list call.
-3. **Build a replay harness** — feed a recorded `browser_trace.json` back through
-   the loop's decision logic with a stubbed adapter. Makes evaluation possible.
-4. **Broaden `goal_state`** to content and item-count goals (fixes W4's 10
-   wasted calls).
-5. **Strategy memory** — (page, intent) → outcome, extending `instrument_memory`.
-6. **Relevance verification** against `GoalSpec.constraints`.
+`863 passed, 2 skipped`. The 2 skips are live-LLM tests in `test_browser_task.py`
+that skip when no model is reachable.
 
-Do not start persistence (P2) — nothing in 1–6 needs it.
+New this session:
+`test_strategy_memory.py` (44) · `test_relevance_and_items.py` (27) ·
+`test_capability_staffing.py` (25) · `test_broadened_completion.py` (25) ·
+`test_run_report.py` (12) · `test_v1_replay.py` (12, **real 21-call trace**)
+
+`test_v1_replay.py` replays a genuine recorded run through the whole V1 chain.
+Two bugs were found while writing it that no synthetic fixture could have caught.
 
 ---
 
-## NEXT SESSION INSTRUCTIONS
+## 8. RUNNING IT
 
-### Work on first
-`progress_note` diagnosis (P0-1), then the advice-vs-enforcement decision (P0-2).
-Nothing else in the orchestration layer is worth touching until item progress
-actually fires.
+```bash
+python -m pytest -q                     # expect 863 passed, 2 skipped
+python trace_browser_run.py --task-file <file>   # one live loop run + trace
+```
 
-### Do NOT touch
-- The **six verification layers** — do not weaken, merge, or make any of them
-  model-attested. This is the product's differentiator.
+Live runs need `DEEPSEEK_API_KEY` and `TAVILY_API_KEY` as environment variables.
+**Without Tavily, `web_search` AND `web_read` are both dead** and research tasks
+fall back to driving search engines in the browser, where Bing returns generic
+results and DuckDuckGo serves a CAPTCHA. This was measured, not assumed.
+
+Keys are never written to a file. Rotate any key that appears in a transcript.
+
+---
+
+## 9. DO NOT TOUCH
+
+- The **verification layers** — do not weaken, merge, or make any model-attested.
 - `source_ledger` / `tool_call_ledger`, including `is_retrieval` in
-  `tool_registry.py` (removing it silently blinds the fabrication gate).
-- `goal_state`'s hard stop — proven live, W5 16 calls → 3.
-- `playbook.py` subject-overlap matching.
-- The browser tool layer — it is the strongest part; **stop adding to it**.
+  `tool_registry.py`. Note `output_contract._RESEARCH_MARKERS` must stay in sync
+  with it; a test pins them together.
+- `goal_state`'s navigation stop — live-proven, W5 16 calls → 3.
+- The browser tool layer — the strongest part of the codebase; **stop adding to it.**
 - LLM ownership of tool choice, query wording, site selection.
 
-### Run these tests first
-```bash
-python -m pytest -q                    # expect 707 passed, 2 skipped
-python -m pytest test_item_state.py test_goal_spec_and_budget.py -q
-```
-Live runs need a working `DEEPSEEK_API_KEY` — **the current key returns HTTP 401**.
+---
 
-### Risky files right now
-- `orchestrator/execution_loop.py` — ~1,380 lines, one ~780-line function, six
-  guards interleaved. Two patches today landed in the wrong scope and broke 43
-  tests each time. Verify `plan`/`steps` scope before inserting anything.
-- `orchestrator/item_state.py` — the module that doesn't work in production.
-- `browser/structure.py` — three JS blocks sharing `_JS_HELPERS`; `stripEl` is
-  defined before `textOf` (works via closure, fragile to reordering).
+## 10. RISKY FILES
+
+- `orchestrator/execution_loop.py` — ~1,600 lines, one ~800-line function, eight
+  guards interleaved. Verify `plan`/`steps`/`view_before` scope before inserting.
+- `api/routes.py` — 2,900 lines. `_gate_deliverable` is the chokepoint; every
+  check there decides whether a founder is told "done".
+- `orchestrator/goal_state.py` — now carries navigation, content, item and field
+  completion. The navigation path is live-proven and was deliberately left
+  untouched while the others were added.
+
+---
+
+## 11. NEXT SESSION — WORK ON FIRST
+
+1. **Fix `reported_row_labels` to look past a rank column** (P0-1). One of six
+   verification layers is currently inert on any ranked table. Smallest,
+   highest-value fix available.
+2. **Decide whether cell values need backing** (P0-2). Row labels are checked;
+   the cells beside them are not. This is a design decision, not a bug fix.
+3. **Run the internship task ×3.** It is the only task that exercises
+   `item_verification.overclaim`, and it has still never been run live since that
+   gate was built. n≥3 because variance exceeds signal below that.
+4. **Stop tuning the AI-startups task.** Five runs, one clean. The next useful
+   evidence is on a different task shape.
 
 ### Principles that must not be violated
 1. Never trust a model's claim about its own success.
@@ -374,3 +251,4 @@ Live runs need a working `DEEPSEEK_API_KEY` — **the current key returns HTTP 4
 3. A new guard's default must be silence.
 4. Fixtures come from real traces.
 5. Do not report a fix as validated unless a **live run** proves it.
+6. Do not widen a budget or weaken a check to make a test pass.

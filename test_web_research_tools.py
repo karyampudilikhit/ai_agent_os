@@ -391,3 +391,72 @@ def test_a_page_read_by_search_can_back_a_row_end_to_end(monkeypatch):
 
     invented = "| NVDA | NVIDIA |\n| TSLA | Tesla |\n| AMZN | Amazon |"
     assert set(unbacked_row_labels(invented, captured)) == {"TSLA", "AMZN"}
+
+
+# ------------------------------------- the budget follows the WORK
+#
+# MEASURED ON A LIVE RUN, 2026-08-21. Asked to research ten AI startups,
+# the loop did everything through web_search and web_read, never touched
+# a browser, and ran out at the default ten steps having found the right
+# source and not yet opened it. A second run of the same task happened
+# to reach for the browser on step nine, widened to twenty-two, and got
+# the data.
+#
+# Same task, same model, opposite outcomes -- decided by which
+# instrument the model picked, which is not a thing a budget should
+# depend on.
+
+def test_research_covers_the_browser_and_the_web_tools():
+    from backend.app.orchestrator.output_contract import is_research_tool
+    for name in ("action.browser_navigate", "action.browser_extract",
+                 "action.web_read", "action.web_search"):
+        assert is_research_tool(name), name
+
+
+def test_research_does_not_cover_ordinary_tools():
+    """Widening for everything would make the default budget a fiction."""
+    from backend.app.orchestrator.output_contract import is_research_tool
+    for name in ("action.write_file", "action.run_python", "action.send_email",
+                 "action.create_pptx", ""):
+        assert not is_research_tool(name), name
+
+
+def test_the_budget_rule_and_the_evidence_rule_name_the_same_tools():
+    """tool_registry decides whose output is kept in FULL from the same
+    three markers. A run whose evidence is worth storing is a run whose
+    work is worth budgeting for, and the two lists drifting apart would
+    silently reintroduce this bug on whichever side was not updated."""
+    import inspect
+
+    from backend.app.orchestrator.output_contract import _RESEARCH_MARKERS
+    from backend.app.tools import tool_registry
+
+    src = inspect.getsource(tool_registry)
+    for marker in _RESEARCH_MARKERS:
+        assert marker in src, (
+            f"{marker!r} is budgeted for as research but tool_registry no "
+            f"longer keeps its full output")
+
+
+def test_a_web_only_run_gets_the_wider_budget():
+    """The regression this whole section exists for."""
+    import inspect
+
+    from backend.app.orchestrator import execution_loop
+    src = inspect.getsource(execution_loop.AgenticExecutor.run)
+    _, _, tail = src.partition("if is_research_tool(action):")
+    assert tail, "the budget must widen on research, not on the browser alone"
+    assert "_budget_widened = True" in tail[:400]
+    assert "BROWSER_MAX_STEPS" in tail[:400]
+
+
+def test_the_browser_rules_still_need_an_actual_browser():
+    """Only the BUDGET widened. Handing browser instructions to a run
+    that never opened one would be noise in the prompt."""
+    import inspect
+
+    from backend.app.orchestrator import execution_loop
+    src = inspect.getsource(execution_loop.AgenticExecutor.run)
+    head, _, _ = src.partition("if is_research_tool(action):")
+    assert "browser_rules_block = BROWSER_RULES" in head
+    assert "if is_browser_tool(action):" in head

@@ -193,3 +193,90 @@ def test_a_source_header_alone_still_tracks_opening_and_reading():
     calls = [_wrapped_listing(10, 1),
              _nav(ITEM.format(1), 2), _read(ITEM.format(1), 3)]
     assert derive(calls, wanted=8).done == 1
+
+
+# ------------------------------------ saying WHICH clause stayed silent
+#
+# Four live runs, no nudge, nineteen passing tests. Every one of those
+# runs reported the same thing -- nothing -- because all six ways to
+# return None look identical from outside, and three fixes were proposed
+# for the wrong one. The clauses are unchanged; they are now named, so a
+# run says which of them decided.
+
+def test_every_way_of_staying_silent_names_itself():
+    from backend.app.orchestrator.item_state import (
+        ALREADY_OPENED, ENOUGH_DONE, FIRED, NOTHING_DISCOVERED,
+        NOT_A_LIST_CALL, NO_ITEM_GOAL, TOO_FEW_CANDIDATES, verdict,
+    )
+    LIST = "action.browser_extract_records"
+
+    assert verdict(derive([_wrapped_listing(10, 1)], wanted=1), LIST) \
+        == NO_ITEM_GOAL
+    assert verdict(derive([_nav(LIST_URL, 1)], wanted=8), LIST) \
+        == NOTHING_DISCOVERED
+    assert verdict(derive([_wrapped_listing(10, 1)], wanted=8),
+                   "action.browser_navigate") == NOT_A_LIST_CALL
+    assert verdict(derive([_wrapped_listing(2, 1)], wanted=8), LIST) \
+        == TOO_FEW_CANDIDATES
+
+    opened = derive([_wrapped_listing(10, 1), _nav(ITEM.format(1), 2)], wanted=8)
+    assert verdict(opened, LIST) == ALREADY_OPENED
+
+    calls = [_wrapped_listing(10, 1)]
+    at = 2
+    for i in range(1, 9):
+        calls += [_nav(ITEM.format(i), at), _read(ITEM.format(i), at + 1)]
+        at += 2
+    assert verdict(derive(calls, wanted=8), LIST) == ENOUGH_DONE
+
+    assert verdict(derive([_wrapped_listing(10, 1)], wanted=8), LIST) == FIRED
+
+
+def test_the_reason_and_the_behaviour_cannot_drift_apart():
+    """progress_note reads its answer from verdict() rather than
+    repeating the conditions, so the reason logged is the one acted on."""
+    from backend.app.orchestrator.item_state import FIRED, verdict
+    p = derive([_wrapped_listing(10, 1)], wanted=8)
+    for action in ("action.browser_extract_records", "action.browser_navigate"):
+        fired = progress_note(p, action, budget_left=13) is not None
+        assert fired is (verdict(p, action) == FIRED)
+
+
+def test_the_derivation_reports_what_it_actually_saw():
+    from backend.app.orchestrator.item_state import diagnose
+    p = derive([_wrapped_listing(10, 1), _nav(ITEM.format(1), 2)], wanted=8)
+    line = diagnose(p)
+    assert "discovered=10" in line and "opened=1" in line and "done=0/8" in line
+    assert "OPENED BUT NEVER READ" in line
+
+
+def test_a_browser_call_with_no_page_address_is_recorded():
+    """The leading suspect for the second cause. An arrival this cannot
+    see is an item it cannot count as opened, so a run has to say when
+    one goes unseen rather than silently dropping it."""
+    from backend.app.orchestrator.item_state import diagnose
+    blind = {"tool": "action.browser_click", "at": 2, "ok": True,
+             "output": "clicked the first listing"}
+    p = derive([_wrapped_listing(10, 1), blind], wanted=8)
+    assert p.unlocated == ["browser_click"]
+    assert "no-address=browser_click" in diagnose(p)
+
+
+def test_a_non_browser_call_without_an_address_is_not_suspicious():
+    from backend.app.orchestrator.item_state import diagnose
+    calc = {"tool": "action.run_python", "at": 2, "ok": True, "output": "42"}
+    p = derive([_wrapped_listing(10, 1), calc], wanted=8)
+    assert p.unlocated == []
+    assert "no-address" not in diagnose(p)
+
+
+def test_the_loop_says_whether_the_guard_was_eligible_at_all():
+    """Never evaluated and evaluated-but-silent look identical in a
+    transcript. One line at the top of the run separates them."""
+    import inspect
+    from backend.app.orchestrator import execution_loop
+    src = inspect.getsource(execution_loop.AgenticExecutor.run)
+    assert src.count("_log_item_gate(") == 2, \
+        "the gate must be logged when the plan is built AND when it is rebuilt"
+    gate = inspect.getsource(execution_loop._log_item_gate)
+    assert "per_item_work" in gate and "feasible_items" in gate

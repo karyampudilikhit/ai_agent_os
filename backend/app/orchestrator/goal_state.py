@@ -230,8 +230,13 @@ def requirements(task: str) -> Dict[str, Any]:
             "needs_back": bool(_BACK_RE.search(task or ""))}
 
 
-def check(task: str, ledger_calls: Iterable[Dict[str, Any]]) -> Tuple[bool, str]:
-    """(complete, why). `complete` is True only on observed evidence.
+def _nav_complete(task: str,
+                  ledger_calls: Iterable[Dict[str, Any]]) -> Tuple[bool, str]:
+    """(complete, why) for the part of a finish line a PAGE VIEW can check.
+
+    The original check, moved and otherwise untouched. It is now one of
+    three ways a goal can be finished rather than the only one; see
+    `check` at the bottom of this module.
 
     False is the safe answer and the default: an unverifiable goal is not
     a finished one, and the existing DONE path still governs those.
@@ -310,3 +315,329 @@ def check(task: str, ledger_calls: Iterable[Dict[str, Any]]) -> Tuple[bool, str]
         parts.append("performed the back-navigation and ended on the "
                      "starting page")
     return True, "; ".join(parts)
+
+
+# ------------------------------------------------------- content goals
+#
+# THE FAILURE THIS ANSWERS. Asked for the first five entries of a page's
+# table of contents, a live run got all five at call two and then made
+# TEN MORE. It had the answer in hand and no way to know it, because the
+# only finish line this module understood was "did we land on the pages
+# the task named" -- and it had landed on the one page there was.
+#
+# NAVIGATION IS NOT THE WHOLE FINISH LINE. Worse, for that same task the
+# navigation check would have said DONE the moment the page opened,
+# BEFORE the contents were read. "Go to X and give me Y" needs both. So
+# a content requirement makes completion strictly harder, never easier:
+# arriving still counts for nothing until the asked-for content is in
+# hand.
+#
+# COUNTED FROM OUR OWN TOOLS' OWN COUNT LINES. Each extractor already
+# prints how much it returned -- "12 entr(y/ies)", "40 heading(s)",
+# "showing 25", "DATA: 30 row(s)". Those lines are written by this
+# codebase, so reading them is reading a record. Nothing here counts
+# words on a page, and nothing asks the model how much it got.
+
+_TOC_COUNT_RE = re.compile(r"(\d+)\s+entr\(y/ies\)")
+_HEADING_COUNT_RE = re.compile(r"(\d+)\s+heading\(s\)")
+_RECORDS_COUNT_RE = re.compile(r"similar item\(s\) on the page,\s*showing\s+(\d+)")
+_ROWS_RE = re.compile(r"^DATA:\s*(\d+) row\(s\)", re.MULTILINE)
+
+# Longest tool name first: "browser_extract_toc" also contains
+# "browser_extract", and the first match wins.
+_COUNTING_TOOLS = (
+    ("browser_extract_records", _RECORDS_COUNT_RE),
+    ("browser_extract_table", _ROWS_RE),
+    ("browser_extract_toc", _TOC_COUNT_RE),
+    ("browser_outline", _HEADING_COUNT_RE),
+)
+
+
+def content_reads(ledger_calls: Iterable[Dict[str, Any]]
+                  ) -> List[Tuple[float, int, str]]:
+    """(when, how many, what it returned) for every counted read.
+
+    The TEXT matters as much as the count. Field evidence has to be
+    looked for in the very content that produced the entries, not
+    anywhere in the run: checked run-wide, a search snippet mentioning
+    the word "product" vouched for per-company product data on a listing
+    that had none, and an unrelated external link in a search result
+    vouched for every company's website. Both observed on a real trace.
+    """
+    out: List[Tuple[float, int, str]] = []
+    for call in sorted(ledger_calls or (), key=lambda c: float(c.get("at") or 0)):
+        if not call.get("ok"):
+            continue
+        tool = str(call.get("tool") or "")
+        rx = next((r for name, r in _COUNTING_TOOLS if name in tool), None)
+        if rx is None:
+            continue
+        text = str(call.get("output") or call.get("result_preview") or "")
+        m = rx.search(text)
+        if not m:
+            continue
+        try:
+            out.append((float(call.get("at") or 0), int(m.group(1)), text))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def content_entries(ledger_calls: Iterable[Dict[str, Any]]
+                    ) -> List[Tuple[float, int]]:
+    """(when, how many) for every read that reported its own count.
+
+    The DATA: row count is read only from a TABLE EXTRACTION. It also
+    appears in the page fingerprint attached to navigations and clicks,
+    where it means "this page HAS a table" rather than "we read one" --
+    counting those would let a run finish on content it never took.
+    """
+    out: List[Tuple[float, int]] = []
+    for call in sorted(ledger_calls or (), key=lambda c: float(c.get("at") or 0)):
+        if not call.get("ok"):
+            continue
+        tool = str(call.get("tool") or "")
+        rx = next((r for name, r in _COUNTING_TOOLS if name in tool), None)
+        if rx is None:
+            continue
+        text = str(call.get("output") or call.get("result_preview") or "")
+        m = rx.search(text)
+        if not m:
+            continue
+        try:
+            out.append((float(call.get("at") or 0), int(m.group(1))))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+# A FIELD IS NOT PRESENT BECAUSE ITS NAME APPEARS IN A URL.
+#
+# Inc42's listing links carry "itm_medium=website" in every query
+# string. Matching field names against the raw text made "website" look
+# evidenced on a page that never showed one company's own address. So
+# URLs come out before names are looked for, and the fields that ARE
+# URLs get checked against the URLs themselves.
+_URL_ANY = re.compile(r"https?://\S+")
+_URL_FIELDS = {"website", "url", "link", "homepage"}
+
+# What a field may be called on a real page. Deliberately short: every
+# synonym is a way for a field to look present when it is not, and a
+# false "evidenced" is the failure this whole check exists to stop.
+_FIELD_SYNONYMS = {
+    "funding": ("funding", "funded", "raised", "investment", "valuation"),
+    "product": ("product", "offering", "solution", "description",
+                "what they do", "what it does"),
+    "pricing": ("pricing", "price", "cost", "/mo", "per month", "per user"),
+    "price": ("price", "pricing", "cost", "/mo", "per month"),
+    "date": ("date", "posted", "published", "founded", "updated"),
+    "location": ("location", "based in", "headquarter", "city", "office"),
+    "salary": ("salary", "compensation", "pay", "ctc"),
+    "stipend": ("stipend", "salary", "pay"),
+    "company": ("company", "employer", "organisation", "organization", "firm"),
+    "role": ("role", "position", "title", "job"),
+}
+
+
+def fields_evidenced(required: Iterable[str], captured: str,
+                     source_hosts: Iterable[str] = ()) -> Tuple[List[str], List[str]]:
+    """(present, missing) for the fields the task named.
+
+    A field counts as evidenced when its own name -- or one of the few
+    things a real page calls it -- appears in what the run actually
+    read. A field that IS a URL counts only when a URL appears that is
+    not on the site the list came from: an aggregator linking to its own
+    profile pages has not given you anybody's website.
+
+    Never guesses at meaning. It cannot tell which sentence is the
+    product description, and does not pretend to -- it can only tell
+    whether anything on the page was labelled as one.
+    """
+    text = captured or ""
+    urls = _URL_ANY.findall(text)
+    prose = _URL_ANY.sub(" ", text).lower()
+    hosts = {h.lower() for h in (source_hosts or ()) if h}
+
+    present: List[str] = []
+    missing: List[str] = []
+    for raw in required or ():
+        field = str(raw or "").strip().lower()
+        if not field:
+            continue
+        if field in _URL_FIELDS:
+            foreign = [u for u in urls
+                       if not any(h and h in u.lower() for h in hosts)]
+            (present if foreign else missing).append(field)
+            continue
+        names = _FIELD_SYNONYMS.get(field, (field,))
+        hit = any(re.search(r"\b" + re.escape(n) + r"\b", prose)
+                  if n.isalpha() else n in prose
+                  for n in names)
+        (present if hit else missing).append(field)
+    return present, missing
+
+
+def _host_of(url: str) -> str:
+    m = re.match(r"(?:https?://)?(?:www\.)?([^/\s]+)", (url or "").strip())
+    return m.group(1).lower() if m else ""
+
+
+# The headers OUR OWN extractors write to say where content came from.
+_SOURCE_HEADERS = (
+    re.compile(r"^Source:\s*(\S+)", re.MULTILINE),
+    re.compile(r"^\[[^\]\n]*?(https?://[^\s\]]+)\]", re.MULTILINE),
+    re.compile(r"^URL:\s*(\S+)", re.MULTILINE),
+)
+
+
+def _source_urls(text: str) -> List[str]:
+    out = []
+    for rx in _SOURCE_HEADERS:
+        out.extend(rx.findall(text or ""))
+    return out
+
+
+def content_requirement(spec: Any) -> int:
+    """How many entries the answer must carry, or 0 for "no such line".
+
+    Only a spec that is CONFIDENT about a count of things that are not
+    each visited separately. "The first three sentences" is one answer,
+    not three, and goal_spec already refuses sentence nouns as counts;
+    per-item work is a different finish line, handled below.
+    """
+    if spec is None or not getattr(spec, "confident", False):
+        return 0
+    if getattr(spec, "per_item_work", False):
+        return 0
+    try:
+        n = int(getattr(spec, "item_count", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+    return n if n >= 2 else 0
+
+
+def item_requirement(spec: Any, target_items: int) -> int:
+    """How many items must be opened and read, or 0 for "no such line".
+
+    `target_items` is the plan's figure rather than the spec's, because
+    a descoped run's finish line is the eight it was told to do properly,
+    not the ten it could not afford.
+    """
+    if spec is None or not getattr(spec, "confident", False):
+        return 0
+    if not getattr(spec, "per_item_work", False):
+        return 0
+    try:
+        n = int(target_items or 0)
+    except (TypeError, ValueError):
+        return 0
+    return n if n >= 2 else 0
+
+
+def _first_requirement_hit(req: Dict[str, Any],
+                           calls: List[Dict[str, Any]]) -> float:
+    """When this run first reached somewhere the task named. 0 if never,
+    and 0 when the task named nowhere -- both mean "no threshold"."""
+    if not req["urls"] and not req["names"]:
+        return 0.0
+    for call in sorted(calls, key=lambda c: float(c.get("at") or 0)):
+        if not call.get("ok"):
+            continue
+        text = str(call.get("output") or call.get("result_preview") or "")
+        at = float(call.get("at") or 0)
+        u = _view_url(text)
+        if u and any(u == w or u.startswith(w + "/") or w in u
+                     for w in req["urls"]):
+            return at
+        m = _TITLE_RE.search(text) or _NOW_ON_TITLE_RE.search(text)
+        if m:
+            t = _norm_name(m.group(1))
+            if t and any(_name_reached(n, [t]) for n in req["names"]):
+                return at
+    return 0.0
+
+
+def check(task: str, ledger_calls: Iterable[Dict[str, Any]],
+          spec: Any = None, target_items: int = 0) -> Tuple[bool, str]:
+    """(complete, why). `complete` is True only on observed evidence.
+
+    Three finish lines, all read from the ledger and none of them from
+    the model's account of itself:
+
+      navigation   the pages the task named were landed on
+      content      an extractor returned at least the asked-for number
+      items        that many candidates were each opened AND read
+
+    `spec` and `target_items` are optional: without them this behaves
+    exactly as it did when navigation was the only finish line, which is
+    what every caller that has not been taught about goal shapes needs.
+    """
+    calls = list(ledger_calls or ())
+    req = requirements(task)
+    want_content = content_requirement(spec)
+    want_items = item_requirement(spec, target_items)
+
+    nav_ok, nav_why = _nav_complete(task, calls)
+    if not want_content and not want_items:
+        return nav_ok, nav_why
+
+    # A stated page is still a requirement. Content obtained somewhere
+    # else is not this task finished -- and the ordering matters as much
+    # as the arrival, so a read that happened BEFORE the run got there
+    # cannot satisfy it.
+    stated_pages = bool(req["urls"] or req["names"])
+    if stated_pages and not nav_ok:
+        return False, ""
+    after = _first_requirement_hit(req, calls) if stated_pages else 0.0
+
+    if want_items:
+        try:
+            from backend.app.orchestrator.item_state import derive
+            done = derive(calls, want_items).done
+        except Exception:  # noqa: BLE001
+            return False, ""
+        if done < want_items:
+            return False, ""
+        why = f"opened and read all {want_items} item(s) the task asked for"
+        return True, (f"{nav_why}; {why}" if nav_why else why)
+
+    qualifying = [(n, text) for at, n, text in content_reads(calls)
+                  if at >= after and n >= want_content]
+    got = max((n for n, _ in qualifying), default=0)
+    if got < want_content:
+        return False, ""
+
+    # ENOUGH ROWS IS NOT THE SAME AS THE ANSWER.
+    #
+    # A live run asked for "company, funding, product, and website"
+    # found ten entries on one Inc42 list page and stopped, complete by
+    # its own reckoning, having obtained company and funding and neither
+    # of the other two. Counting entries answers "how many"; it says
+    # nothing about "of what". Both were asked for.
+    #
+    # Missing fields do not fail the run -- they keep it going, which is
+    # the safe direction: ending late costs steps, ending early costs
+    # the founder the answer.
+    required = list(getattr(spec, "per_item_fields", ()) or ())
+    if required:
+        # Only the content that produced the entries. See content_reads.
+        best = max(qualifying, key=lambda p: p[0])[1]
+        # The host the content CAME FROM, taken from the header our own
+        # extractor wrote -- not every host mentioned in it. Using them
+        # all would mean any external link on the page counted as its
+        # own source, and "website" would be satisfied by the listing
+        # linking anywhere at all.
+        hosts = {_host_of(u) for u in _source_urls(best)}
+        hosts |= {_host_of(u) for u in req["urls"]}
+        hosts.discard("")
+        _, missing = fields_evidenced(required, best, hosts)
+        if missing:
+            logger.info("[goal-state] %d entr(y/ies) read but nothing on that "
+                        "page was labelled: %s", got, ", ".join(missing))
+            return False, ""
+
+    why = (f"read {got} entr(y/ies) on the page, covering the "
+           f"{want_content} the task asked for")
+    if required:
+        why += f", with evidence for every field asked for ({', '.join(required)})"
+    return True, (f"{nav_why}; {why}" if nav_why else why)

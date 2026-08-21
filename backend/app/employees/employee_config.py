@@ -170,6 +170,17 @@ class ResolvedConfig:
     template_id: Optional[str] = None
     allowed_domains: Tuple[str, ...] = ()
     allow_high_risk_browser: bool = False
+    # WHICH TOOLS THIS EMPLOYEE MAY USE. Both empty is the default and
+    # means "everything", so an employee nobody has restricted behaves
+    # exactly as it did before these were carried through.
+    #
+    # These keys have been in DEFAULTS and accepted by validate() since
+    # per-employee config shipped, and resolve() dropped them on the
+    # floor -- a settings field that took a value, saved it, showed it
+    # back, and changed nothing. A restriction the founder can set and
+    # the system ignores is worse than no restriction at all.
+    tools_allow: Tuple[str, ...] = ()
+    tools_deny: Tuple[str, ...] = ()
 
     def browser_policy(self):
         """This employee's browser scope, as an enforceable object.
@@ -385,6 +396,7 @@ def resolve(spec: Optional[Dict[str, Any]]) -> ResolvedConfig:
     budget = merged.get("budget") or {}
     model = merged.get("model") or {}
     browser = merged.get("browser") or {}
+    tools = merged.get("tools") or {}
 
     # Template rules come first, then the employee's own. Rules are
     # additive by nature -- a specialist's personal standard should not
@@ -411,6 +423,8 @@ def resolve(spec: Optional[Dict[str, Any]]) -> ResolvedConfig:
         template_id=merged.get("template_id"),
         allowed_domains=tuple(browser.get("allowed_domains") or ()),
         allow_high_risk_browser=bool(browser.get("allow_high_risk")),
+        tools_allow=tuple(tools.get("allow") or ()),
+        tools_deny=tuple(tools.get("deny") or ()),
     )
 
 

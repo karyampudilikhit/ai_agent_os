@@ -70,6 +70,12 @@ from backend.app.orchestrator.instrument_memory import (
     get_memory as get_instrument_memory,
     reset as reset_instrument_memory,
 )
+from backend.app.orchestrator.strategy_memory import (
+    get_memory as get_strategy_memory,
+    page_in as strategy_page_in,
+    query_in as strategy_query_in,
+    reset as reset_strategy_memory,
+)
 from backend.app.orchestrator.output_contract import (
     EXECUTED_CODE,
     RANKED_RESULT,
@@ -78,6 +84,7 @@ from backend.app.orchestrator.output_contract import (
     is_browser_tool,
     is_interaction_tool,
     is_page_view_tool,
+    is_research_tool,
     page_view_changed,
     task_wants_ranking,
     unsatisfied_kinds,
@@ -378,6 +385,28 @@ Return JSON only, one of these two shapes:
 JSON only."""
 
 
+def _log_item_gate(role: str, plan: Any) -> None:
+    """Whether per-item progress is even ELIGIBLE to be evaluated.
+
+    A run whose nudge never appears has two explanations that look
+    identical from outside: it was evaluated on every step and stayed
+    silent, or it was never evaluated at all. Four live runs could not
+    tell those apart, and three fixes were proposed for the wrong one.
+    This is the line that separates them, and it is the first thing to
+    read in a diagnostic run.
+    """
+    try:
+        eligible = bool(plan.spec.per_item_work) and plan.feasible_items > 1
+        logger.info(
+            "[item-state] gate [%s]: per_item_work=%s item_count=%s "
+            "feasible_items=%s -> %s", role, plan.spec.per_item_work,
+            plan.spec.item_count, plan.feasible_items,
+            "evaluated on every step" if eligible
+            else "NEVER EVALUATED in this run")
+    except Exception:  # noqa: BLE001
+        return
+
+
 class AgenticExecutor:
     """Runs a bounded THINK -> ACT -> OBSERVE loop for one specialist.
 
@@ -396,6 +425,8 @@ class AgenticExecutor:
         required_outputs: Sequence[str] = (),
         standing_rules: Sequence[str] = (),
         loop_model: Optional[str] = None,
+        tools_allow: Sequence[str] = (),
+        tools_deny: Sequence[str] = (),
     ):
         # Every one of these is defaulted, so `AgenticExecutor(adapter)`
         # anywhere else in the repo -- and in every test -- behaves
@@ -406,6 +437,11 @@ class AgenticExecutor:
         self.step_max_tokens = step_max_tokens
         self.required_outputs = tuple(required_outputs or ())
         self.standing_rules = tuple(standing_rules or ())
+        # An employee's tool scope. Empty allow means "everything" --
+        # the default, and the reason this is invisible to every
+        # employee nobody has restricted.
+        self.tools_allow = tuple(t for t in (tools_allow or ()) if t)
+        self.tools_deny = tuple(t for t in (tools_deny or ()) if t)
 
         # Whether the CALLER chose these, or they are simply the module
         # defaults. Only defaults get widened for browser work: a founder
@@ -439,10 +475,39 @@ class AgenticExecutor:
         cannot crowd the ranking -- `arc_click` beat every browser tool
         on a TradingView task purely by matching the word "click"."""
         try:
-            return _tool_registry.list_tools(
+            tools = _tool_registry.list_tools(
                 for_planner=True, task_hint=getattr(self, "_task_hint", ""))
         except Exception:  # noqa: BLE001
             return []
+        return self._scoped(tools)
+
+    def _scoped(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """This employee's tools, if the founder narrowed them.
+
+        A RESTRICTION, unlike the ranking in _render_tools below, which
+        is deliberately only a nudge. The difference is who decided: a
+        relevance score guessing that a tool does not fit must never
+        hide it, and a founder stating that this employee may not send
+        email must always be obeyed. Deny wins over allow.
+
+        Matching is by substring of the qualified name, so "browser"
+        scopes the whole browser surface and "action.send_email" scopes
+        exactly one tool.
+        """
+        allow, deny = self.tools_allow, self.tools_deny
+        if not allow and not deny:
+            return tools
+        kept = []
+        for t in tools:
+            name = str(t.get("name") or t.get("qualified_name") or "")
+            if deny and any(d in name for d in deny):
+                continue
+            if allow and not any(a in name for a in allow):
+                continue
+            kept.append(t)
+        logger.info("[tools] employee scope: %d of %d tool(s) available",
+                    len(kept), len(tools))
+        return kept
 
     def _render_tools(self, tools: List[Dict[str, Any]], task: str = "") -> str:
         """Render the tool list with the ones that fit THIS task first.
@@ -570,6 +635,9 @@ class AgenticExecutor:
         # the next run an hour later -- a bot check expires, a login
         # completes. Cleared per run for the same reason element ids are.
         reset_instrument_memory()
+        # Same reasoning, one level down: what a PAGE could not answer
+        # half an hour ago is not a fact about the page today.
+        reset_strategy_memory()
 
         seen_calls: Dict[Any, str] = {}
         repeat_counts: Dict[Any, int] = {}  # how often each call has been repeated
@@ -597,6 +665,7 @@ class AgenticExecutor:
         if plan.spec.confident:
             logger.info("[%s] %s", role, describe_plan(plan).replace(chr(10), " | "))
         plan_note = plan.note()
+        _log_item_gate(role, plan)
 
         # A goal that cannot be done even once is refused BEFORE the
         # first call. Beginning it would spend the whole budget to
@@ -1024,15 +1093,58 @@ class AgenticExecutor:
                     derive_items(_ledger_calls(), plan.feasible_items),
                     action, max(0, max_steps - step_i))
 
+            # THE SAME QUESTION, ASKED AGAIN, OF A PAGE THAT HAS NOT MOVED.
+            #
+            # A live screener run spent five calls searching one page for
+            # a sort control, reworded every time. Three guards watched
+            # it happen: the repeat guard saw five different argument
+            # strings, instrument memory saw a host the browser was
+            # reading perfectly, and the failure streak saw five
+            # SUCCESSFUL calls — "NO MATCH" is an answer, not an error.
+            #
+            # This keys on the INTENT instead of the wording. The second
+            # ask gets a note. The third is refused outright, and only
+            # when the page is byte-identical to the one that already
+            # answered twice — if anything moved, the same words are a
+            # new question and it goes through. That is the same test
+            # the repeat guard uses to decide whether a repeat is real.
+            _query = strategy_query_in(args)
+            _page = _url or strategy_page_in(view_before)
+            _strategy_note = None
+            # Gated on the QUERY alone, not on there being a page. A web
+            # search has no page -- it is a question about the whole web
+            # -- and requiring one here skipped every search, which is
+            # how eleven reworded searches in one live run went unseen.
+            # The memory's own key decides what it can and cannot scope.
+            if _query:
+                _refusal = get_strategy_memory().refusal_for(
+                    action, _page, _query, view_before)
+                if _refusal:
+                    logger.info(
+                        "[%s] refused a repeated search of an unchanged page: "
+                        "%s(%r)", role, action, _query[:60])
+                    steps.append({
+                        "thought": thought,
+                        "call": f"{action}({json.dumps(args, ensure_ascii=False)[:300]})",
+                        "result": _refusal,
+                    })
+                    continue
+                _strategy_note = get_strategy_memory().note_for(
+                    action, _page, _query)
+
             result = self._execute(action, args)
             acted = True
             get_instrument_memory().record(action, _url, result)
+            if _query:
+                get_strategy_memory().record(action, _page, _query, result,
+                                             view_before)
 
             steps.append({
                 "thought": thought,
                 "call": f"{action}({json.dumps(args, ensure_ascii=False)[:300]})",
                 "result": _truncate(
-                    "\n".join(x for x in (_instrument_note, _item_note, result) if x),
+                    "\n".join(x for x in (_instrument_note, _strategy_note,
+                                          _item_note, result) if x),
                     _obs_cap(action),
                 ),
             })
@@ -1058,7 +1170,17 @@ class AgenticExecutor:
             # a worse failure than ending it late, so silence is the
             # default.
             if not goal_done:
-                goal_done, goal_why = goal_check(task, _ledger_calls())
+                # The plan is handed over so a finish line the task
+                # states in CONTENT ("the first five entries") or in
+                # ITEMS ("ten jobs, each on its own page") can be
+                # checked too, not just one stated as a page to reach.
+                # Asked for five contents entries, a run got them at
+                # call two and made ten more; and for that same task a
+                # navigation-only check would have said DONE when the
+                # page merely opened, before anything was read.
+                goal_done, goal_why = goal_check(
+                    task, _ledger_calls(), spec=plan.spec,
+                    target_items=plan.feasible_items)
                 if goal_done:
                     logger.info("[%s] task complete at step %d — %s",
                                 role, step_i + 1, goal_why)
@@ -1108,21 +1230,36 @@ class AgenticExecutor:
                     computed = True
 
                 if is_browser_tool(action):
-                    # This run is driving a browser. Two things follow,
-                    # both triggered by EVIDENCE that a browser tool
+                    # This run is driving a browser, so the browser rules
+                    # apply. Triggered by EVIDENCE that a browser tool
                     # really worked rather than by guessing from the
                     # task's wording -- the same reason every other check
                     # here reads a record instead of reading text.
                     if not browser_rules_block:
                         browser_rules_block = BROWSER_RULES
                         logger.info("[%s] browser detected — browser rules added", role)
+
+                # THE BUDGET FOLLOWS THE WORK, NOT THE INSTRUMENT.
+                #
+                # This used to widen only for browser tools. Measured on
+                # a live run: asked to research ten AI startups, the loop
+                # did everything through web_search and web_read, never
+                # widened, and ran out at ten steps having found the
+                # right source and not yet opened it. A second run of the
+                # same task happened to reach for the browser on step
+                # nine, widened, and got the data. Same task, same model,
+                # opposite outcomes -- decided by which tool it picked.
+                #
+                # The browser RULES still need a browser. The budget
+                # needs research, and web_read is research.
+                if is_research_tool(action):
                     if self._budget_is_default and not self._budget_widened:
                         self._budget_widened = True
                         max_steps = max(max_steps, BROWSER_MAX_STEPS)
                         step_tokens = max(step_tokens, BROWSER_STEP_MAX_TOKENS)
                         deadline = max(deadline, started + BROWSER_DEADLINE_SECONDS)
                         logger.info(
-                            "[%s] browser budget: %d steps, %.0fs, %d tokens/step",
+                            "[%s] research budget: %d steps, %.0fs, %d tokens/step",
                             role, max_steps, BROWSER_DEADLINE_SECONDS, step_tokens,
                         )
                         # The same goal is affordable at 22 steps and not
@@ -1133,6 +1270,9 @@ class AgenticExecutor:
                         if plan.spec.confident:
                             logger.info("[%s] %s", role,
                                         describe_plan(plan).replace(chr(10), " | "))
+                        # Widening can change feasible_items, and with it
+                        # whether item progress is evaluated at all.
+                        _log_item_gate(role, plan)
 
                     comparable = is_page_view_tool(action)
                     page_moved = (comparable and bool(last_page_view)

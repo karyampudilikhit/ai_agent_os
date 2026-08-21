@@ -74,6 +74,12 @@ _FIELD_WORDS = (
     "company", "role", "title", "location", "date", "url", "link",
     "price", "ticker", "name", "salary", "stipend", "duration",
     "percentage", "change", "score", "author", "summary",
+    # Added after a live run. Asked for "company, funding, product, and
+    # website", this list matched only "company" -- so the run finished,
+    # correctly by its own lights, having obtained two of the four.
+    # Completion counted ENTRIES and nothing was watching the FIELDS. A
+    # field this cannot name is a field nothing downstream can require.
+    "funding", "product", "website", "pricing",
 )
 
 # Ranking words. Reused rather than re-derived: output_contract already

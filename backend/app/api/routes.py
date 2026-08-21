@@ -8,6 +8,7 @@ a later concern once there's real traffic to justify it.
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 import uuid
@@ -115,6 +116,12 @@ from backend.app.orchestrator.synthesis import SynthesisEngine
 from backend.app.critique.critique_agent import CritiqueEngine
 
 router = APIRouter()
+
+# This module has called logger.warning since the app-shell stat check
+# was added and never defined one. The call sits inside a try/except, so
+# the NameError was caught and discarded along with the error it was
+# trying to report -- a log line that could never be written, silently.
+logger = logging.getLogger(__name__)
 
 # The model the whole pipeline uses -- synthesis, critique, and each
 # specialist's writing. Overridable because it was not, and that made the
@@ -339,6 +346,38 @@ def run_task_on_team(session_id: str, req: RunTaskRequest) -> RunTaskResponse:
         supervisor_spec = store.add_member(sup["role"], sup["mandate"], is_supervisor=True)
 
     specialist_specs = store.specialists()
+
+    # A UNIT WITH NOBODY ON IT GETS STAFFED FOR THE GOAL IT WAS GIVEN.
+    #
+    # Until now this case fell through to the Supervisor working alone,
+    # which its own mandate makes it bad at: told it plans rather than
+    # does, it produced a delegation plan naming five specialists who do
+    # not exist and zero actual data. Twice, on a real task, with working
+    # browser tools.
+    #
+    # So the capabilities the goal needs are read from the goal, matched
+    # against everyone already on the books, and only the genuine gaps
+    # are hired. Reuse first is the point: the same capability was being
+    # re-hired under a new name for every Unit, each new hire starting
+    # with an empty memory.
+    #
+    # Deliberately only when the Unit is EMPTY. A founder who staffed
+    # their own team meant that team, and quietly adding to it would
+    # make the roster a suggestion.
+    if not specialist_specs:
+        try:
+            from backend.app.employees.capability import staff as _staff
+            from backend.app.orchestrator.goal_spec import from_task as _spec_of
+            _roster = _staff(req.task, _spec_of(req.task))
+            if _roster.employees:
+                store.set_members([{"employee_id": e["id"]}
+                                   for e in _roster.employees])
+                specialist_specs = store.specialists()
+                logger.info("staffed empty Unit %s for this goal: %s",
+                            session_id, _roster.describe().replace("\n", " | "))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("capability staffing failed, Supervisor will run "
+                           "solo: %s", exc)
 
     pipeline = _build_pipeline()
     spawner = EmployeeSpawner(model_adapter=pipeline.adapter)
@@ -2335,6 +2374,31 @@ def _gate_deliverable(output: str, task: str = "",
     except Exception:  # noqa: BLE001
         pass
 
+    # More items reported than pages opened.
+    #
+    # THE HOLE THIS CLOSES. Every per-item guard this system has lives
+    # inside the execution loop; this function decides what the founder
+    # is told, and until now nothing joined the two. A run could list ten
+    # job titles off ONE results page, open none of them, write ten rows
+    # and pass every check above -- including the row-backing one, since
+    # the listing page is text the run genuinely read.
+    #
+    # The refusal is arithmetic and nothing else: to report ten items
+    # each verified on its own page, a run must have landed on ten
+    # distinct pages. Counted from page views directly, so the loop's own
+    # candidate tracking being imperfect can make this silent but never
+    # make it wrong.
+    try:
+        from backend.app.orchestrator.goal_spec import from_task as _spec_of
+        from backend.app.orchestrator.item_verification import overclaim
+        from backend.app.tools.tool_call_ledger import get_call_ledger
+        _over = overclaim(text, task, _spec_of(task),
+                          get_call_ledger().calls(since=since))
+        if _over:
+            problems.append(_over)
+    except Exception:  # noqa: BLE001
+        pass
+
     if not problems:
         # The run produced a usable answer, so the path it took is worth
         # keeping. Recorded HERE and nowhere else, deliberately: this is
@@ -2349,12 +2413,25 @@ def _gate_deliverable(output: str, task: str = "",
             pass
         return output
 
+    # A blocked run still did work, and the founder deserves the count.
+    # Recomputed from the ledger rather than read out of the draft --
+    # the draft is the thing that was just refused, so it is the one
+    # source that must not be quoted back as fact.
+    record = ""
+    try:
+        from backend.app.orchestrator.run_report import for_run
+        from backend.app.tools.tool_call_ledger import get_call_ledger
+        record = for_run(task, get_call_ledger().calls(since=since))
+    except Exception:  # noqa: BLE001
+        record = ""
+
     from backend.app.chat.async_runs import DeliverableBlocked
     raise DeliverableBlocked(
         "This run did not produce a usable deliverable: "
         + "; ".join(problems)
         + ". The draft is kept below so you can see what it did produce, "
-          "but it was not completed and is not being reported as done.",
+          "but it was not completed and is not being reported as done."
+        + (f"\n\n{record}" if record else ""),
         draft=text,
     )
 

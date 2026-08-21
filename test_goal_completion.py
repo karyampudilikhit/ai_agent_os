@@ -138,10 +138,14 @@ def test_the_loop_stops_on_verified_completion():
     import inspect
     from backend.app.orchestrator import execution_loop
     src = inspect.getsource(execution_loop.AgenticExecutor.run)
-    assert "goal_check(task, _ledger_calls())" in src
-    head, _, tail = src.partition("goal_check(task, _ledger_calls())")
-    assert "break" in tail[:600], "completion must actually end the loop"
-    assert "TASK COMPLETE" in tail[:600]
+    # Matched on the CALL, not on its full argument list. The goal shape
+    # and the plan's item target were added to it later, and pinning the
+    # exact text turned a property that still held into a failing test.
+    assert "goal_check(" in src
+    head, _, tail = src.partition("goal_check(")
+    assert "_ledger_calls()" in tail[:300], "it must read the LEDGER"
+    assert "break" in tail[:900], "completion must actually end the loop"
+    assert "TASK COMPLETE" in tail[:900]
 
 
 def test_completion_is_checked_after_the_call_not_before():
@@ -151,7 +155,7 @@ def test_completion_is_checked_after_the_call_not_before():
     from backend.app.orchestrator import execution_loop
     src = inspect.getsource(execution_loop.AgenticExecutor.run)
     assert src.index("result = self._execute(action, args)") < \
-        src.index("goal_check(task, _ledger_calls())")
+        src.index("goal_check(")
 
 
 def test_recovery_is_not_broken_by_the_stop():
