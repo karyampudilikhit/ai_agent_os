@@ -125,3 +125,30 @@ def test_the_deepseek_key_is_not_sent_to_openrouter(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-1")
     from backend.app.models.adapter_pool import _build
     assert _build("deepseek/deepseek-v4-flash").api_key == "sk-or-1"
+
+
+def test_a_bare_first_party_name_is_not_an_ollama_model(monkeypatch):
+    """FOUND IN THE APP, not in a test. The chat path tested only for a
+    vendor prefix, so "deepseek-v4-flash" -- the product's own default --
+    fell through to the local daemon, got "model not found", tripped the
+    health probe and fell back to the mock. A founder with a valid
+    DeepSeek key was told to run `ollama serve`.
+
+    adapter_pool had routed bare deepseek-* correctly since the model
+    migration. This branch simply never asked it.
+    """
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    from backend.app.main import MockAdapter, _build_adapter
+    adapter = _build_adapter("deepseek-v4-flash", use_mock=False)
+    assert not isinstance(adapter, MockAdapter)
+    assert "Ollama" not in type(adapter).__name__
+
+
+def test_the_two_routing_rules_agree(monkeypatch):
+    """One question, two callers. They must not drift again."""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    from backend.app.main import MockAdapter, _build_adapter
+    from backend.app.models.adapter_pool import _is_first_party_deepseek
+    for name in ("deepseek-v4-flash", "deepseek-chat", "deepseek-reasoner"):
+        assert _is_first_party_deepseek(name)
+        assert not isinstance(_build_adapter(name, use_mock=False), MockAdapter)

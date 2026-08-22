@@ -317,3 +317,123 @@ def test_the_gate_actually_calls_it():
     src = inspect.getsource(routes._gate_deliverable)
     assert "overclaim(" in src
     assert "problems.append(_over)" in src
+
+
+# =================== the class of bug, closed rather than patched
+#
+# Three separate live runs each failed a DIFFERENT way at the same
+# place: deciding whether a URL is an item.
+#
+#   Internshala  /internship/detail/<slug>       passed the depth rule
+#   Indeed       /rc/clk?jk=<id>                 two segments, id in the
+#                                                query string -> rejected
+#   LinkedIn     harvested with ?trk=..., landed without it -> the same
+#                page under two names -> counted as never opened
+#
+# Patching each would have been three fixes and a fourth site waiting.
+# Two rules replace the guessing: a link inside a RECORD BLOCK is an
+# item because the extractor already judged it one, and two addresses
+# are the same item when they share an opaque identifier.
+
+def indeed_records(listing, jobs):
+    """Indeed's real shape: a redirect URL with the id in the query."""
+    body = [f"[records — {listing}]",
+            f"{len(jobs)} similar item(s) on the page, showing {len(jobs)}.", ""]
+    for i, jk in enumerate(jobs, 1):
+        body += [f"--- record {i} ---", f"title: Product Manager Intern {i}",
+                 f"link: https://in.indeed.com/rc/clk?jk={jk}&bb=TRACKING{i}", ""]
+    return wrap_untrusted("\n".join(body), listing)
+
+
+INDEED_LIST = "https://in.indeed.com/jobs?q=product+manager+intern&l=India"
+
+
+def test_a_query_string_identity_is_an_item():
+    """Indeed puts the identity in ?jk=, not in the path. The depth rule
+    rejected it and three real job pages read as zero."""
+    calls = [call("action.browser_navigate", view(INDEED_LIST, "Indeed"), 1.0),
+             call("action.browser_extract_records",
+                  indeed_records(INDEED_LIST, ["4cb6f6b5d241550d"]), 2.0)]
+    prog = derive(calls, wanted=5)
+    assert len(prog.discovered) == 1, prog.discovered
+
+
+def test_the_same_item_through_a_redirect_counts_as_opened():
+    """Indeed hands out /rc/clk?jk=<id>&bb=<tracking> and redirects to
+    /viewjob?jk=<id>. Matched as strings those are two pages; they are
+    one job."""
+    jk = "4cb6f6b5d241550d"
+    calls = [call("action.browser_navigate", view(INDEED_LIST, "Indeed"), 1.0),
+             call("action.browser_extract_records",
+                  indeed_records(INDEED_LIST, [jk]), 2.0),
+             call("action.browser_navigate",
+                  view(f"https://in.indeed.com/viewjob?jk={jk}", "PM Intern"), 3.0),
+             call("action.browser_extract",
+                  wrap_untrusted("Product Manager Intern. Own the roadmap.",
+                                 f"https://in.indeed.com/viewjob?jk={jk}"), 4.0)]
+    prog = derive(calls, wanted=5)
+    assert prog.done == 1, f"opened={prog.opened} read={prog.read}"
+
+
+def test_a_tracking_parameter_does_not_make_a_second_item():
+    jk = "4455706866"
+    harvested = f"https://in.linkedin.com/jobs/view/pm-intern-{jk}?trk=public_jobs"
+    landed = f"https://in.linkedin.com/jobs/view/pm-intern-{jk}"
+    body = wrap_untrusted(
+        f"[records — {INDEED_LIST}]\n1 similar item(s) on the page, showing 1.\n\n"
+        f"--- record 1 ---\ntitle: PM Intern\nlink: {harvested}\n", INDEED_LIST)
+    calls = [call("action.browser_navigate", view(INDEED_LIST, "Jobs"), 1.0),
+             call("action.browser_extract_records", body, 2.0),
+             call("action.browser_navigate", view(landed, "PM Intern"), 3.0),
+             call("action.browser_extract",
+                  wrap_untrusted("Product Manager Intern role.", landed), 4.0)]
+    prog = derive(calls, wanted=5)
+    assert len(prog.discovered) == 1 and prog.done == 1
+
+
+def test_a_slug_word_is_not_an_identity():
+    """Every item on a site shares its category words. Matching on those
+    would collapse a whole listing into one item."""
+    from backend.app.orchestrator.item_state import _id_tokens
+    assert _id_tokens("https://x.com/product-management-internship") == set()
+    assert "4cb6f6b5d241550d" in _id_tokens("https://x.com/j?jk=4cb6f6b5d241550d")
+    assert "consultancy178366023" in _id_tokens("https://x.com/a/consultancy178366023")
+
+
+def test_a_search_query_is_not_a_page():
+    """web_search wraps its output with `Source: <the query>`, so the
+    address reader took the first WORD of the query as the current page
+    and judged every candidate against a listing called "top"."""
+    from backend.app.orchestrator.item_state import _looks_like_a_url
+    assert not _looks_like_a_url("top 10 AI startups in India")
+    assert not _looks_like_a_url("top")
+    assert _looks_like_a_url("https://in.indeed.com/jobs?q=x")
+    assert _looks_like_a_url("in.indeed.com/jobs")
+
+    search = wrap_untrusted("[web search — 'top 10 AI startups']\n3 result(s).",
+                            "top 10 AI startups in India")
+    calls = [call("action.web_search", search, 1.0),
+             call("action.browser_navigate", view(LISTING, "PM internships"), 2.0),
+             call("action.browser_extract_records",
+                  records(LISTING, [ITEM.format(1)]), 3.0)]
+    prog = derive(calls, wanted=5)
+    assert prog.listings == [__import__(
+        "backend.app.orchestrator.item_state", fromlist=["_norm"])._norm(LISTING)]
+
+
+def test_every_page_address_shape_the_browser_emits_is_read():
+    """Four shapes, and a fifth appearing would silently blind this
+    module again — that is what P0-1 was, twice. Pinned against the
+    emitters rather than against a list I wrote down."""
+    from backend.app.orchestrator.item_state import (
+        _BRACKET_RE, _NOW_ON_RE, _SOURCE_RE, _URL_LINE_RE,
+    )
+    u = "https://site.test/a/b"
+    shapes = [f"URL: {u}", f'Now on: "T" ({u})', f"Source: {u}",
+              f"[page text — {u}]", f"[page text - {u}]", f"[records — {u}]",
+              f"[section — H (h2) — {u}]", f"[outline — {u}]",
+              f"[table of contents — {u}]", f"[structure — {u}]"]
+    for shape in shapes:
+        got = (_URL_LINE_RE.search(shape) or _NOW_ON_RE.search(shape)
+               or _SOURCE_RE.search(shape) or _BRACKET_RE.search(shape))
+        assert got and got.group(1) == u, f"unreadable address shape: {shape!r}"

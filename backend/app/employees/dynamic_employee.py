@@ -15,6 +15,7 @@ code interacts with an Employee changes.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Optional
 
 from backend.app.employees.employee import Employee
@@ -674,6 +675,74 @@ real one).{appended}"""
         from backend.app.actions.action_registry import get_registry as _get_actions
         has_actions = bool(_get_actions().known_names())
         if has_mcp or has_http or has_actions:
+            # A GOAL WITH A SHAPE IS RUN AS A GRAPH, NOT AS ONE LOOP.
+            #
+            # When the goal states a countable structure, code can name
+            # the steps, give each one an owner and a finish line, and
+            # judge them separately. That is strictly more than a single
+            # loop can do, and it is the whole of L1/E2.
+            #
+            # Everything else is untouched: an unshaped goal produces no
+            # graph, graph_runner returns nothing, and the single loop
+            # below runs exactly as it always has. That fallback is not
+            # a nicety -- most real tasks have no countable shape, and a
+            # wrong graph would confidently execute the wrong plan.
+            # ONE GRAPH PER FOUNDER GOAL, NOT ONE PER SPECIALIST.
+            #
+            # A Supervisor-delegated sub-task is already one slice of a
+            # decomposition. Building a graph from it decomposes a
+            # decomposition: on a live run both specialists parsed their
+            # own sub-task as a countable goal and each spawned its own
+            # three-node graph, staffed with the same two employees, so
+            # the work was done four times by two nested layers of
+            # workers and reported by neither.
+            #
+            # `original_task` is set exactly when this employee is
+            # running someone else's decomposition. When it differs from
+            # the task in hand, the graph belongs to whoever did the
+            # decomposing -- not here.
+            _delegated = bool(original_task and original_task.strip()
+                              and original_task.strip() != task.strip())
+            graph_context = ""
+            _graph_started = time.time()
+
+            def _run_ledger_calls():
+                """Only THIS run's calls. The ledger is process-global
+                and deliberately never reset, so an unscoped read would
+                let a previous run's evidence satisfy this one's nodes --
+                a bug this codebase has already shipped once."""
+                try:
+                    from backend.app.tools.tool_call_ledger import get_call_ledger
+                    return get_call_ledger().calls(since=_graph_started)
+                except Exception:  # noqa: BLE001
+                    return []
+
+            try:
+                from backend.app.orchestrator import graph_runner
+                _gr = None if _delegated else graph_runner.run(
+                    task=heuristic_text, adapter=self.pipeline.adapter,
+                    role=self.role,
+                    budget=self.config.max_steps,
+                    deadline_seconds=self.config.deadline_seconds,
+                    ledger_calls=_run_ledger_calls,
+                )
+                if _gr is not None and _gr.runs:
+                    graph_context = (
+                        "STRUCTURED EXECUTION (each step had its own owner, "
+                        "budget and finish line; the statuses below were "
+                        "decided by code from the tool ledger, not by any "
+                        "model)\n"
+                        + _gr.describe() + "\n\n" + _gr.transcript
+                    )
+                    web_context_parts.append(graph_context)
+                    used_web = True
+                    logger.info("[%s] graph run: %d node(s)",
+                                self.role, len(_gr.runs))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Graph run failed, falling back to the "
+                               "single loop: %s", exc)
+
+        if (has_mcp or has_http or has_actions) and not graph_context:
             try:
                 loop_context = AgenticExecutor(
                     self.pipeline.adapter,

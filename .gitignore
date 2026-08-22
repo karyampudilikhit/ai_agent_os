@@ -87,3 +87,18 @@ browser_trace.json
 browser_trace*.log
 server_run*.log
 verify_outcome_check.py.log
+
+# Runtime state, not source. These are live data the app writes as it
+# runs -- the run store, the approval queue, the learned playbooks --
+# and they were tracked, so every run showed up as a repo change.
+runs.json
+.pending_actions.json
+browser_playbooks.json
+
+# One-off experiment output. Benchmarks and blind reports are worth
+# running and not worth keeping: they are a record of one afternoon's
+# comparison, they went stale the moment the model changed, and they
+# were 2MB of the repository.
+benchmark_result*.json
+blind_report*.html
+judge_result*.json

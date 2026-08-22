@@ -80,7 +80,25 @@ def _session(args: Dict[str, Any]):
     token = str(args.get("session_token") or "").strip()
     if not token:
         return None, "(missing 'session_token' — open a page with action.browser_navigate first)"
-    session = get_manager().get(token)
+    mgr = get_manager()
+    session = mgr.get(token)
+    if not session:
+        # A TOKEN THAT NO LONGER EXISTS, WHEN A SESSION DOES.
+        #
+        # One on-disk profile backs exactly one live context, so there is
+        # never any ambiguity about which session "the" session is. A
+        # stale token therefore has one sensible reading: carry on in the
+        # window that is actually open.
+        #
+        # Measured on a live run: a blocked page churned the session, the
+        # token changed, and the model went back to the old one two calls
+        # later. It was told the session had timed out -- while a perfectly
+        # good browser sat open -- and spent the rest of its budget
+        # recovering from a problem that did not exist.
+        session = mgr.current()
+        if session is not None:
+            logger.info("session %s is gone; continuing in the live session %s",
+                        token[:20], session.token[:20])
     if not session:
         return None, ("(that browser session no longer exists — it may have timed out. "
                       "Open the page again with action.browser_navigate.)")

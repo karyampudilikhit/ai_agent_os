@@ -86,13 +86,35 @@ def test_the_note_states_how_many_items_the_budget_still_buys():
     assert "5 item(s) worth" in note
 
 
-def test_the_note_stops_once_work_has_started():
-    """One opened item is proof the run has moved on. Nagging past that
-    is the failure mode on the other side of this guard."""
+def test_one_opened_item_does_not_stand_down_the_guard():
+    """MEASURED, 2026-08-21. This used to assert the opposite -- that a
+    single opened item proved the run had moved on -- and the clause it
+    pinned read `if prog.opened: return None`, a boolean where the
+    question is a ratio.
+
+    A live run opened its first item at call 11 and the guard went
+    silent for calls 13, 15, 17 and 19, which harvested twenty-seven
+    more candidates nobody ever opened. One of eight done is not "work
+    has started, stand down"; it is seven still to do.
+    """
     calls = [_nav(LIST_URL, 1), _listing(5, 2),
              _nav(ITEM.format(1), 3), _read(ITEM.format(1), 4)]
     p = derive(calls, wanted=8)
-    assert progress_note(p, "action.browser_extract_records", 16) is None
+    assert p.done == 1
+    assert progress_note(p, "action.browser_extract_records", 16) is not None
+
+
+def test_a_run_that_is_keeping_up_is_left_alone():
+    """The other side of it. As many candidates opened as items still
+    needed leaves nothing to redirect, and nagging then is the failure
+    mode this guard must not become."""
+    calls = [_nav(LIST_URL, 1), _listing(5, 2)]
+    at = 3
+    for i in range(1, 5):
+        calls += [_nav(ITEM.format(i), at), _read(ITEM.format(i), at + 1)]
+        at += 2
+    p = derive(calls, wanted=5)
+    assert progress_note(p, "action.browser_extract_records", 10) is None
 
 
 def test_a_first_listing_is_never_second_guessed():
@@ -219,8 +241,18 @@ def test_every_way_of_staying_silent_names_itself():
     assert verdict(derive([_wrapped_listing(2, 1)], wanted=8), LIST) \
         == TOO_FEW_CANDIDATES
 
-    opened = derive([_wrapped_listing(10, 1), _nav(ITEM.format(1), 2)], wanted=8)
-    assert verdict(opened, LIST) == ALREADY_OPENED
+    # ALREADY_OPENED is now a RATIO, not "has anything been opened".
+    # Enough candidates open to cover what is still needed.
+    # ALREADY_OPENED is now a RATIO, not "has anything been opened".
+    # Eight candidates OPEN and none read yet: there is nothing left to
+    # redirect toward, so the guard stands down without ENOUGH_DONE
+    # (which needs them read) having fired.
+    keeping_up = [_wrapped_listing(10, 1)]
+    for i in range(1, 9):
+        keeping_up.append(_nav(ITEM.format(i), 1 + i))
+    p8 = derive(keeping_up, wanted=8)
+    assert p8.done == 0 and len(p8.opened) == 8
+    assert verdict(p8, LIST) == ALREADY_OPENED
 
     calls = [_wrapped_listing(10, 1)]
     at = 2

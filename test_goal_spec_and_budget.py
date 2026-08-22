@@ -133,9 +133,13 @@ def test_the_loop_builds_a_plan_before_it_starts():
     import inspect
     from backend.app.orchestrator import execution_loop
     src = inspect.getsource(execution_loop.AgenticExecutor.run)
-    assert "build_plan(task, max_steps" in src
+    # Matched on the CALL, not its argument list: sub-task mode
+    # added an inline conditional to the first argument, and
+    # pinning the literal turned a property that still holds
+    # into a failing test.
+    assert "build_plan(" in src
     # The loop is a while with a manual counter, not a for-range.
-    assert src.index("build_plan(task, max_steps") < src.index("step_i = -1")
+    assert src.index("build_plan(") < src.index("step_i = -1")
 
 
 def test_the_plan_is_recomputed_when_the_browser_budget_widens():
@@ -143,7 +147,7 @@ def test_the_plan_is_recomputed_when_the_browser_budget_widens():
     import inspect
     from backend.app.orchestrator import execution_loop
     src = inspect.getsource(execution_loop.AgenticExecutor.run)
-    assert src.count("build_plan(task, max_steps") >= 2
+    assert src.count("build_plan(") >= 2
 
 
 def test_a_founders_explicit_budget_is_never_overridden():

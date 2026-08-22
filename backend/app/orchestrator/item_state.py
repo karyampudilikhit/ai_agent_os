@@ -85,6 +85,25 @@ READ = "read"
 MAX_ITEM_EVIDENCE = 8000
 
 
+# AN ADDRESS HAS TO LOOK LIKE ONE.
+#
+# wrap_untrusted takes whatever the caller passes as its source, and
+# web_search passes THE QUERY -- so its output header reads
+# "Source: top 10 AI startups in India". Read as an address, that made
+# the current page "top", and every candidate was then judged against a
+# listing called "top". A search polluted the page state of the whole
+# derivation.
+#
+# Cheap and total: an address is either a full URL or a host with a dot
+# in it. A search query is neither.
+_URLISH = re.compile(r"^(?:https?://)?[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:[/:?#]|$)",
+                     re.IGNORECASE)
+
+
+def _looks_like_a_url(text: str) -> bool:
+    return bool(_URLISH.match((text or "").strip()))
+
+
 def _norm(url: str) -> str:
     u = (url or "").strip().rstrip(".,);]'\"").lower()
     u = re.sub(r"^https?://", "", u)
@@ -92,6 +111,36 @@ def _norm(url: str) -> str:
     if u.startswith("www."):
         u = u[4:]
     return u.rstrip("/")
+
+
+# THE SAME ITEM, REACHED BY A DIFFERENT ADDRESS.
+#
+# A candidate is harvested as the href a listing rendered, and the run
+# then lands on whatever that href RESOLVES to. Those are routinely
+# different strings for the same page: Indeed hands out
+# /rc/clk?jk=<id>&bb=<tracking> and redirects to /viewjob?jk=<id>, so
+# exact matching counted three job pages this run really opened as zero.
+# Tracking parameters, canonical redirects and www variants all do this.
+#
+# What survives every one of them is the opaque identifier. So an item
+# is keyed by the id-like tokens in its address, and a landing matches a
+# candidate when they share one.
+#
+# "Id-like" is deliberately strict: eight or more characters AND either
+# mixed letters-and-digits or all digits. "4cb6f6b5d241550d" qualifies,
+# "consultancy178366023" qualifies, and "product-management" does not --
+# which matters, because a purely alphabetic slug word is shared by every
+# item on a site and would collapse them all into one.
+_ID_TOKEN = re.compile(r"[a-z0-9]{8,}")
+
+
+def _id_tokens(url: str) -> Set[str]:
+    out: Set[str] = set()
+    for tok in _ID_TOKEN.findall(_norm(url)):
+        if not any(c.isdigit() for c in tok):
+            continue          # no digits: a slug word, not an identifier
+        out.add(tok)
+    return out
 
 
 def _looks_like_an_item(url: str, listing_urls: Set[str]) -> bool:
@@ -189,6 +238,10 @@ def derive(ledger_calls: Iterable[Dict[str, Any]], wanted: int) -> ItemProgress:
     prog = ItemProgress(wanted=max(0, int(wanted or 0)))
     listing_urls: Set[str] = set()
     seen: Set[str] = set()
+    # id-like token -> the candidate it identifies. See _id_tokens: this
+    # is what lets a landing be recognised through a redirect or a
+    # tracking parameter.
+    by_id: Dict[str, str] = {}
     current = ""
     # Arguments of calls that FAILED. Resolved against the candidate list
     # once, at the end, because a call can fail on an item that has not
@@ -207,7 +260,9 @@ def derive(ledger_calls: Iterable[Dict[str, Any]], wanted: int) -> ItemProgress:
 
         m = (_URL_LINE_RE.search(out) or _NOW_ON_RE.search(out)
              or _SOURCE_RE.search(out) or _BRACKET_RE.search(out))
-        landed = _norm(m.group(1)) if m else ""
+        landed = ""
+        if m and _looks_like_a_url(m.group(1)):
+            landed = _norm(m.group(1))
         if landed:
             current = landed
         elif "browser" in tool:
@@ -220,18 +275,60 @@ def derive(ledger_calls: Iterable[Dict[str, Any]], wanted: int) -> ItemProgress:
         if any(t in tool for t in _LIST_TOOLS) and current:
             listing_urls.add(current)
 
-        # Candidate links come out of records reads and page text.
+        # WHERE A CANDIDATE COMES FROM IS BETTER EVIDENCE THAN ITS SHAPE.
+        #
+        # A "link:" line is only ever written by browser_extract_records,
+        # inside a "--- record N ---" block, for something that tool
+        # already judged to be one of a page's repeated content records
+        # by homogeneity and boundedness. That judgement is made against
+        # the rendered page. Re-judging its output by URL shape adds
+        # nothing and subtracts plenty.
+        #
+        # THIS IS THE FIX FOR A WHOLE CLASS, not one site. Every miss so
+        # far was a URL that did not match somebody's idea of an item:
+        # Internshala's /internship/detail/<slug> passed the
+        # three-segment rule; Indeed's /rc/clk?jk=<id> has two segments
+        # and put the identity in the QUERY STRING, so three real job
+        # pages this run opened were counted as zero. The next site would
+        # have broken it a third way. Provenance does not vary by site.
+        #
+        # A bare URL sitting in loose page text has no such provenance,
+        # so it keeps the depth heuristic -- that is a guess, and it is
+        # labelled as one.
         if any(t in tool for t in ("browser_extract_records", "browser_extract_table",
                                    "browser_extract")):
-            for raw in _LINK_RE.findall(out) + _HREF_RE.findall(out):
+            for raw in _LINK_RE.findall(out):
+                n = _norm(raw)
+                if n and n not in seen and n not in listing_urls and n != current:
+                    seen.add(n)
+                    prog.discovered.append(n)
+                    for tok in _id_tokens(n):
+                        by_id.setdefault(tok, n)
+            for raw in _HREF_RE.findall(out):
                 n = _norm(raw)
                 if n and n not in seen and _looks_like_an_item(raw, listing_urls or {current}):
                     seen.add(n)
                     prog.discovered.append(n)
+                    for tok in _id_tokens(n):
+                        by_id.setdefault(tok, n)
 
         # Landing on a discovered candidate is what "opened" means.
-        if landed and landed in seen and landed not in listing_urls:
-            prog.opened.add(landed)
+        #
+        # Resolved through the id index, so arriving at /viewjob?jk=<id>
+        # counts as opening the /rc/clk?jk=<id>&bb=<tracking> that was
+        # harvested. `current` becomes the CANDIDATE's address, so the
+        # read below and the per-item evidence file against the same
+        # item rather than against two names for it.
+        if landed and landed not in listing_urls:
+            hit = landed if landed in seen else None
+            if hit is None:
+                for tok in _id_tokens(landed):
+                    if tok in by_id:
+                        hit = by_id[tok]
+                        break
+            if hit is not None:
+                prog.opened.add(hit)
+                current = hit
 
         # A read tool run while that candidate is open is "read".
         if any(t in tool for t in _READ_TOOLS) and current in prog.opened:
@@ -276,7 +373,7 @@ NOTHING_DISCOVERED = "silent: no candidates have been harvested yet"
 NOT_A_LIST_CALL = "silent: this call is not gathering another list"
 ENOUGH_DONE = "silent: enough candidates are already opened and read"
 TOO_FEW_CANDIDATES = "silent: too few candidates to be worth redirecting to"
-ALREADY_OPENED = "silent: at least one candidate has been opened"
+ALREADY_OPENED = "silent: enough candidates are already open to cover what is left"
 FIRED = "NUDGED"
 
 
@@ -298,7 +395,18 @@ def verdict(prog: ItemProgress, action: str) -> str:
     # Only once there are plainly enough candidates to be getting on with.
     if len(prog.discovered) < min(prog.wanted, 3):
         return TOO_FEW_CANDIDATES
-    if prog.opened:
+    # OPENING ONE ITEM IS NOT PROGRESS ON TWENTY.
+    #
+    # This was `if prog.opened: return ALREADY_OPENED` -- a boolean where
+    # the question is a ratio. Measured on a live run: the first item
+    # opened at call 11 and the guard went silent for calls 13, 15, 17
+    # and 19, which harvested twenty-seven more candidates nobody ever
+    # opened. One of eight done is not "work has started, stand down";
+    # it is seven still to do.
+    #
+    # Silent once the run is genuinely keeping up: as many candidates
+    # opened as there are items still to find leaves nothing to redirect.
+    if prog.opened and len(prog.opened) >= max(1, prog.wanted - prog.done):
         return ALREADY_OPENED
     return FIRED
 

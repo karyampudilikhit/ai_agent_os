@@ -158,3 +158,41 @@ def test_a_blocked_run_still_tells_the_founder_what_it_got():
     src = inspect.getsource(routes._gate_deliverable)
     assert "for_run(" in src
     assert "DeliverableBlocked" in src.partition("for_run(")[2]
+
+
+def test_a_list_goal_is_never_told_it_failed_to_visit_pages():
+    """FOUND LIVE. Asked for "10 trading research papers we can
+    implement" — a list, with no per-item visiting anywhere in it — the
+    report said "0 of 10 verified (opened on its own page and read)" and
+    instructed the writer to say so plainly. The writer obeyed, produced
+    a hand-back, and the deliverable gate refused it. The founder got a
+    422 and no papers.
+
+    goal_spec had already read the goal as per_item_work=False. The
+    requirement was invented in the report. A shortfall against a bar
+    nobody set is not honesty.
+    """
+    from backend.app.orchestrator.goal_spec import from_task
+    from backend.app.orchestrator.run_report import build
+    task = "give me 10 trading research papers which we can implement"
+    spec = from_task(task)
+    assert spec.confident and spec.item_count == 10
+    assert not spec.per_item_work
+
+    report = build(task, spec=spec, verdicts=[])
+    assert "opened on its own page" not in (report or "")
+    assert "SHORTFALL" not in (report or "")
+
+
+def test_a_per_item_goal_still_gets_its_verdict():
+    """The other side. A goal that DID ask for per-item visiting must
+    still be held to it — this is the guard that catches eleven
+    internships of which one was opened."""
+    from backend.app.orchestrator.goal_spec import from_task
+    from backend.app.orchestrator.run_report import build
+    task = ("Find 10 Product Manager internships in India, visit each job "
+            "page and extract company and role.")
+    spec = from_task(task)
+    assert spec.per_item_work
+    report = build(task, spec=spec, verdicts=[])
+    assert "WHAT THIS RUN ACTUALLY VERIFIED" in report

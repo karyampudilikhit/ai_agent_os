@@ -351,6 +351,26 @@ def _try_dismiss_consent_banner(page) -> bool:
     return False
 
 
+# What Playwright says when the session itself is gone, as opposed to
+# when a site refused us. The distinction is the whole point: a dead
+# session is OUR problem and worth one silent retry; a timeout or a bot
+# wall is a fact about the page and must be reported, not retried behind
+# the model's back.
+_SESSION_GONE_MARKERS = (
+    "target page, context or browser has been closed",
+    "target closed",
+    "browser has been closed",
+    "context has been closed",
+    "page has been closed",
+    "page closed",
+    "connection closed",
+)
+
+
+def _session_is_gone(exc: Exception) -> bool:
+    return any(m in str(exc).lower() for m in _SESSION_GONE_MARKERS)
+
+
 def _classify_open_error(exc: Exception) -> str:
     """Turn a raw Playwright exception into a message that tells the
     founder/specialist something actionable, instead of a bare stack
@@ -1102,9 +1122,33 @@ def _browser_navigate_impl(args: Dict[str, Any]) -> str:
         try:
             mgr.goto(session, url)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("browser_navigate: goto %s failed: %s", url[:80], exc)
-            return f"(browser_navigate failed: could not open {url} — {exc})"
-    else:
+            # A SESSION THAT DIED MID-FLIGHT GETS ONE FRESH WINDOW.
+            #
+            # The manager now reaps a session it can SEE is dead, but a
+            # page can also die during the navigation itself, and that
+            # lands here. Returning the raw error meant the run learned
+            # only that this URL "failed": on a live run it then carried
+            # the same corpse to three more URLs and burned five calls
+            # before giving up on sites that were never the problem.
+            #
+            # Exactly one retry, and only when the error says the session
+            # is GONE rather than that the site refused us. A timeout, a
+            # bot wall or a 404 is a fact about the page and still has to
+            # be reported as one.
+            if _session_is_gone(exc):
+                logger.info("browser_navigate: session died mid-navigation — "
+                            "opening a fresh window for %s", url[:80])
+                try:
+                    mgr.close(session.token)
+                except Exception:  # noqa: BLE001
+                    pass
+                session = None
+            else:
+                logger.warning("browser_navigate: goto %s failed: %s",
+                               url[:80], exc)
+                return f"(browser_navigate failed: could not open {url} — {exc})"
+
+    if session is None:
         try:
             session = mgr.create(url, prefer_headless=not interactive)
         except Exception as exc:  # noqa: BLE001
@@ -1117,7 +1161,23 @@ def _browser_navigate_impl(args: Dict[str, Any]) -> str:
     try:
         snapshot = _snapshot_page(session.page)
     except Exception as exc:  # noqa: BLE001
-        mgr.close(session.token)
+        # A PAGE THAT WOULD NOT BE READ IS NOT A BROKEN SESSION.
+        #
+        # This used to close the whole session. Measured on a live run:
+        # a bot-walled job page failed to snapshot, the session was
+        # destroyed, a new one opened under a NEW TOKEN, and the model --
+        # still holding the old token -- was told its session "may have
+        # timed out". Nothing had timed out; the run had thrown away a
+        # working browser because one page refused to be read.
+        #
+        # The session is only closed if it is genuinely gone. A refusal,
+        # a timeout or an unreadable page leaves it open, because the
+        # next navigation is very likely to work.
+        if _session_is_gone(exc):
+            mgr.close(session.token)
+        else:
+            logger.info("browser_navigate: %s would not be read, keeping the "
+                        "session open", url[:80])
         return f"(browser_navigate failed: could not read the page — {exc})"
 
     if _looks_like_login_page(snapshot):

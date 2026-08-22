@@ -255,6 +255,30 @@ class BrowserSession:
     def touch(self) -> None:
         self.last_touched_at = time.time()
 
+    def is_alive(self) -> bool:
+        """Is there still a usable page behind this token?
+
+        THE FAILURE THIS ANSWERS. A live run, 2026-08-21: a session was
+        opened on internshala.com, worked, and then its page died. The
+        registry knew nothing about it, so `current()` kept handing the
+        same corpse back, and every later navigation returned
+        "Page.goto: Target page, context or browser has been closed".
+        Five of that run's nineteen calls failed that way, against three
+        different URLs -- a quarter of the budget spent on a session
+        that had been dead since call six.
+
+        Nothing was wrong with those sites. The manager simply had no
+        notion that a session it was holding could stop working.
+        """
+        page = getattr(self, "page", None)
+        if page is None:
+            return False
+        try:
+            return not page.is_closed()
+        except Exception:  # noqa: BLE001
+            # A page whose own is_closed() raises is not one to hand out.
+            return False
+
     def set_status(self, status: str, message: str) -> None:
         with self._status_lock:
             self.status = status
@@ -432,8 +456,30 @@ class BrowserSessionManager:
                 no_viewport=True,
             )
 
+    def _alive_or_reap(self, session: Optional[BrowserSession]
+                       ) -> Optional[BrowserSession]:
+        """Hand back a session only while it still has a page.
+
+        A dead one is dropped from the registry here rather than
+        returned, so the caller takes the "no session yet" path and opens
+        a fresh window instead of navigating a corpse. Reaping on read is
+        deliberate: nothing else in this process is watching, and a
+        session dies without telling anybody.
+        """
+        if session is None:
+            return None
+        if session.is_alive():
+            return session
+        logger.info("Browser session %s is dead (page closed) — reaping it",
+                    session.token)
+        try:
+            self._live.close(session.token)
+        except Exception:  # noqa: BLE001
+            pass
+        return None
+
     def get(self, token: str) -> Optional[BrowserSession]:
-        return self._live.get(token)
+        return self._alive_or_reap(self._live.get(token))
 
     def current(self) -> Optional[BrowserSession]:
         """The session already open, if any.
@@ -442,7 +488,7 @@ class BrowserSessionManager:
         can only ever mean "go there in the window that is already open".
         See LiveSessionManager.newest for what the alternative cost.
         """
-        return self._live.newest()
+        return self._alive_or_reap(self._live.newest())
 
     def goto(self, session: BrowserSession, url: str) -> None:
         """Move an EXISTING session to `url`. Browser thread only.

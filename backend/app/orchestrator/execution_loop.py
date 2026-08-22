@@ -60,7 +60,10 @@ from backend.app.critique.compute_gate import (
 )
 from backend.app.orchestrator.goal_spec import from_task as goal_spec_from_task
 from backend.app.orchestrator.goal_state import check as goal_check
-from backend.app.orchestrator.task_graph import REFUSE, build as build_plan, describe as describe_plan
+from backend.app.orchestrator.task_graph import (
+    REFUSE, build as build_plan, describe as describe_plan, phase_of,
+)
+from backend.app.orchestrator import discovery_guard, discovery_state
 from backend.app.orchestrator.item_state import (
     derive as derive_items,
     progress_note as item_progress_note,
@@ -423,6 +426,7 @@ class AgenticExecutor:
         deadline_seconds: float = DEADLINE_SECONDS,
         step_max_tokens: int = STEP_MAX_TOKENS,
         required_outputs: Sequence[str] = (),
+        subtask: bool = False,
         standing_rules: Sequence[str] = (),
         loop_model: Optional[str] = None,
         tools_allow: Sequence[str] = (),
@@ -447,6 +451,23 @@ class AgenticExecutor:
         # defaults. Only defaults get widened for browser work: a founder
         # who set max_steps=4 meant 4, and silently spending 22 would
         # make the settings page a suggestion box.
+        # IS THIS A WHOLE GOAL, OR ONE NODE OF ONE?
+        #
+        # A sub-task arrives already planned: the graph derived the
+        # GoalSpec once, priced the whole goal once, and split the budget
+        # across nodes. Re-deriving from a node's BRIEF treats that brief
+        # as a fresh founder request -- and the briefs describe per-item
+        # work ("each candidate", "the individual items"), so the goal
+        # spec reads them as multi-item goals and prices them at more
+        # than the node was given.
+        #
+        # Measured the first time a node ran live: the discovery brief
+        # was read as "1 item, visited individually", estimated at seven
+        # steps against the node's five, REFUSED, and the model was told
+        # not to begin. It returned DONE at step one having done nothing,
+        # and the node was correctly judged as having found no candidates.
+        # The orchestration was right; it was refusing itself.
+        self.subtask = bool(subtask)
         self._budget_is_default = (
             max_steps == MAX_STEPS
             and deadline_seconds == DEADLINE_SECONDS
@@ -660,8 +681,13 @@ class AgenticExecutor:
         #
         # The plan is rebuilt once if the browser budget widens, because
         # the same goal is affordable at 22 steps and not at 10.
-        goal_spec = goal_spec_from_task(task)
-        plan = build_plan(task, max_steps, spec=goal_spec)
+        # A sub-task's plan belongs to whoever decomposed the goal.
+        # from_task on an empty string yields a non-confident spec, which
+        # every layer below already treats as "behave exactly as before
+        # any of this existed" -- no feasibility verdict, no phase, no
+        # refusals, no item gate.
+        goal_spec = goal_spec_from_task("" if self.subtask else task)
+        plan = build_plan("" if self.subtask else task, max_steps, spec=goal_spec)
         if plan.spec.confident:
             logger.info("[%s] %s", role, describe_plan(plan).replace(chr(10), " | "))
         plan_note = plan.note()
@@ -1108,6 +1134,41 @@ class AgenticExecutor:
             # answered twice — if anything moved, the same words are a
             # new question and it goes through. That is the same test
             # the repeat guard uses to decide whether a repeat is real.
+            # WHERE THIS RUN IS, AND WHETHER THIS CALL ADVANCES IT.
+            #
+            # Recomputed from the ledger every step, never stored and
+            # never influenced by the model. A run that has nineteen
+            # candidates and needs eight items is in VERIFY whatever it
+            # would rather be doing, and a discovery call made from
+            # VERIFY is refused rather than argued with -- the note
+            # version of this was tried and watched to fail across four
+            # live runs.
+            _disco = discovery_state.derive(_ledger_calls())
+            _items_now = derive_items(_ledger_calls(), plan.feasible_items)
+            _phase = phase_of(
+                plan, candidates=len(_items_now.discovered),
+                opened=len(_items_now.opened), verified=_items_now.done,
+                steps_left=max(0, max_steps - step_i))
+            if _phase.active:
+                logger.info("[%s] [phase] %s", role, _phase.line())
+            _refusal_d = discovery_guard.verdict(
+                action, _phase, _disco, _disco.current_source)
+            if not _refusal_d and is_research_tool(action):
+                # And the other half: opening one more item on a source
+                # whose item pages are closed. Discovery working is not
+                # the same as the task being satisfiable from it.
+                _refusal_d = discovery_guard.verdict_for_open(
+                    str(args.get("url") or ""), _phase, _disco)
+            if _refusal_d:
+                logger.info("[%s] [phase] refused %s — %s", role, action,
+                            _phase.name)
+                steps.append({
+                    "thought": thought,
+                    "call": f"{action}({json.dumps(args, ensure_ascii=False)[:300]})",
+                    "result": _refusal_d,
+                })
+                continue
+
             _query = strategy_query_in(args)
             _page = _url or strategy_page_in(view_before)
             _strategy_note = None

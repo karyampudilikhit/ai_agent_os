@@ -95,13 +95,24 @@ def test_the_candidates_were_found(chain):
     extractor writes — the first cause of P0-1, fixed and pinned here
     against a real output rather than a synthetic one."""
     prog = chain["prog"]
-    assert len(prog.discovered) == 19
+    assert len(prog.discovered) == 20
     assert len(prog.listings) == 2
 
 
-def test_almost_none_of_them_were_opened(chain):
-    """One. The run spent its budget moving between job boards."""
-    assert chain["prog"].done == 1
+def test_the_run_opened_four_of_them(chain):
+    """FOUR, and this number went UP when the deriver got more honest.
+
+    It read 1 until candidates were matched by IDENTITY rather than by
+    address. This run opened four LinkedIn job pages whose harvested
+    hrefs carried tracking parameters the landing URLs did not, so three
+    real item pages were invisible -- the deriver was under-reporting
+    the run's actual work by four times.
+
+    Under-counting is the safe direction (it can only produce an honest
+    shortfall, never an overclaim), which is exactly why it survived
+    this long without anything failing.
+    """
+    assert chain["prog"].done == 4
 
 
 def test_the_extract_header_no_longer_hides_a_read(chain):
@@ -152,8 +163,8 @@ def test_the_founder_is_told_the_real_numbers(chain):
     from backend.app.orchestrator.run_report import for_run
     report = for_run(chain["task"], chain["calls"])
     assert "asked for : 10 items" in report
-    assert "verified  : 1" in report
-    assert "SHORTFALL: 9 of 10" in report
+    assert "verified  : 4" in report
+    assert "SHORTFALL: 6 of 10" in report
 
 
 # ------------------------------------------- and it would be staffed for

@@ -255,9 +255,19 @@ def item_pages_read(ledger_calls: Iterable[Dict[str, Any]]) -> Optional[int]:
     calls = list(ledger_calls or ())
     try:
         from backend.app.orchestrator.item_state import (
-            _looks_like_an_item, derive,
+            _id_tokens, _looks_like_an_item, derive,
         )
-        listings = set(derive(calls, 0).listings)
+        prog = derive(calls, 0)
+        listings = set(prog.listings)
+        harvested = set(prog.discovered)
+        # Candidates by identity as well as by address, for the same
+        # reason derive() needs it: a run lands on what an href
+        # RESOLVES to, and that is routinely a different string.
+        # Comparing raw addresses here while derive compares identities
+        # made this read zero on a run whose own item count was one.
+        harvested_ids = set()
+        for cand in harvested:
+            harvested_ids |= _id_tokens(cand)
     except Exception:  # noqa: BLE001
         return None
     if not listings:
@@ -265,8 +275,20 @@ def item_pages_read(ledger_calls: Iterable[Dict[str, Any]]) -> Optional[int]:
         # be an item, and this measure would read zero -- which would
         # accuse an honest run of everything. Say "no basis" instead.
         return None
-    return sum(1 for p in _pages_visited(calls)
-               if _looks_like_an_item(p, listings))
+    # EITHER SIGNAL COUNTS, and the union is deliberate. A page harvested
+    # out of a record block IS an item whatever its URL looks like; a
+    # page that merely looks item-shaped might be one the harvester
+    # missed. Counting both can only RAISE this number, and a higher
+    # number means fewer refusals -- so a gap in either signal makes the
+    # refusal below quieter, never wronger.
+    def _is_item(page: str) -> bool:
+        if page in harvested:
+            return True
+        if harvested_ids and (_id_tokens(page) & harvested_ids):
+            return True
+        return _looks_like_an_item(page, listings)
+
+    return sum(1 for p in _pages_visited(calls) if _is_item(p))
 
 
 def overclaim(text: str, task: str, spec: Any,

@@ -38,7 +38,8 @@ def _plural(n: int, word: str) -> str:
 
 def build(task: str, spec: Any = None, plan: Any = None,
           prog: Any = None, verdicts: Optional[Sequence[Any]] = None,
-          errors: Optional[Sequence[str]] = None) -> str:
+          errors: Optional[Sequence[str]] = None,
+          ledger: Optional[Sequence[Any]] = None) -> str:
     """The honest account of one run. Empty when there is nothing
     countable to report -- an open-ended task has no shortfall to state,
     and a report that says "0 of 0" is noise in a prompt.
@@ -57,7 +58,22 @@ def build(task: str, spec: Any = None, plan: Any = None,
 
     lines: List[str] = []
 
-    if wanted >= 2 and verdicts is not None:
+    # ONLY A GOAL THAT ASKED FOR PER-ITEM WORK GETS A PER-ITEM VERDICT.
+    #
+    # THE FAILURE THIS ANSWERS. Asked for "10 trading research papers we
+    # can implement" -- a list, with no per-item visiting anywhere in it
+    # -- this section reported "0 of 10 verified (opened on its own page
+    # and read)" and instructed the writer to say so plainly. The writer
+    # obeyed, produced a hand-back, and the deliverable gate correctly
+    # refused it. The founder got a 422 and no papers.
+    #
+    # Every part of that chain did its job. The requirement was invented
+    # here: goal_spec had already read the goal as per_item_work=False,
+    # and this section ignored it and demanded page visits anyway. A
+    # shortfall against a bar nobody set is not honesty, it is a bug
+    # wearing honesty's clothes.
+    per_item = bool(getattr(spec, "per_item_work", False))
+    if wanted >= 2 and per_item and verdicts is not None:
         t = tally(verdicts, wanted=wanted)
         lines.append("WHAT THIS RUN ACTUALLY VERIFIED")
         lines.append(f"  asked for : {_plural(wanted, 'item')}")
@@ -118,6 +134,25 @@ def build(task: str, spec: Any = None, plan: Any = None,
         except Exception:  # noqa: BLE001
             pass
 
+    # WHERE THE CANDIDATES CAME FROM, and which ways in are spent.
+    # "Nothing was verified" and "nothing was verified, from one source
+    # that stopped producing after six searches" are different answers,
+    # and only the second tells the founder what to change.
+    disco = None
+    try:
+        from backend.app.orchestrator.discovery_state import derive as _disco_of
+        if ledger is not None:
+            disco = _disco_of(ledger)
+    except Exception:  # noqa: BLE001
+        disco = None
+    if disco is not None and disco.sources:
+        lines.append("")
+        lines.append("DISCOVERY")
+        lines.append(f"  candidates: {disco.total_new} new, "
+                     f"{disco.total_duplicates} already seen")
+        for host in sorted(disco.sources):
+            lines.append("  " + disco.sources[host].line())
+
     if plan is not None and getattr(plan, "reason", ""):
         lines.append("")
         lines.append("BUDGET")
@@ -158,7 +193,8 @@ def for_run(task: str, ledger_calls: Iterable[Dict[str, Any]],
         plan = build_plan(task, budget, spec=spec)
         prog = derive(calls, plan.feasible_items)
         verdicts = verify(prog, subject_of(task, spec))
-        return build(task, spec=spec, plan=plan, prog=prog, verdicts=verdicts)
+        return build(task, spec=spec, plan=plan, prog=prog, verdicts=verdicts,
+                     ledger=calls)
     except Exception as exc:  # noqa: BLE001
         logger.info("run report unavailable (%s)", exc)
         return ""

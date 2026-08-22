@@ -331,18 +331,56 @@ class OpenAICompatAdapter:
             # downstream, which is how an outage gets reported as a
             # decision not to use tools.
             reasoning = str(message.get("reasoning") or "").strip()
-            if attempt < 2 and (finish == "length" or reasoning):
-                _remember_floor(self.model,
-                                min(attempt_tokens * EMPTY_RETRY_MULTIPLIER,
-                                    EMPTY_RETRY_CEILING))
-                attempt_tokens = min(attempt_tokens * EMPTY_RETRY_MULTIPLIER,
-                                     EMPTY_RETRY_CEILING)
+            wider = min(attempt_tokens * EMPTY_RETRY_MULTIPLIER,
+                        EMPTY_RETRY_CEILING)
+            # A RETRY THAT CHANGES NOTHING IS NOT A RETRY.
+            #
+            # The escalation clamps at EMPTY_RETRY_CEILING, so a call
+            # that came back empty AT the ceiling used to be re-sent with
+            # the identical budget -- same request, same model, same
+            # everything. Measured on a live run: two steps, four calls,
+            # every one logged "retrying with max_tokens=8000", and each
+            # cost a full slow round trip. Between them they took 419 of
+            # that run's 613 seconds.
+            #
+            # Retrying is only worth it when the model is actually being
+            # given more room than the attempt that failed.
+            # ONE RETRY AT THE CEILING, NOT NONE AND NOT FOUR.
+            #
+            # This briefly required `wider > attempt_tokens`, on the
+            # reasoning that re-sending an identical request cannot
+            # produce a different answer. That reasoning is wrong for
+            # this failure: empty-at-length is stochastic, and the
+            # comment above records six live cases that succeeded on
+            # exactly such a retry.
+            #
+            # It broke live within the hour. _remember_floor is
+            # process-global, so once the agentic loop had escalated to
+            # the ceiling the WRITING stage started there too -- and
+            # with no widening possible it raised instead of retrying.
+            # Both specialists on a real run produced no output at all.
+            #
+            # So the bound is on COUNT, not on whether the budget grew.
+            at_ceiling = wider <= attempt_tokens
+            if attempt < (1 if at_ceiling else 2)                     and (finish == "length" or reasoning):
+                _remember_floor(self.model, wider)
+                attempt_tokens = wider
                 logger.warning(
                     "%s returned empty content (finish=%s, reasoning=%d chars) "
                     "— retrying with max_tokens=%d",
                     self.model, finish, len(reasoning), attempt_tokens,
                 )
                 continue
+            if finish == "length" or reasoning:
+                # At the ceiling and still empty. Say so plainly rather
+                # than spending another minute proving it again -- the
+                # orchestrator can then treat this as the infrastructure
+                # failure it is instead of a decision not to use tools.
+                logger.warning(
+                    "%s returned empty content at the ceiling "
+                    "(max_tokens=%d, finish=%s) — not retrying, the budget "
+                    "cannot go higher", self.model, attempt_tokens, finish,
+                )
 
             raise OpenAIAdapterError(
                 f"{self.model} returned an empty response "

@@ -100,7 +100,21 @@ def _build_adapter(model: str, use_mock: bool) -> Any:
     # name means the local daemon. No probe on this path -- the probe
     # below exists because Ollama historically returned errors as
     # content, and the OpenAI adapter raises.
-    if "/" in model or os.environ.get("MODEL_PROVIDER", "").strip().lower() == "openai":
+    # A BARE FIRST-PARTY NAME IS NOT AN OLLAMA MODEL.
+    #
+    # This tested only for a vendor prefix, so "deepseek-v4-flash" -- the
+    # product's own default -- fell through to the local daemon, which
+    # answered "model not found", which tripped the probe below, which
+    # fell back to the mock. A founder with a valid DeepSeek key in the
+    # environment was told to run `ollama serve`.
+    #
+    # adapter_pool already routes bare deepseek-* to api.deepseek.com and
+    # has done since the model migration; this branch simply never asked
+    # it. Two routing rules in one codebase is two things to keep
+    # agreeing, and they had stopped.
+    from backend.app.models.adapter_pool import _is_first_party_deepseek
+    if ("/" in model or _is_first_party_deepseek(model)
+            or os.environ.get("MODEL_PROVIDER", "").strip().lower() == "openai"):
         from backend.app.models.adapter_pool import get_adapter
         adapter = get_adapter(model)
         if adapter is not None:
