@@ -8,13 +8,23 @@ limits:
   max_total_agents: 50
   max_adaptive_cycles: 2
   max_agents_per_cycle: 3
-  max_spawn_rate_per_minute: 5
+  # Was 5 — RecursionGuard fail-safes (aborts the whole run) on this
+  # limit rather than throttling, and a single legitimate contract can
+  # produce 6+ deliverables. Confirmed live: a good 6-deliverable
+  # contract got killed on agent #6 at the old default. Raised as a
+  # stopgap; throttle-instead-of-abort semantics are Phase 5.
+  max_spawn_rate_per_minute: 20
   max_total_cost: 100.0
   max_refinement_depth: 3
   min_confidence_threshold: 0.6
   min_completeness_threshold: 0.7
   max_error_rate: 0.2
   max_dependency_depth: 10
+
+clarification:
+  enabled: true
+  max_questions: 5
+  min_objective_words: 25
 
 models:
   default_model: "gpt-4o-mini"

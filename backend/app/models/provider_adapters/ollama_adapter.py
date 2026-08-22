@@ -3,9 +3,53 @@
 
 import httpx
 import json
+import os
+import random
+import time
 from typing import Dict, Any, Optional
 from datetime import datetime
 import logging
+
+# Ollama cloud returns HTTP 500 intermittently and in bursts. Measured
+# during a live session: five short probes returned 200 while a real run
+# was failing, and prompt size was ruled out (1KB through 64KB all
+# returned 200). One specialist then took FOUR consecutive 500s across 36
+# seconds -- enough to exhaust the agentic loop's own retry and end its
+# tool use entirely, so run_python never ran and the founder was told
+# "no computation was ever run".
+#
+# Retrying HERE rather than at each call site covers every call in the
+# system -- synthesis, critique, task classification, evidence extraction
+# -- not just the loop's step call. Jittered because a team whose
+# specialists all back off in lockstep resends as a thundering herd,
+# which is a plausible contributor to the bursts.
+OLLAMA_HTTP_RETRIES = int(os.environ.get("OLLAMA_HTTP_RETRIES", "2"))
+OLLAMA_HTTP_RETRY_BACKOFF = float(os.environ.get("OLLAMA_HTTP_RETRY_BACKOFF", "2.0"))
+
+# An empty HTTP 200 is retried too, and retried DIFFERENTLY: with a
+# bigger token budget rather than the same request again.
+#
+# Measured live on 2026-08-15. A Quant Analyst's agentic loop finished
+# cleanly -- five steps, run_python among them, real numbers in hand --
+# and then the stage that WRITES the deliverable died on:
+#
+#   Single-call stage failed: Ollama returned an empty response
+#   (done_reason='stop', eval_count=1279, thinking=1834 chars)
+#
+# The specialist was reported as "produced no output at all", which reads
+# as the AI refusing the work. It had done the work; it could not say so.
+# Two more the same run, at 400 and 300 token budgets.
+#
+# Retrying the identical request is close to useless here: the cause is
+# that reasoning consumed `num_predict` before `response` got any, so the
+# same budget reproduces the same outcome. Growing it is the fix that
+# matches the cause. Multiplicative because the shortfall is unknown --
+# the budget may be 2x too small or 10x, and additive steps would burn
+# every retry on the low end.
+OLLAMA_EMPTY_RETRIES = int(os.environ.get("OLLAMA_EMPTY_RETRIES", "2"))
+OLLAMA_EMPTY_TOKEN_GROWTH = float(os.environ.get("OLLAMA_EMPTY_TOKEN_GROWTH", "3.0"))
+OLLAMA_EMPTY_TOKEN_CEILING = int(os.environ.get("OLLAMA_EMPTY_TOKEN_CEILING", "8000"))
+
 
 # Simple error classes for standalone operation
 class ErrorCode:
@@ -20,25 +64,44 @@ class OllamaAdapterError(Exception):
         self.context = context or {}
 
 class OllamaAdapter:
-    """Adapter for Ollama local model serving"""
-    
-    def __init__(self, base_url: str = "http://localhost:11434", model: str = "llama3"):
+    """Adapter for Ollama local model serving OR Ollama Cloud API.
+
+    When api_key is set (Ollama Cloud), attaches Authorization header
+    to every request. Cloud + local expose the same /api/generate
+    endpoint shape, so nothing else has to change."""
+
+    def __init__(
+        self,
+        base_url: str = "http://localhost:11434",
+        model: str = "llama3",
+        api_key: Optional[str] = None,
+    ):
         """
-        Initialize Ollama adapter
-        
         Args:
-            base_url: Ollama server URL
-            model: Model name to use
+            base_url: Ollama server URL. Local daemon by default;
+                      set to https://ollama.com for Ollama Cloud API.
+            model:    Model name.
+            api_key:  Ollama Cloud API key. Local daemon needs none.
         """
         self.base_url = base_url.rstrip("/")
         self.model = model
-        self.client = httpx.Client(timeout=300.0)
-        
-        # Test connection silently
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        self.client = httpx.Client(timeout=300.0, headers=headers)
+
+        # Probe the server once so a misconfigured host is visible in the
+        # logs at construction rather than surfacing later as a confusing
+        # mid-run failure. Deliberately non-fatal — the daemon may still
+        # be starting — but no longer a bare `except: pass`, which hid
+        # even KeyboardInterrupt.
         try:
             self.client.get(f"{self.base_url}/api/tags", timeout=5.0)
-        except:
-            pass  # Connection test fails silently
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger(__name__).warning(
+                "Ollama not reachable at %s (%s) — calls will fail until it is",
+                self.base_url, exc,
+            )
     
     def chat_completion(self, prompt: str, **kwargs) -> str:
         """
@@ -61,28 +124,148 @@ class OllamaAdapter:
                 "model": self.model,
                 "prompt": prompt,
                 "stream": False,
+                # Forces valid-JSON-constrained decoding. Every caller in
+                # this codebase asks for JSON back; without this, small
+                # models like phi3 free-generate near-JSON and break
+                # unpredictably (same prompt, run twice, different result).
+                "format": kwargs.get("format", "json"),
                 "options": {
                     "temperature": temperature,
                     "num_predict": max_tokens
                 }
             }
             
-            # Make API call
-            response = self.client.post(
-                f"{self.base_url}/api/generate",
-                json=payload,
-                timeout=kwargs.get("timeout", 300.0)
-            )
-            
-            # Parse response
-            if response.status_code == 200:
+            log = logging.getLogger(__name__)
+            attempt_tokens = max_tokens
+            empty_attempts = 0
+
+            # Outer loop retries an EMPTY 200 with a larger budget; the
+            # inner loop retries a transient 5xx with the same request.
+            # Two different faults, two different remedies.
+            while True:
+                payload["options"]["num_predict"] = attempt_tokens
+
+                # Transient 5xx are retried here so a burst of backend
+                # errors doesn't surface as a content failure; every other
+                # status falls through to the handling below unchanged.
+                response = None
+                for _attempt in range(OLLAMA_HTTP_RETRIES + 1):
+                    response = self.client.post(
+                        f"{self.base_url}/api/generate",
+                        json=payload,
+                        timeout=kwargs.get("timeout", 300.0)
+                    )
+                    if response.status_code < 500:
+                        break
+                    if _attempt < OLLAMA_HTTP_RETRIES:
+                        delay = OLLAMA_HTTP_RETRY_BACKOFF * (2 ** _attempt)
+                        delay += random.uniform(0, delay * 0.25)  # jitter
+                        log.warning(
+                            "Ollama HTTP %s (attempt %d/%d), retrying in %.1fs",
+                            response.status_code, _attempt + 1,
+                            OLLAMA_HTTP_RETRIES + 1, delay,
+                        )
+                        time.sleep(delay)
+
+                if response.status_code != 200:
+                    # RAISE, never return the error as if it were the
+                    # model's answer. Returning it — which this did —
+                    # means every caller treats a backend failure as valid
+                    # content, and the failure travels instead of
+                    # stopping. Observed for real: a run shipped three 502
+                    # bodies as the founder's deliverable and was still
+                    # marked done, and a specialist fed
+                    # 'Error: 502 - {"error":"Post \"https://ollama.com...'
+                    # into a web search as its query. Callers that can
+                    # genuinely continue without a model already wrap this
+                    # in try/except (see
+                    # dynamic_employee._needs_external_lookup and
+                    # _search_query_for); the ones that can't fail loudly.
+                    raise OllamaAdapterError(
+                        f"Ollama returned HTTP {response.status_code}: {response.text[:300]}",
+                        error_code=ErrorCode.MODEL_CALL_FAILED,
+                        context={"status_code": response.status_code, "model": self.model},
+                    )
+
                 response_data = response.json()
-                return response_data.get("response", "No response generated")
-            else:
-                return f"Error: {response.status_code} - {response.text}"
-                
-        except Exception as e:
-            return f"Connection error: {str(e)}. Using mock response."
+                text = response_data.get("response") or ""
+                if text.strip():
+                    return text
+
+                # An EMPTY 200 is a failure wearing a success's clothes,
+                # and it is the normal outcome for a thinking model whose
+                # reasoning outgrew the token budget: Ollama spends
+                # `num_predict` on `thinking` first, then has nothing left
+                # for `response`. Found while running the tool-selection
+                # diagnostic on nemotron-3-super — every call came back ""
+                # and the run would have reported "the model never called
+                # run_python", the exact WRONG conclusion: it never said
+                # anything at all.
+                thinking = response_data.get("thinking") or ""
+                reason = response_data.get("done_reason")
+
+                # Grow the budget and try again. Note this fires for
+                # done_reason='stop' as well as 'length' — the live
+                # failure that motivated it reported 'stop' with 1834
+                # chars of thinking, so keying only on 'length' would have
+                # missed the case this exists to fix.
+                grown = min(int(attempt_tokens * OLLAMA_EMPTY_TOKEN_GROWTH),
+                            OLLAMA_EMPTY_TOKEN_CEILING)
+                if empty_attempts < OLLAMA_EMPTY_RETRIES and grown > attempt_tokens:
+                    empty_attempts += 1
+                    log.warning(
+                        "Ollama returned an empty response (done_reason=%r, "
+                        "thinking=%d chars) on a %d-token budget — retrying "
+                        "with %d (attempt %d/%d)",
+                        reason, len(thinking), attempt_tokens, grown,
+                        empty_attempts, OLLAMA_EMPTY_RETRIES,
+                    )
+                    attempt_tokens = grown
+                    continue
+
+                # Out of retries, or already at the ceiling. Raise —
+                # returning "" lets a backend condition travel as content,
+                # and an empty string is worse than an error string
+                # because nothing downstream can tell something went wrong.
+                detail = (
+                    f"empty response (done_reason={reason!r}, "
+                    f"eval_count={response_data.get('eval_count')}, "
+                    f"thinking={len(thinking)} chars)"
+                )
+                if thinking:
+                    detail += (
+                        f" — the model's reasoning consumed the whole "
+                        f"num_predict budget, retried up to {attempt_tokens} "
+                        f"tokens (from {max_tokens}) and still got nothing "
+                        f"back. Use a model that reasons less, or raise "
+                        f"OLLAMA_EMPTY_TOKEN_CEILING."
+                    )
+                raise OllamaAdapterError(
+                    f"Ollama returned an {detail}",
+                    error_code=ErrorCode.MODEL_CALL_FAILED,
+                    context={
+                        "model": self.model,
+                        "done_reason": reason,
+                        "max_tokens": max_tokens,
+                        "final_num_predict": attempt_tokens,
+                        "thinking_chars": len(thinking),
+                    },
+                )
+
+        except OllamaAdapterError:
+            raise
+        except httpx.TimeoutException as exc:
+            raise OllamaAdapterError(
+                f"Ollama timed out after {kwargs.get('timeout', 300.0)}s: {exc}",
+                error_code=ErrorCode.MODEL_TIMEOUT,
+                context={"model": self.model},
+            ) from exc
+        except Exception as exc:
+            raise OllamaAdapterError(
+                f"Ollama call failed: {exc}",
+                error_code=ErrorCode.MODEL_CALL_FAILED,
+                context={"model": self.model, "base_url": self.base_url},
+            ) from exc
     
     def get_model_info(self) -> Dict[str, Any]:
         """Get information about the configured model"""

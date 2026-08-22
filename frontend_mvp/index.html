@@ -1,0 +1,1270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Vision AI — The AI co-founder, hired in 90 seconds.</title>
+<meta name="description" content="Vision AI is an AI co-founder for solo founders. Spins up a Company of AI employees — Supervisor plus specialists — that actually do the work with a founder-approval gate on every irreversible action. No fabricated evidence." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    /* Palette taken straight from the app's dark theme so the marketing
+       page and the playground read as one product. Crimson accent =
+       app's --accent-2 (#b83043) for a slightly brighter feel on the
+       marketing hero, with the app's --accent (#8b1e2f) for hovers. */
+    --bg: #0c0c0c;
+    --surface: #191919;
+    --surface-2: #1e1e1e;
+    --surface-3: #262626;
+    --border: #2a2a2a;
+    --border-strong: #3a3a3a;
+    --text: #f5f5f4;
+    --text-dim: #a8a29e;
+    --text-muted: #78716c;
+    --accent: #b83043;
+    --accent-dim: #8b1e2f;
+    --accent-soft: rgba(139, 30, 47, 0.16);
+    --accent-glow: rgba(184, 48, 67, 0.42);
+    --success: #7dd3fc;
+    --warn: #eab308;
+    --serif: 'Instrument Serif', 'New York', Georgia, serif;
+    --sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+  }
+  *,*::before,*::after { box-sizing: border-box; }
+  html,body {
+    margin:0; padding:0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow-x: hidden;
+  }
+  ::selection { background: var(--accent); color: var(--bg); }
+  a { color: inherit; text-decoration: none; }
+  button { font-family: inherit; cursor: pointer; }
+
+  /* ================ NAV ================ */
+  nav.top {
+    position: fixed; top: 0; left: 0; right: 0;
+    z-index: 50;
+    padding: 18px 40px;
+    display: flex; align-items: center; justify-content: space-between;
+    transition: background .3s ease, backdrop-filter .3s ease, border-color .3s ease;
+    border-bottom: 1px solid transparent;
+  }
+  nav.top.scrolled {
+    background: rgba(10,10,11,0.78);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    border-bottom: 1px solid var(--border);
+  }
+  nav .brand {
+    font-family: var(--serif);
+    font-size: 22px;
+    letter-spacing: -0.01em;
+    display: flex; align-items: center; gap: 10px;
+  }
+  nav .brand-dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 12px var(--accent-glow);
+    animation: pulse 2.4s ease-in-out infinite;
+    flex: none;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .6; transform: scale(.85); } }
+  nav .links { display: flex; gap: 32px; font-size: 14px; color: var(--text-dim); }
+  nav .links a:hover { color: var(--text); }
+  nav .cta {
+    background: var(--text); color: var(--bg);
+    padding: 9px 18px; border-radius: 999px;
+    font-size: 14px; font-weight: 500;
+    border: none;
+    transition: transform .15s ease, background .15s ease;
+  }
+  nav .cta:hover { transform: translateY(-1px); background: #fff; }
+  @media (max-width: 720px) {
+    nav.top { padding: 14px 20px; }
+    nav .links { display: none; }
+  }
+
+  /* ================ HERO ================ */
+  section.hero {
+    min-height: 100vh;
+    display: flex; flex-direction: column; justify-content: center;
+    padding: 120px 40px 60px;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero-grain {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(1200px 600px at 20% -10%, var(--accent-soft), transparent 60%),
+      radial-gradient(900px 500px at 90% 110%, rgba(125,190,122,0.06), transparent 60%);
+    pointer-events: none;
+  }
+  .hero-wrap {
+    max-width: 1200px; margin: 0 auto; width: 100%;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 60px;
+    align-items: center;
+    position: relative; z-index: 1;
+  }
+  @media (max-width: 960px) {
+    .hero-wrap { grid-template-columns: 1fr; gap: 48px; }
+  }
+  .hero-eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 12px;
+    color: var(--text-dim);
+    padding: 6px 12px; border: 1px solid var(--border);
+    border-radius: 999px;
+    margin-bottom: 28px;
+  }
+  .hero-eyebrow .live-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--success); box-shadow: 0 0 8px rgba(125,190,122,0.6);
+  }
+  h1.headline {
+    font-family: var(--serif);
+    font-weight: 400;
+    font-size: clamp(48px, 6.8vw, 92px);
+    line-height: 0.98;
+    letter-spacing: -0.028em;
+    margin: 0 0 28px;
+    color: var(--text);
+  }
+  h1.headline .em {
+    font-style: italic;
+    color: var(--accent);
+    position: relative;
+    white-space: nowrap;
+  }
+  h1.headline .em::after {
+    content: '';
+    position: absolute; left: 0; bottom: 6px;
+    width: 100%; height: 8px;
+    background: var(--accent-soft);
+    z-index: -1;
+  }
+  .hero-lede {
+    font-size: 18px; color: var(--text-dim); max-width: 480px;
+    margin-bottom: 40px;
+  }
+  .hero-lede em { color: var(--text); font-style: normal; font-weight: 500; }
+  .hero-actions { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .btn-primary {
+    background: var(--text); color: var(--bg);
+    padding: 14px 28px; border-radius: 999px;
+    font-size: 15px; font-weight: 500;
+    border: none;
+    transition: transform .15s ease, background .15s ease;
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .btn-primary:hover { transform: translateY(-2px); background: #fff; }
+  .btn-primary .arrow { transition: transform .2s ease; }
+  .btn-primary:hover .arrow { transform: translateX(3px); }
+  .btn-ghost {
+    background: transparent; color: var(--text);
+    padding: 14px 22px; border-radius: 999px;
+    font-size: 15px; font-weight: 500;
+    border: 1px solid var(--border-strong);
+    transition: background .15s ease, border-color .15s ease;
+  }
+  .btn-ghost:hover { background: var(--surface); border-color: var(--accent); }
+  .hero-meta {
+    margin-top: 44px; padding-top: 28px;
+    border-top: 1px solid var(--border);
+    display: flex; gap: 40px;
+    font-family: var(--mono); font-size: 12px; color: var(--text-muted);
+  }
+  .hero-meta strong { color: var(--text); font-weight: 500; font-family: var(--sans); font-size: 15px; display: block; margin-top: 4px; }
+
+  /* ================ HERO DEMO (right side) ================ */
+  .demo-frame {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px;
+    box-shadow: 0 40px 80px -20px rgba(0,0,0,0.5), 0 0 60px -20px var(--accent-glow);
+    position: relative;
+    min-height: 480px;
+  }
+  .demo-frame::before {
+    content: ''; position: absolute; inset: -1px; border-radius: 16px;
+    background: linear-gradient(135deg, var(--accent-soft), transparent 40%);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+    padding: 1px;
+    pointer-events: none;
+  }
+  .demo-header {
+    display: flex; align-items: center; gap: 8px;
+    padding-bottom: 16px; border-bottom: 1px solid var(--border);
+    margin-bottom: 20px;
+  }
+  .demo-dots { display: flex; gap: 6px; }
+  .demo-dots span { width: 10px; height: 10px; border-radius: 50%; background: var(--border-strong); }
+  .demo-title { font-family: var(--mono); font-size: 12px; color: var(--text-muted); margin-left: auto; }
+  .prompt-line {
+    font-family: var(--mono); font-size: 13px;
+    color: var(--text-dim);
+    padding: 12px 14px;
+    background: var(--surface-2);
+    border-radius: 10px;
+    min-height: 44px;
+    display: flex; align-items: center;
+    margin-bottom: 24px;
+  }
+  .prompt-line .caret {
+    display: inline-block; width: 7px; height: 15px;
+    background: var(--accent); margin-left: 2px;
+    animation: blink 1s steps(1) infinite;
+    vertical-align: -2px;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+  .prompt-line .prefix { color: var(--accent); margin-right: 8px; }
+
+  /* ===== Tree viz — SVG branches + absolute-positioned HTML nodes ===== */
+  .tree-viz {
+    position: relative;
+    width: 100%; height: 340px;
+    padding: 4px 0;
+  }
+  .tree-viz svg.tree-lines {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    overflow: visible;
+    pointer-events: none;
+  }
+  .tree-lines .branch {
+    fill: none;
+    stroke: var(--border-strong);
+    stroke-width: 1.4;
+    stroke-linecap: round;
+    /* Keep the stroke a constant pixel width even though the SVG stretches
+       non-uniformly to fill the container. Without this, a wide/short
+       viewbox would draw an oval-shaped stroke. */
+    vector-effect: non-scaling-stroke;
+    stroke-dasharray: 400;
+    stroke-dashoffset: 400;
+    transition: stroke-dashoffset .55s cubic-bezier(.35,.75,.4,1), stroke .35s ease, stroke-width .35s ease;
+  }
+  .tree-lines .branch.drawn { stroke-dashoffset: 0; }
+  .tree-lines .branch.active { stroke: var(--accent); stroke-width: 1.8; }
+  .tree-lines .branch.done   { stroke: var(--accent-dim); stroke-width: 1.4; }
+
+  .tree-node {
+    position: absolute;
+    transform: translate(-50%, -50%) scale(0.85);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 8px 14px;
+    font-size: 12px;
+    display: inline-flex; align-items: center; gap: 8px;
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity .45s ease, transform .45s cubic-bezier(.35,.75,.4,1),
+                border-color .3s ease, background .3s ease, box-shadow .3s ease;
+  }
+  .tree-node.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  .tree-node.root {
+    background: linear-gradient(135deg, var(--accent-dim), var(--accent));
+    border-color: var(--accent);
+    color: #fff; font-weight: 500;
+    box-shadow: 0 8px 24px -8px var(--accent-glow);
+    padding: 10px 18px;
+    font-size: 13px;
+  }
+  .tree-node.working {
+    border-color: var(--accent);
+    background: rgba(184, 48, 67, 0.08);
+    box-shadow: 0 0 0 4px rgba(184, 48, 67, 0.06);
+  }
+  .tree-node.done {
+    border-color: var(--accent-dim);
+  }
+  .tree-node .role-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--text-muted); flex: none;
+  }
+  .tree-node.root .role-dot { background: #fff; box-shadow: 0 0 8px rgba(255,255,255,0.6); }
+  .tree-node.working .role-dot {
+    background: var(--accent);
+    box-shadow: 0 0 6px var(--accent-glow);
+    animation: pulse 1s infinite;
+  }
+  .tree-node.done .role-dot { background: var(--accent-dim); }
+  .tree-node .role-name { font-weight: 500; }
+  .tree-node .role-tag {
+    color: var(--text-muted); font-family: var(--mono); font-size: 10px;
+  }
+  .tree-node.root .role-tag { color: rgba(255,255,255,0.75); }
+
+  .deliverable-toast {
+    position: absolute; bottom: -12px; right: -12px;
+    background: var(--surface-2);
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 12px;
+    display: flex; align-items: center; gap: 10px;
+    box-shadow: 0 12px 28px rgba(0,0,0,0.55), 0 0 24px -8px var(--accent-glow);
+    opacity: 0; transform: translateY(10px) scale(0.9);
+    transition: opacity .4s ease, transform .4s ease;
+  }
+  .deliverable-toast.show { opacity: 1; transform: translateY(0) scale(1); }
+  .deliverable-toast .check {
+    width: 16px; height: 16px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent-dim), var(--accent));
+    color: #fff; display: grid; place-items: center; font-size: 11px; font-weight: 700;
+  }
+
+  /* ================ SECTION HEADS ================ */
+  section { padding: 120px 40px; position: relative; }
+  .container { max-width: 1200px; margin: 0 auto; }
+  .section-eyebrow {
+    font-family: var(--mono); font-size: 12px; color: var(--accent);
+    text-transform: uppercase; letter-spacing: 0.12em;
+    margin-bottom: 20px;
+  }
+  h2.section-h {
+    font-family: var(--serif);
+    font-weight: 400;
+    font-size: clamp(38px, 4.6vw, 62px);
+    line-height: 1.04;
+    letter-spacing: -0.025em;
+    margin: 0 0 24px;
+    max-width: 800px;
+  }
+  h2.section-h em { color: var(--accent); font-style: italic; }
+  .section-lede { font-size: 18px; color: var(--text-dim); max-width: 620px; margin-bottom: 60px; }
+
+  /* ================ BENTO ================ */
+  .bento {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    grid-auto-rows: 220px;
+    gap: 16px;
+  }
+  @media (max-width: 960px) {
+    .bento { grid-template-columns: repeat(2, 1fr); grid-auto-rows: 200px; }
+  }
+  @media (max-width: 560px) {
+    .bento { grid-template-columns: 1fr; }
+  }
+  .bento .cell {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color .2s ease, transform .2s ease;
+    display: flex; flex-direction: column;
+  }
+  .bento .cell:hover { border-color: var(--border-strong); transform: translateY(-2px); }
+  .cell .cell-label {
+    font-family: var(--mono); font-size: 11px; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    margin-bottom: 12px;
+  }
+  .cell .cell-h {
+    font-family: var(--serif); font-size: 26px; line-height: 1.15;
+    letter-spacing: -0.02em; margin: 0 0 10px;
+  }
+  .cell .cell-p { font-size: 14px; color: var(--text-dim); }
+  .cell.wide { grid-column: span 2; }
+  .cell.tall { grid-row: span 2; }
+  .cell.accent { background: linear-gradient(155deg, var(--surface), var(--surface-2)); }
+
+  /* verification card — crimson signals "caught + rewritten" */
+  .verify-badge {
+    margin-top: auto;
+    padding: 12px; border-radius: 10px;
+    background: var(--accent-soft);
+    border: 1px solid rgba(184, 48, 67, 0.35);
+    font-family: var(--mono); font-size: 12px; color: var(--accent);
+    display: flex; align-items: flex-start; gap: 10px;
+  }
+  .verify-badge .flag {
+    padding: 2px 7px; border-radius: 4px;
+    background: rgba(184, 48, 67, 0.24); color: #ffb3bf;
+    font-weight: 600; letter-spacing: 0.05em; flex: none;
+  }
+  .strike-line {
+    text-decoration: line-through; color: var(--text-muted);
+    display: block; margin-top: 6px;
+  }
+  .replaced-line { color: var(--text-dim); display: block; margin-top: 4px; }
+
+  /* approval card */
+  .approval-row {
+    margin-top: auto;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .approval-row .a-icon {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--warn); color: var(--bg);
+    display: grid; place-items: center; font-weight: 700; font-size: 14px;
+  }
+  .approval-row .a-body { flex: 1; }
+  .approval-row .a-title { font-size: 13px; font-weight: 500; }
+  .approval-row .a-sub { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+  .approval-row .a-actions { display: flex; gap: 6px; }
+  .approval-row .a-btn {
+    padding: 5px 10px; border-radius: 6px; font-size: 11px;
+    background: transparent; border: 1px solid var(--border-strong); color: var(--text-dim);
+  }
+  .approval-row .a-btn.primary { background: var(--text); color: var(--bg); border-color: var(--text); }
+
+  /* memory / hierarchy */
+  .hierarchy-list { margin-top: auto; font-family: var(--mono); font-size: 12px; line-height: 1.9; color: var(--text-dim); }
+  .hierarchy-list .arr { color: var(--accent); }
+
+  /* ================ LIVE DEMOS ================ */
+  .demos-scroll {
+    display: flex; gap: 20px;
+    overflow-x: auto;
+    padding: 8px 40px 20px;
+    margin: 0 -40px;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+  }
+  .demos-scroll::-webkit-scrollbar { display: none; }
+  .demo-card {
+    flex: 0 0 380px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+    scroll-snap-align: start;
+    transition: border-color .2s ease, transform .2s ease;
+    display: flex; flex-direction: column;
+    min-height: 340px;
+  }
+  .demo-card:hover { border-color: var(--accent); transform: translateY(-3px); }
+  .demo-card .dc-head {
+    display: flex; align-items: center; gap: 10px;
+    padding-bottom: 12px; border-bottom: 1px solid var(--border); margin-bottom: 14px;
+  }
+  .demo-card .dc-tag {
+    padding: 3px 8px; border-radius: 5px; font-family: var(--mono); font-size: 10px;
+    background: var(--accent-soft); color: var(--accent);
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  .demo-card .dc-title { font-weight: 500; font-size: 14px; }
+  .demo-card .dc-prompt {
+    font-family: var(--mono); font-size: 11px; color: var(--text-muted);
+    padding: 8px 10px; background: var(--surface-2); border-radius: 6px;
+    margin-bottom: 14px; border-left: 2px solid var(--accent);
+  }
+  .demo-card .dc-body { font-size: 13px; color: var(--text-dim); line-height: 1.6; flex: 1; }
+  .demo-card .dc-body strong { color: var(--text); font-weight: 500; }
+  .demo-card .dc-persona { padding: 10px 0; border-top: 1px solid var(--border); }
+  .demo-card .dc-persona:first-child { border-top: none; padding-top: 0; }
+  .demo-card .dc-persona-name { font-family: var(--serif); font-size: 16px; color: var(--text); font-style: italic; }
+  .demo-card .dc-persona-meta { font-family: var(--mono); font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+  .demo-card .dc-foot {
+    margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--mono); font-size: 10px; color: var(--text-muted);
+  }
+  .demo-card .dc-foot .dot { width: 4px; height: 4px; border-radius: 50%; background: var(--success); }
+
+  /* ================ BEFORE/AFTER ================ */
+  .before-after {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr 1fr;
+    gap: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  .ba-head {
+    padding: 20px 24px;
+    background: var(--surface-2);
+    font-family: var(--mono); font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.12em;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+  }
+  .ba-head:nth-child(3) { color: var(--accent); }
+  .ba-row { padding: 22px 24px; border-bottom: 1px solid var(--border); font-size: 15px; }
+  .ba-row.job { font-family: var(--serif); font-size: 22px; font-style: italic; color: var(--text); }
+  .ba-row.old { color: var(--text-muted); }
+  .ba-row.new { color: var(--text); }
+  .ba-row:last-child, .ba-row:nth-last-child(-n+3) { border-bottom: none; }
+  @media (max-width: 720px) {
+    .before-after { grid-template-columns: 1fr; }
+    .ba-head { display: none; }
+    .ba-head:first-child { display: block; }
+    .ba-row.job { padding-top: 24px; }
+    .ba-row.old::before { content: 'Manual: '; color: var(--text-muted); font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; display: block; margin-bottom: 4px; }
+    .ba-row.new::before { content: 'Vision AI: '; color: var(--accent); font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; display: block; margin-bottom: 4px; }
+  }
+
+  /* ================ STEPS ================ */
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  @media (max-width: 800px) { .steps { grid-template-columns: 1fr; } }
+  .step {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 32px 28px;
+    position: relative;
+  }
+  .step-num {
+    font-family: var(--serif); font-size: 60px; font-style: italic;
+    color: var(--accent); line-height: 1; margin-bottom: 16px;
+  }
+  .step h3 { font-family: var(--serif); font-size: 24px; font-weight: 400; margin: 0 0 10px; letter-spacing: -0.02em; }
+  .step p { color: var(--text-dim); font-size: 14px; margin: 0; }
+
+  /* ================ PRICING ================ */
+  .price-card {
+    max-width: 480px; margin: 0 auto;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: 20px;
+    padding: 40px;
+    text-align: left;
+    position: relative;
+    box-shadow: 0 40px 80px -30px rgba(233,112,78,0.2);
+  }
+  .price-card::before {
+    content: '';
+    position: absolute; inset: -1px; border-radius: 20px;
+    background: linear-gradient(135deg, var(--accent), transparent 60%);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+    padding: 1px; pointer-events: none;
+  }
+  .price-badge {
+    display: inline-block;
+    padding: 4px 10px; border-radius: 5px;
+    background: var(--accent-soft); color: var(--accent);
+    font-family: var(--mono); font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.1em;
+    margin-bottom: 20px;
+  }
+  .price-amount { font-family: var(--serif); font-size: 72px; line-height: 1; color: var(--text); }
+  .price-per { color: var(--text-muted); font-family: var(--mono); font-size: 14px; margin-left: 4px; }
+  .price-lede { color: var(--text-dim); margin: 12px 0 24px; }
+  .price-list { list-style: none; padding: 0; margin: 0 0 28px; font-size: 14px; }
+  .price-list li { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; color: var(--text-dim); border-bottom: 1px solid var(--border); }
+  .price-list li:last-child { border-bottom: none; }
+  .price-list .tick { color: var(--accent); font-weight: 700; flex: none; }
+  .price-list li strong { color: var(--text); font-weight: 500; }
+  .price-fine { font-family: var(--mono); font-size: 11px; color: var(--text-muted); text-align: center; margin-top: 20px; }
+
+  /* ================ FAQ ================ */
+  .faq { max-width: 800px; margin: 0 auto; }
+  .faq-item {
+    border-bottom: 1px solid var(--border);
+    padding: 24px 0;
+  }
+  .faq-q {
+    font-family: var(--serif); font-size: 22px; letter-spacing: -0.015em;
+    cursor: pointer; display: flex; justify-content: space-between; align-items: center;
+    gap: 20px;
+    list-style: none;
+  }
+  .faq-q::-webkit-details-marker { display: none; }
+  .faq-q .plus {
+    color: var(--accent); font-family: var(--serif); font-size: 28px; line-height: 1;
+    transition: transform .3s ease;
+    flex: none;
+  }
+  details[open] .faq-q .plus { transform: rotate(45deg); }
+  .faq-a { padding-top: 14px; color: var(--text-dim); font-size: 15px; line-height: 1.65; }
+
+  /* ================ FOOTER ================ */
+  footer {
+    padding: 60px 40px 40px;
+    border-top: 1px solid var(--border);
+    text-align: center;
+  }
+  footer .brand-big {
+    font-family: var(--serif); font-size: 32px; letter-spacing: -0.02em;
+    margin-bottom: 12px;
+  }
+  footer p { color: var(--text-muted); font-family: var(--mono); font-size: 12px; }
+
+  /* ================ FINAL CTA ================ */
+  section.final-cta {
+    text-align: center;
+    padding: 140px 40px;
+    background: radial-gradient(800px 400px at 50% 50%, var(--accent-soft), transparent 70%);
+  }
+  section.final-cta h2 { max-width: 900px; margin-left: auto; margin-right: auto; }
+  .final-cta .actions { justify-content: center; margin-top: 40px; }
+</style>
+</head>
+<body>
+
+<nav class="top" id="topnav">
+  <a href="/" class="brand">
+    <span class="brand-dot"></span>
+    <span>Vision AI</span>
+  </a>
+  <div class="links">
+    <a href="#how">How it works</a>
+    <a href="#work">The work</a>
+    <a href="#pricing">Pricing</a>
+    <a href="#faq">FAQ</a>
+  </div>
+  <a href="/app/" class="cta">Open the app</a>
+</nav>
+
+<!-- ================================ HERO ================================ -->
+<section class="hero">
+  <div class="hero-grain"></div>
+  <div class="hero-wrap">
+
+    <div class="hero-copy">
+      <div class="hero-eyebrow">
+        <span class="live-dot"></span>
+        <span>Founding 100 · seats open</span>
+      </div>
+      <h1 class="headline">
+        The AI <span class="em">co-founder</span>,<br />
+        hired in 90 seconds.
+      </h1>
+      <p class="hero-lede">
+        Vision AI spins up a <em>Company</em> of AI employees — a Supervisor plus specialists — that actually do your work. Draft the deck, write the outreach, build the spreadsheet. With verification and a founder-approval gate on every irreversible action.
+      </p>
+      <div class="hero-actions">
+        <a href="/app/" class="btn-primary">
+          Start building free
+          <span class="arrow">→</span>
+        </a>
+        <a href="#work" class="btn-ghost">See it work</a>
+      </div>
+      <div class="hero-meta">
+        <div>
+          Approval-gated
+          <strong>Every irreversible action</strong>
+        </div>
+        <div>
+          No fabricated evidence
+          <strong>Claims cite a source</strong>
+        </div>
+        <div>
+          Flat pricing
+          <strong>$29/mo · unlimited</strong>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: animated demo -->
+    <div class="demo-frame">
+      <div class="demo-header">
+        <div class="demo-dots"><span></span><span></span><span></span></div>
+        <div class="demo-title" id="demo-title">Vision AI · live</div>
+      </div>
+      <div class="prompt-line">
+        <span class="prefix">you</span>
+        <span id="typed-prompt"></span><span class="caret"></span>
+      </div>
+      <div class="tree-viz" id="tree-viz">
+        <svg class="tree-lines" id="tree-lines" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="deliverable-toast" id="deliverable-toast">
+        <span class="check">✓</span>
+        <span id="deliverable-text">Deliverable ready</span>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ================================ BENTO ================================ -->
+<section id="how">
+  <div class="container">
+    <div class="section-eyebrow">What Vision AI is</div>
+    <h2 class="section-h">A team, not a chatbot. <em>An org that ships work.</em></h2>
+    <p class="section-lede">
+      Every AI startup gives you a text box. Vision AI gives you a Company: a CEO on top, Supervisors running Units, specialists doing the work. Talk to the CEO. The org handles the rest.
+    </p>
+
+    <div class="bento">
+      <div class="cell wide">
+        <div class="cell-label">Hierarchy · locked vocabulary</div>
+        <h3 class="cell-h">Employee → Team → Unit → Company.</h3>
+        <p class="cell-p">One CEO, three Units, twelve specialists — assembled from one prompt. Fire and rehire from the chat.</p>
+        <div class="hierarchy-list">
+          Company &nbsp;<span class="arr">→</span>&nbsp; Fundraising Ops<br />
+          &nbsp;&nbsp;└ Unit &nbsp;<span class="arr">→</span>&nbsp; Content · Investor Research · Legal Ops<br />
+          &nbsp;&nbsp;&nbsp;&nbsp;└ Employee &nbsp;<span class="arr">→</span>&nbsp; Copywriter · Analyst · Counsel
+        </div>
+      </div>
+
+      <div class="cell accent">
+        <div class="cell-label">Trust layer</div>
+        <h3 class="cell-h">Zero fabricated evidence.</h3>
+        <p class="cell-p">Every stat cites a source. Made-up numbers get caught and rewritten before you see them.</p>
+        <div class="verify-badge">
+          <span class="flag">FLAGGED</span>
+          <span>
+            <span class="strike-line">"Founders spend 47% of time on ops"</span>
+            <span class="replaced-line">→ removed · no verifiable source</span>
+          </span>
+        </div>
+      </div>
+
+      <div class="cell">
+        <div class="cell-label">Approval gate</div>
+        <h3 class="cell-h">Nothing sends without your tap.</h3>
+        <p class="cell-p">Emails drafted, docs generated, files posted — all queued until you say yes.</p>
+        <div class="approval-row">
+          <div class="a-icon">!</div>
+          <div class="a-body">
+            <div class="a-title">Send outreach to 12 investors</div>
+            <div class="a-sub">queued · awaiting approval</div>
+          </div>
+          <div class="a-actions">
+            <button class="a-btn">Skip</button>
+            <button class="a-btn primary">Send</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="cell wide">
+        <div class="cell-label">Cross-turn memory</div>
+        <h3 class="cell-h">It remembers what you already said.</h3>
+        <p class="cell-p">Answers to earlier questions stick. Prior deliverables stay in context. "Give me a script for the Finance-Free Friday video" just works — no re-explaining what it is.</p>
+        <div class="hierarchy-list" style="margin-top:16px;">
+          <span style="color:var(--accent)">you:</span> give me a script for that video idea<br />
+          <span style="color:var(--success)">Vision AI:</span> On it — the Finance-Free Friday one. 60s script for solo founders on LinkedIn, in your voice.
+        </div>
+      </div>
+
+      <div class="cell">
+        <div class="cell-label">Real actions</div>
+        <h3 class="cell-h">Finished files. Not "here's how you would…"</h3>
+        <p class="cell-p">.pptx, .docx, .xlsx — actually generated, downloadable, opens in your app of choice.</p>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ================================ LIVE DEMOS ================================ -->
+<section id="work">
+  <div class="container">
+    <div class="section-eyebrow">The work · live examples</div>
+    <h2 class="section-h">Real deliverables, <em>not screenshots of prompts.</em></h2>
+    <p class="section-lede">
+      Five things Vision AI actually shipped this week for founders using it now. Every one is a finished file, not a stub.
+    </p>
+  </div>
+  <div class="demos-scroll">
+
+    <div class="demo-card">
+      <div class="dc-head">
+        <span class="dc-tag">Research</span>
+        <span class="dc-title">Investor personas</span>
+      </div>
+      <div class="dc-prompt">"do audience research on our product, create personas"</div>
+      <div class="dc-body">
+        <div class="dc-persona">
+          <div class="dc-persona-name">"Solo Sam"</div>
+          <div class="dc-persona-meta">32 · technical solo founder</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">Pain: drowning in non-coding work.</div>
+        </div>
+        <div class="dc-persona">
+          <div class="dc-persona-name">"Scaling Sara"</div>
+          <div class="dc-persona-meta">38 · seed-stage founder</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">Pain: can't afford headcount.</div>
+        </div>
+        <div class="dc-persona">
+          <div class="dc-persona-name">"Bootstrapped Ben"</div>
+          <div class="dc-persona-meta">45 · agency owner</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">Pain: manual ops eat margin.</div>
+        </div>
+      </div>
+      <div class="dc-foot"><span class="dot"></span>3 personas · Research Unit · 4m 20s</div>
+    </div>
+
+    <div class="demo-card">
+      <div class="dc-head">
+        <span class="dc-tag">Content</span>
+        <span class="dc-title">Video ideas</span>
+      </div>
+      <div class="dc-prompt">"3 video ideas for solo founders on LinkedIn"</div>
+      <div class="dc-body">
+        <div class="dc-persona">
+          <div class="dc-persona-name">Idea 1 · "Finance-Free Friday"</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">Solo founder shows Vision AI closing their books in 5 minutes.</div>
+        </div>
+        <div class="dc-persona">
+          <div class="dc-persona-name">Idea 2 · "The 3am Investor"</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">AI drafts the investor update overnight while founder sleeps.</div>
+        </div>
+        <div class="dc-persona">
+          <div class="dc-persona-name">Idea 3 · "Meeting Preview"</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">AI briefs founder on attendees the moment they join the call.</div>
+        </div>
+      </div>
+      <div class="dc-foot"><span class="dot"></span>Content Unit · 2m 05s</div>
+    </div>
+
+    <div class="demo-card">
+      <div class="dc-head">
+        <span class="dc-tag">Sales</span>
+        <span class="dc-title">Cold outbound</span>
+      </div>
+      <div class="dc-prompt">"first-touch email to Dana at Northwind, they just raised Series B"</div>
+      <div class="dc-body">
+        <div style="font-size:13px;color:var(--text);font-family:var(--serif);font-style:italic;font-size:15px;margin-bottom:8px;">"Before you hire SDR #5"</div>
+        <p style="font-size:13px;color:var(--text-dim);margin:0;">Dana — saw the Series B closed, and that you're already hiring 4 SDRs to chase it. The research eating a rep's first 90 days is now <strong>one agent inside HubSpot</strong>, personalizing off live signals. 15 minutes this week?</p>
+      </div>
+      <div class="dc-foot"><span class="dot"></span>Deliverability 98 · 96 words · personalized from 4 signals</div>
+    </div>
+
+    <div class="demo-card">
+      <div class="dc-head">
+        <span class="dc-tag">Fundraising</span>
+        <span class="dc-title">Investor spreadsheet</span>
+      </div>
+      <div class="dc-prompt">"build an investor target spreadsheet: 18 India + 12 US, pre-seed AI angels"</div>
+      <div class="dc-body">
+        <div style="font-family:var(--mono);font-size:11px;color:var(--text-muted);border:1px solid var(--border);border-radius:6px;overflow:hidden;">
+          <div style="background:var(--surface-2);padding:6px 10px;border-bottom:1px solid var(--border);">
+            Name · Firm · Geo · Check · Tier
+          </div>
+          <div style="padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text-dim);">Kunal S. · AngelList · India · $50k · T1</div>
+          <div style="padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text-dim);">Sahil L. · SaaStr · US · $100k · T1</div>
+          <div style="padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text-dim);">Ankur N. · Blume · India · $75k · T2</div>
+          <div style="padding:6px 10px;color:var(--text-muted);">+ 27 more · sorted by warm-intro odds</div>
+        </div>
+      </div>
+      <div class="dc-foot"><span class="dot"></span>30 rows · .xlsx · Investor Research Unit</div>
+    </div>
+
+    <div class="demo-card">
+      <div class="dc-head">
+        <span class="dc-tag">Deck</span>
+        <span class="dc-title">Pitch deck</span>
+      </div>
+      <div class="dc-prompt">"pitch deck for our pre-seed round"</div>
+      <div class="dc-body">
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">
+          <div style="aspect-ratio:16/10;background:var(--surface-2);border-radius:4px;padding:8px;font-family:var(--serif);font-size:10px;font-style:italic;">The AI co-founder.</div>
+          <div style="aspect-ratio:16/10;background:var(--surface-2);border-radius:4px;padding:8px;font-family:var(--mono);font-size:8px;color:var(--text-muted);">Problem</div>
+          <div style="aspect-ratio:16/10;background:var(--surface-2);border-radius:4px;padding:8px;font-family:var(--mono);font-size:8px;color:var(--text-muted);">Market</div>
+          <div style="aspect-ratio:16/10;background:var(--surface-2);border-radius:4px;padding:8px;font-family:var(--mono);font-size:8px;color:var(--text-muted);">Product</div>
+          <div style="aspect-ratio:16/10;background:var(--surface-2);border-radius:4px;padding:8px;font-family:var(--mono);font-size:8px;color:var(--text-muted);">Why now</div>
+          <div style="aspect-ratio:16/10;background:var(--surface-2);border-radius:4px;padding:8px;font-family:var(--mono);font-size:8px;color:var(--text-muted);">Ask</div>
+        </div>
+        <p style="font-size:12px;color:var(--text-muted);margin:12px 0 0;">13 slides · Series-A grade layout · your voice</p>
+      </div>
+      <div class="dc-foot"><span class="dot"></span>.pptx · Content Unit · 3m 40s</div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ================================ BEFORE / AFTER ================================ -->
+<section>
+  <div class="container">
+    <div class="section-eyebrow">Same work · different worker</div>
+    <h2 class="section-h">You already know how to do it. <em>Vision AI does it faster.</em></h2>
+    <p class="section-lede">Five jobs solo founders burn a week on. Same output, less time.</p>
+
+    <div class="before-after">
+      <div class="ba-head">The job</div>
+      <div class="ba-head">Manual</div>
+      <div class="ba-head">Vision AI</div>
+
+      <div class="ba-row job">Draft investor outreach</div>
+      <div class="ba-row old">2 hours · generic</div>
+      <div class="ba-row new">Personalized from live signals · 4 min</div>
+
+      <div class="ba-row job">Build a pitch deck</div>
+      <div class="ba-row old">A full weekend in Keynote</div>
+      <div class="ba-row new">13 slides · your voice · in 4 min</div>
+
+      <div class="ba-row job">Research 30 investors</div>
+      <div class="ba-row old">20 open tabs · half a day</div>
+      <div class="ba-row new">Ranked xlsx with warm-intro odds</div>
+
+      <div class="ba-row job">Write a month of content</div>
+      <div class="ba-row old">A freelancer · $2k/mo</div>
+      <div class="ba-row new">One Content Unit · shipped overnight</div>
+
+      <div class="ba-row job">Answer "what did we quote them?"</div>
+      <div class="ba-row old">Memory + scattered docs</div>
+      <div class="ba-row new">Your second brain answers, with sources</div>
+    </div>
+  </div>
+</section>
+
+<!-- ================================ HOW IT WORKS ================================ -->
+<section>
+  <div class="container">
+    <div class="section-eyebrow">How it works</div>
+    <h2 class="section-h">Describe. Hire. <em>Delegate.</em></h2>
+    <p class="section-lede">Three steps between "one idea" and "a functioning org that ships."</p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">01</div>
+        <h3>Describe</h3>
+        <p>One prompt. "Build me a fundraising ops company." The CEO drafts the org — Units, Supervisors, specialists. You approve or edit.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">02</div>
+        <h3>Hire</h3>
+        <p>The org materializes in seconds. Every employee has a role, a scoped mandate, and access to the tools they need — Gmail, Slack, files, MCP servers.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">03</div>
+        <h3>Delegate</h3>
+        <p>Talk to the CEO like a co-founder. It plans, delegates across Units, synthesizes the final deliverable. Approval-gated actions ship on your tap.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================================ PRICING ================================ -->
+<section id="pricing">
+  <div class="container">
+    <div style="text-align:center;">
+      <div class="section-eyebrow">Pricing</div>
+      <h2 class="section-h" style="margin-left:auto;margin-right:auto;">One flat price. <em>Every employee.</em></h2>
+      <p class="section-lede" style="margin-left:auto;margin-right:auto;">No per-seat, no per-token, no metering surprises. Founders hate metered pricing. So do we.</p>
+    </div>
+
+    <div class="price-card">
+      <div class="price-badge">Founding 100 · seats open</div>
+      <div>
+        <span class="price-amount">$29</span>
+        <span class="price-per">/ mo</span>
+      </div>
+      <p class="price-lede">Everything below, unlimited, forever locked at this price for the founding cohort.</p>
+      <ul class="price-list">
+        <li><span class="tick">✓</span> <span><strong>Unlimited</strong> Companies, Units, employees</span></li>
+        <li><span class="tick">✓</span> <span><strong>Every action tool</strong> — .pptx, .docx, .xlsx, email, Slack, files, MCP</span></li>
+        <li><span class="tick">✓</span> <span><strong>Verification layer</strong> — zero fabricated evidence</span></li>
+        <li><span class="tick">✓</span> <span><strong>Approval-gated actions</strong> — nothing sends without you</span></li>
+        <li><span class="tick">✓</span> <span><strong>Second brain</strong> — cross-turn memory that actually sticks</span></li>
+        <li><span class="tick">✓</span> <span><strong>Price locked</strong> at $29 for life</span></li>
+      </ul>
+      <a href="/app/" class="btn-primary" style="width:100%;justify-content:center;">
+        Start free — no card
+        <span class="arrow">→</span>
+      </a>
+      <p class="price-fine">7-day zero-risk guarantee · a working employee doing real work, or a full refund.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================================ FAQ ================================ -->
+<section id="faq">
+  <div class="container">
+    <div class="section-eyebrow">Common questions</div>
+    <h2 class="section-h" style="text-align:center;margin-left:auto;margin-right:auto;">Answered.</h2>
+
+    <div class="faq">
+      <details class="faq-item">
+        <summary class="faq-q">
+          <span>How is this different from ChatGPT / Claude?</span>
+          <span class="plus">+</span>
+        </summary>
+        <div class="faq-a">A chatbot gives you text. Vision AI gives you an org: a CEO that plans, Supervisors that delegate, specialists that ship finished .pptx / .docx / .xlsx files and take real actions. Plus the trust layer — verification and approval-gating — that a raw model doesn't have.</div>
+      </details>
+
+      <details class="faq-item">
+        <summary class="faq-q">
+          <span>What does "approval-gated" actually mean?</span>
+          <span class="plus">+</span>
+        </summary>
+        <div class="faq-a">Every irreversible action — sending an email, posting to Slack, publishing a file — is queued until you tap approve. Nothing leaves your control silently. You can also whitelist specific action types you want auto-approved.</div>
+      </details>
+
+      <details class="faq-item">
+        <summary class="faq-q">
+          <span>Can I use my own AI model?</span>
+          <span class="plus">+</span>
+        </summary>
+        <div class="faq-a">Yes. Vision AI runs on gpt-oss locally by default, and plugs into Anthropic, OpenAI, or your own Ollama endpoint. Bring your own keys — we don't mark up tokens.</div>
+      </details>
+
+      <details class="faq-item">
+        <summary class="faq-q">
+          <span>What happens on day one?</span>
+          <span class="plus">+</span>
+        </summary>
+        <div class="faq-a">Type your business into the CEO. It designs the org. You approve. First deliverable ships within the hour — usually a research doc, a spreadsheet, or a first draft of outreach. The average founder deploys three Units on day one.</div>
+      </details>
+
+      <details class="faq-item">
+        <summary class="faq-q">
+          <span>What if it doesn't work for me?</span>
+          <span class="plus">+</span>
+        </summary>
+        <div class="faq-a">7-day zero-risk guarantee. If you don't have a working employee doing real work within the first week, email me and I'll refund you. The risk is mine.</div>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- ================================ FINAL CTA ================================ -->
+<section class="final-cta">
+  <div class="container">
+    <h2 class="section-h">Your first hire is <em>waiting.</em></h2>
+    <p class="section-lede" style="margin-left:auto;margin-right:auto;">Founding 100 seats are open. Every new employee, tool, and update stays free forever at this price.</p>
+    <div class="hero-actions actions">
+      <a href="/app/" class="btn-primary">
+        Start building free
+        <span class="arrow">→</span>
+      </a>
+      <a href="#pricing" class="btn-ghost">See what's included</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="brand-big">Vision AI</div>
+  <p>The AI co-founder for solo founders · built by an indie hacker · runs on your machine</p>
+</footer>
+
+<script>
+  // Nav scroll effect
+  const nav = document.getElementById('topnav');
+  const onScroll = () => nav.classList.toggle('scrolled', window.scrollY > 20);
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+
+  // ===================== HERO TREE ANIMATION =====================
+  // A real parent -> child tree drawn as SVG branches + HTML nodes.
+  // Levels: root (CEO) -> units -> specialists. Each scenario declares
+  // the tree; positions get auto-computed so branches always line up
+  // with node centres, regardless of how many units/specialists.
+  const scenarios = [
+    {
+      title: 'Fundraising Ops',
+      prompt: 'build me a fundraising ops company',
+      deliverable: 'Investor list ready · 30 rows · .xlsx',
+      root: { role: 'CEO', tag: 'plans + synthesizes' },
+      units: [
+        { role: 'Content Unit',      tag: 'deck + outreach',
+          children: [{ role: 'Copywriter' }, { role: 'Deck Designer' }] },
+        { role: 'Investor Research', tag: '30 targets',
+          children: [{ role: 'Analyst' }, { role: 'Data Curator' }] },
+        { role: 'Legal Ops',         tag: 'SAFE + terms',
+          children: [{ role: 'Counsel' }] },
+      ],
+    },
+    {
+      title: 'Marketing',
+      prompt: 'spin up a marketing team for LinkedIn',
+      deliverable: '3 video ideas + 60s script · ready',
+      root: { role: 'CEO', tag: 'plans + synthesizes' },
+      units: [
+        { role: 'Content Unit',      tag: 'scripts + posts',
+          children: [{ role: 'Copywriter' }, { role: 'Video Scriptwriter' }] },
+        { role: 'Audience Research', tag: 'personas',
+          children: [{ role: 'Insight Strategist' }, { role: 'Data Curator' }] },
+      ],
+    },
+    {
+      title: 'Research',
+      prompt: 'do audience research on our product',
+      deliverable: '3 personas · with pain points · ready',
+      root: { role: 'CEO', tag: 'plans + synthesizes' },
+      units: [
+        { role: 'Research Unit', tag: 'personas',
+          children: [{ role: 'Audience Analyst' }, { role: 'Data Curator' }, { role: 'Insight Strategist' }] },
+        { role: 'Insights Unit', tag: 'buying triggers',
+          children: [{ role: 'Market Analyst' }, { role: 'Trend Watcher' }] },
+      ],
+    },
+  ];
+
+  const $prompt = document.getElementById('typed-prompt');
+  const $viz    = document.getElementById('tree-viz');
+  const $svg    = document.getElementById('tree-lines');
+  const $toast  = document.getElementById('deliverable-toast');
+  const $toastText = document.getElementById('deliverable-text');
+  const $title  = document.getElementById('demo-title');
+
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+
+  async function typeText(el, text, speed = 30) {
+    el.textContent = '';
+    for (const ch of text) {
+      el.textContent += ch;
+      await wait(speed + Math.random() * 18);
+    }
+  }
+
+  const SVGNS = 'http://www.w3.org/2000/svg';
+
+  /** Layout: give every node a (%,%) position inside the viz box. */
+  function layout(scenario) {
+    // Row Y positions (viewBox is 0..100 in both dims).
+    const rootY = 12, unitY = 48, specY = 86;
+    // Spread units evenly across horizontal.
+    const units = scenario.units.map((u, i, arr) => {
+      const nx = arr.length === 1
+        ? 50
+        : 14 + (i * (72 / (arr.length - 1)));
+      return { ...u, x: nx, y: unitY };
+    });
+    // Spread each unit's specialists evenly under its parent.
+    for (const u of units) {
+      const n = u.children.length;
+      const bandW = 26;                    // horizontal band width per unit
+      const startX = u.x - bandW / 2;
+      u.children = u.children.map((c, i) => ({
+        ...c,
+        x: n === 1 ? u.x : startX + (i * (bandW / (n - 1))),
+        y: specY,
+      }));
+    }
+    return {
+      root: { ...scenario.root, x: 50, y: rootY },
+      units,
+    };
+  }
+
+  /** Build the DOM node for one role. Returns the element (already appended). */
+  function drawNode(role, kind) {
+    const el = document.createElement('div');
+    el.className = 'tree-node' + (kind ? ' ' + kind : '');
+    el.style.left = role.x + '%';
+    el.style.top  = role.y + '%';
+    el.innerHTML =
+      '<span class="role-dot"></span>' +
+      '<span class="role-name">' + role.role + '</span>' +
+      (role.tag ? '<span class="role-tag">· ' + role.tag + '</span>' : '');
+    $viz.appendChild(el);
+    return el;
+  }
+
+  /** Draw an SVG connector between (px,py) and (cx,cy) — smooth S-curve. */
+  function drawBranch(px, py, cx, cy) {
+    // Control points sit at the vertical midpoint so the curve enters
+    // and leaves each end going down — the classic org-chart connector.
+    const midY = (py + cy) / 2;
+    const path = document.createElementNS(SVGNS, 'path');
+    path.setAttribute('class', 'branch');
+    path.setAttribute('d',
+      'M ' + px + ' ' + py +
+      ' C ' + px + ' ' + midY +
+      ',   ' + cx + ' ' + midY +
+      ',   ' + cx + ' ' + cy);
+    // Set stroke-dasharray equal to the path length so the draw-in is
+    // proportional regardless of branch length.
+    $svg.appendChild(path);
+    try {
+      const len = path.getTotalLength();
+      path.style.strokeDasharray  = len;
+      path.style.strokeDashoffset = len;
+    } catch { /* getTotalLength unsupported – fallback dash values still work */ }
+    return path;
+  }
+
+  function clearTree() {
+    // Wipe every prior tree-node div but keep the svg element.
+    $viz.querySelectorAll('.tree-node').forEach(n => n.remove());
+    $svg.innerHTML = '';
+  }
+
+  async function runScenario(s) {
+    $title.textContent = 'Vision AI · ' + s.title;
+    $toast.classList.remove('show');
+    clearTree();
+
+    await typeText($prompt, s.prompt);
+    await wait(300);
+
+    const laid = layout(s);
+
+    // 1. Root appears first.
+    const rootEl = drawNode(laid.root, 'root');
+    await wait(60);
+    rootEl.classList.add('show');
+    await wait(280);
+
+    // 2. Draw branches root -> each unit, then reveal the unit at the tip.
+    const unitEls = [];
+    const unitBranches = [];
+    for (const u of laid.units) {
+      const branch = drawBranch(laid.root.x, laid.root.y, u.x, u.y);
+      unitBranches.push(branch);
+      // Trigger the draw-in in the next tick so the initial dash offset is applied first.
+      await wait(20);
+      branch.classList.add('drawn', 'active');
+      await wait(320);
+      const el = drawNode(u);
+      unitEls.push(el);
+      await wait(30);
+      el.classList.add('show');
+      await wait(100);
+    }
+
+    // 3. For each unit, draw branches to its specialists, then reveal them.
+    const specEls = [];
+    for (let i = 0; i < laid.units.length; i++) {
+      const u = laid.units[i];
+      for (const c of u.children) {
+        const branch = drawBranch(u.x, u.y, c.x, c.y);
+        await wait(15);
+        branch.classList.add('drawn');
+        await wait(160);
+        const el = drawNode(c);
+        specEls.push(el);
+        await wait(20);
+        el.classList.add('show');
+      }
+    }
+
+    await wait(400);
+
+    // 4. Show units + a few specialists "working"; fade unit branches to done.
+    for (const u of unitEls) u.classList.add('working');
+    for (const b of unitBranches) { b.classList.remove('active'); b.classList.add('done'); }
+    const workers = specEls.slice(0, 3);
+    for (const w of workers) w.classList.add('working');
+    await wait(1600);
+
+    // 5. Everyone done + deliverable toast.
+    for (const u of unitEls) { u.classList.remove('working'); u.classList.add('done'); }
+    for (const w of workers)  { w.classList.remove('working'); w.classList.add('done'); }
+    await wait(200);
+    $toastText.textContent = s.deliverable;
+    $toast.classList.add('show');
+    await wait(3200);
+
+    // 6. Fade out.
+    [rootEl, ...unitEls, ...specEls].forEach(el => el.classList.remove('show'));
+    await wait(500);
+  }
+
+  (async () => {
+    let i = 0;
+    await wait(500);
+    while (true) {
+      await runScenario(scenarios[i % scenarios.length]);
+      i++;
+    }
+  })();
+</script>
+</body>
+</html>

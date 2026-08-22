@@ -1,0 +1,104 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Local run artifacts
+phase4_run.json
+*.log
+
+# Per-run diagnostic records from run_test_model.py. Regenerable, and
+# each embeds a full deliverable plus a log containing absolute local
+# paths. The finding they support belongs in the README; the blobs don't.
+diag_*.json
+
+# Benchmark scratch (raw judge splits, crash dumps, one-off probes —
+# regenerable from the rerun_*.py / build_blind_report_*.py scripts)
+judge_tmp/
+judge_tmp2/
+judge_tmp3/
+critique_raw_debug*.txt
+gptoss_test.txt
+context_share_summary.txt
+
+# CLI test outputs (regenerable by running validate_idea.py; not source)
+verdict_test.md
+verdict_*.md
+
+# Employee runtime memory (real founders' idea/task history — personal
+# and business data, not source; regenerated fresh per employee_id)
+backend/app/employees/data/
+
+# Persisted team specs per session (same reason: personal roster data,
+# regenerated per session via the spawner or hand-editing in the UI).
+# Also contains _mcp_connections.json which can hold API tokens in
+# each connection's `env` block — never commit.
+backend/app/employees/team_data/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.http_tools.json
+backend/app/employees/company_data/
+backend/app/employees/data/registry/
+
+# Action layer — pending mutating actions live here as JSON. Can carry
+# task-specific args (draft email bodies, Slack messages) — treat like
+# .http_tools.json, never commit.
+.pending_actions.json
+
+# Sandboxed workspace where the AI writes files via action.write_file.
+# Contents are user work product, not source.
+workspace/
+
+# Browser automation profile — holds REAL login cookies/session state for
+# whatever sites the founder logged into (GitHub etc). Never commit.
+browser_profile/
+
+# OAuth access tokens (live credentials — can create/delete repos)
+.oauth_tokens.json
+
+# Pending approval queue (may embed action arguments incl. secrets)
+.pending_actions.json
+
+# Persisted run history — holds full deliverable text (founder's work
+# product, and whatever the runs pulled off the web). Never source.
+runs.json
+workspace/market_data/
+workspace/python_runs/
+
+# Browser run traces from trace_browser_run.py. Regenerable, and each
+# embeds a full page dump including whatever the live site was showing.
+browser_trace.json
+browser_trace*.log
+server_run*.log
+verify_outcome_check.py.log
+
+# Runtime state, not source. These are live data the app writes as it
+# runs -- the run store, the approval queue, the learned playbooks --
+# and they were tracked, so every run showed up as a repo change.
+runs.json
+.pending_actions.json
+browser_playbooks.json
+
+# One-off experiment output. Benchmarks and blind reports are worth
+# running and not worth keeping: they are a record of one afternoon's
+# comparison, they went stale the moment the model changed, and they
+# were 2MB of the repository.
+benchmark_result*.json
+blind_report*.html
+judge_result*.json

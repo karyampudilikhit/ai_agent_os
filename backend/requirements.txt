@@ -1,0 +1,27 @@
+pydantic>=2.5
+pydantic-settings>=2.1
+httpx>=0.25
+PyYAML>=6.0
+jsonschema>=4.20
+# fastapi >=0.120 required after mcp SDK pulled in newer starlette
+# (older fastapi passes `on_startup` to Router which starlette removed)
+fastapi>=0.120
+uvicorn>=0.34
+# For .env loading (Tavily key, Notion token, other connector creds)
+python-dotenv>=1.0
+# Web fetch connector — read-only page extraction
+beautifulsoup4>=4.12
+# Deep browser research — JS-rendered multi-page site crawling for
+# competitor/company analysis (backend/app/tools/browser_automation.py).
+# After installing, also run ONE TIME: playwright install chromium
+# (downloads the headless browser binary, ~300MB, not a pip package).
+playwright>=1.40
+# MCP client layer (Days 3-4 of connectors sequence)
+mcp>=1.0
+# Document generation (create_pptx/docx/xlsx action tools) + reading
+# the same formats back out of uploaded files.
+python-pptx>=0.6.23
+python-docx>=1.1.0
+openpyxl>=3.1
+# Multipart form parsing for file uploads (FastAPI's UploadFile needs it)
+python-multipart>=0.0.9

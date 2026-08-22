@@ -1,0 +1,42 @@
+# Everything Fly's builder doesn't need — smaller context = faster deploys
+.git
+.gitignore
+.github
+.venv
+venv
+env
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Local secrets / state (loaded from env or volume on Fly)
+.env
+.env.local
+.http_tools.json
+.pending_actions.json
+workspace/
+backend/app/employees/team_data/
+backend/app/employees/company_data/
+backend/app/employees/data/
+
+# Docs + local run artifacts
+*.log
+*.md
+HANDOFF.md
+README.md
+phase4_run.json
+judge_tmp/
+judge_tmp2/
+judge_tmp3/
+verdict_*.md
+critique_raw_debug*.txt
+gptoss_test.txt
+context_share_summary.txt
+
+# IDE
+.vscode
+.idea
+*.swp

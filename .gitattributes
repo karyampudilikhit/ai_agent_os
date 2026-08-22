@@ -1,0 +1,17 @@
+# Binary assets must never go through line-ending normalization.
+#
+# Committing a PDF produced "LF will be replaced by CRLF the next time
+# Git touches it". The stored blob was fine, but a fresh clone on Windows
+# would have had CR bytes injected into the PDF stream -- a file that is
+# correct in this working copy and corrupt for whoever clones it next,
+# which is the worst version of this bug because it is invisible here.
+*.pdf   binary
+*.pptx  binary
+*.xlsx  binary
+*.docx  binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.zip   binary

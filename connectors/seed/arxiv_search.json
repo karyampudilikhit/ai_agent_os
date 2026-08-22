@@ -1,0 +1,22 @@
+{
+  "name": "arxiv_search",
+  "description": "Search arXiv for REAL preprints and get their genuine arxiv.org/abs/ URL, exact title, authors and abstract. USE THIS instead of writing an arXiv id from memory — invented ids look valid but resolve to unrelated papers. Returns Atom XML; read the <id> and <title> of each <entry>.",
+  "method": "GET",
+  "url": "https://export.arxiv.org/api/query",
+  "auth": { "type": "none" },
+  "parameters": [
+    {
+      "name": "search_query",
+      "in": "query",
+      "description": "arXiv query syntax. Use ti:\"exact title\" for a known paper, or all:keyword1 AND all:keyword2 to search broadly. Quote multi-word phrases.",
+      "required": true
+    },
+    {
+      "name": "max_results",
+      "in": "query",
+      "description": "How many results to return. Use 3-5.",
+      "required": false
+    }
+  ],
+  "enabled": true
+}

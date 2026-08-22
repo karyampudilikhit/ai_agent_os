@@ -1,0 +1,31 @@
+{
+  "name": "crossref_search",
+  "description": "Look up REAL academic papers by title, topic or author and get their genuine DOI, exact title, authors, journal and year from Crossref (the official DOI registry). USE THIS whenever you need to cite a paper — never write a DOI or paper URL from memory. Cite the returned DOI as https://doi.org/<DOI>.",
+  "method": "GET",
+  "url": "https://api.crossref.org/works",
+  "auth": { "type": "none" },
+  "parameters": [
+    {
+      "name": "query.bibliographic",
+      "in": "query",
+      "description": "The paper title, or title plus authors, e.g. 'A Five-Factor Asset Pricing Model Fama French'. Be specific — this is matched against real bibliographic records.",
+      "required": true
+    },
+    {
+      "name": "rows",
+      "in": "query",
+      "description": "How many results to return. Use 3-5; the first hit is usually the right paper.",
+      "required": false
+    },
+    {
+      "name": "select",
+      "in": "query",
+      "description": "Fields to return. Use 'DOI,title,author,issued,container-title' to keep the response small and readable.",
+      "required": false
+    }
+  ],
+  "headers": {
+    "Accept": "application/json"
+  },
+  "enabled": true
+}

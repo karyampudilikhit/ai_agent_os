@@ -1,0 +1,4059 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vision AI — Playground</title>
+<style>
+  :root {
+    /* Warm stone neutrals — softer than pure white/grey, easier on eyes */
+    --bg: #fafaf9;
+    --bg-2: #f5f5f4;
+    --panel: #ffffff;
+    --panel-2: #fafaf9;
+    --panel-3: #f5f5f4;
+    --border: #e7e5e4;
+    --border-strong: #d6d3d1;
+    --text: #1c1917;
+    --text-muted: #78716c;
+    --text-dim: #a8a29e;
+    /* Deep metallic red — near-burgundy base + oxblood highlight.
+       Reads as aged wine / leather-book leather. The dark stop stays
+       above pure black so the gradient still shows a sheen. */
+    --accent: #5c0f1a;
+    --accent-2: #8b1e2f;
+    --accent-fg: #ffffff;
+    --accent-soft: rgba(92, 15, 26, 0.09);
+    /* Semantic colors — desaturated to match minimal palette. Danger
+       shifted to orange-red so error states don't blur into the
+       metallic-red accent. */
+    --ok: #4d7c0f;
+    --warn: #a16207;
+    --danger: #c2410c;
+    --info: #0369a1;
+    /* Softer shadows — no strong drop-shadow feel */
+    --shadow-sm: 0 1px 2px rgba(28, 25, 23, 0.04);
+    --shadow-md: 0 2px 6px rgba(28, 25, 23, 0.04), 0 12px 32px -16px rgba(28, 25, 23, 0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      /* Warm off-black — softer than pure #000, less clinical */
+      --bg: #0c0c0c;
+      --bg-2: #131313;
+      --panel: #191919;
+      --panel-2: #1e1e1e;
+      --panel-3: #262626;
+      --border: #2a2a2a;
+      --border-strong: #3a3a3a;
+      --text: #f5f5f4;
+      --text-muted: #a8a29e;
+      --text-dim: #78716c;
+      /* Deeper metallic red for dark mode — pulled down but kept
+         above the point where it merges with the near-black
+         background. Highlight stop stays crimson so the gradient
+         still shows a sheen. */
+      --accent: #8b1e2f;
+      --accent-2: #b83043;
+      --accent-soft: rgba(139, 30, 47, 0.16);
+      --info: #7dd3fc;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.35);
+      --shadow-md: 0 2px 6px rgba(0,0,0,0.35), 0 12px 32px -16px rgba(0,0,0,0.55);
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100vh; overflow: hidden; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.55;
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    letter-spacing: -0.005em;
+  }
+
+  /* ---------- App layout ---------- */
+  .app {
+    display: grid;
+    grid-template-columns: 340px 1fr 340px;
+    grid-template-rows: 56px 1fr;
+    grid-template-areas:
+      "header  header  header"
+      "left    center  right";
+    height: 100vh;
+  }
+
+  /* Header */
+  header {
+    grid-area: header;
+    padding: 0 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    background: var(--bg);
+  }
+  header .brand { display: flex; align-items: center; gap: 12px; }
+  .brand-mark {
+    width: 28px; height: 28px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    display: flex; align-items: center; justify-content: center;
+    color: white; font-weight: 700; font-size: 13px;
+  }
+  .brand h1 { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.2; }
+  .brand .subtitle { color: var(--text-muted); font-size: 12.5px; }
+  header .header-status {
+    font-size: 12.5px;
+    color: var(--text-muted);
+    display: flex; align-items: center; gap: 8px;
+  }
+  header .pulse {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--info);
+    animation: pulse 1.4s ease-in-out infinite;
+    display: none;
+  }
+  header.busy .pulse { display: inline-block; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+  /* ---------- LEFT: Studio Chat ---------- */
+  .left {
+    grid-area: left;
+    background: var(--bg-2);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .chat-header {
+    padding: 14px 18px 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+  }
+  .chat-header .title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .chat-header .actions { display: flex; gap: 6px; align-items: center; }
+
+  .chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 16px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+  }
+
+  .msg {
+    max-width: 90%;
+    padding: 10px 14px;
+    border-radius: 12px;
+    font-size: 13px;
+    line-height: 1.5;
+    animation: msg-in 0.2s ease-out;
+  }
+  @keyframes msg-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  .msg.user {
+    align-self: flex-end;
+    background: var(--accent);
+    color: white;
+    border-bottom-right-radius: 4px;
+  }
+  .msg.assistant {
+    align-self: flex-start;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 4px;
+  }
+  .msg.assistant.status {
+    background: transparent;
+    border: none;
+    padding: 4px 4px;
+    color: var(--text-muted);
+    font-size: 12.5px;
+    max-width: 100%;
+  }
+  .msg-steps { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+  .step {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    color: var(--text-muted);
+  }
+  .step .icon {
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    border: 1.5px solid var(--text-dim);
+    background: transparent;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    flex-shrink: 0;
+    color: transparent;
+  }
+  .step.working .icon {
+    border-color: var(--info);
+    color: var(--info);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  .step.working .icon::before { content: '●'; font-size: 8px; }
+  .step.done .icon {
+    background: var(--ok);
+    border-color: var(--ok);
+    color: white;
+  }
+  .step.done .icon::before { content: '✓'; font-size: 9px; font-weight: 700; }
+  .step.done { color: var(--text); }
+
+  .chat-input {
+    padding: 12px 16px 16px;
+    border-top: 1px solid var(--border);
+    background: var(--bg-2);
+  }
+  .chat-input-inner {
+    display: flex;
+    gap: 8px;
+    align-items: flex-end;
+    background: var(--panel);
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    padding: 8px 8px 8px 14px;
+    box-shadow: var(--shadow-sm);
+    transition: border-color 0.14s, box-shadow 0.14s;
+  }
+  .chat-input-inner:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .chat-input textarea {
+    flex: 1;
+    background: transparent;
+    border: none;
+    padding: 6px 0;
+    font-size: 13.5px;
+    font-family: inherit;
+    resize: none;
+    min-height: 24px;
+    max-height: 140px;
+    line-height: 1.5;
+    color: var(--text);
+  }
+  .chat-input textarea:focus { outline: none; }
+  .chat-input textarea::placeholder { color: var(--text-dim); }
+
+  .chat-empty {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 13px;
+    padding: 40px 20px;
+    line-height: 1.6;
+  }
+
+  /* ---------- Buttons / inputs ---------- */
+  button {
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    background: var(--accent);
+    color: var(--accent-fg);
+    border: none;
+    border-radius: 8px;
+    padding: 8px 14px;
+    cursor: pointer;
+    transition: filter 0.14s, transform 0.05s;
+    letter-spacing: -0.005em;
+  }
+  button:hover { filter: brightness(1.06); }
+  button:active { transform: translateY(1px); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; filter: none; transform: none; }
+  button.secondary {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+    font-weight: 500;
+  }
+  button.secondary:hover { background: var(--panel-2); }
+  button.ghost {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+  button.ghost:hover { color: var(--text); border-color: var(--border-strong); background: var(--panel); }
+  button.small { padding: 4px 10px; font-size: 12px; }
+  button.icon {
+    background: transparent;
+    color: var(--text-dim);
+    padding: 2px 8px;
+    font-size: 15px;
+    font-weight: 400;
+    line-height: 1;
+    border-radius: 4px;
+  }
+  button.icon:hover { color: var(--danger); background: transparent; }
+  button.send-btn { padding: 8px 14px; border-radius: 8px; }
+
+  input, textarea, select {
+    font-family: inherit;
+    font-size: 13px;
+    color: var(--text);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 11px;
+    width: 100%;
+    transition: border-color 0.14s;
+  }
+  input::placeholder, textarea::placeholder { color: var(--text-dim); }
+  input:focus, textarea:focus, select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  textarea { resize: vertical; min-height: 56px; line-height: 1.5; font-family: inherit; }
+
+  /* ---------- CENTER: Canvas ---------- */
+  .center {
+    grid-area: center;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    /* Same reason as .tree-viz min-width: 0 — stops a wide child (the
+       tree-inner's min-width) from inflating the whole main column and
+       triggering horizontal page scroll. */
+    min-width: 0;
+    background: var(--bg);
+  }
+  .tabs {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 12px 24px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .tab {
+    background: transparent;
+    color: var(--text-muted);
+    border: none;
+    padding: 8px 14px;
+    font-weight: 500;
+    font-size: 13px;
+    border-radius: 8px 8px 0 0;
+    position: relative;
+    top: 1px;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    letter-spacing: -0.005em;
+  }
+  .tab:hover { color: var(--text); background: transparent; filter: none; }
+  .tab.active {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+    font-weight: 600;
+  }
+  .tab .dot {
+    display: none;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .tab.has-new .dot { display: inline-block; }
+  .tabs .spacer { flex: 1; }
+  .canvas-count { font-size: 12px; color: var(--text-dim); padding-right: 6px; }
+
+  .canvas-body {
+    flex: 1;
+    /* min-width: 0 keeps a wide grandchild (tree-inner) from bleeding
+       up and expanding this column past its grid track. */
+    min-width: 0;
+    overflow: auto;
+    padding: 28px 32px;
+    background:
+      radial-gradient(circle at 12px 12px, var(--border) 1px, transparent 1px) 0 0 / 20px 20px,
+      var(--bg);
+    position: relative;
+  }
+  .canvas-body.hidden { display: none; }
+
+  /* Flow layout — sequential horizontal chain of employees */
+  .flow-container {
+    display: flex;
+    align-items: stretch;
+    gap: 32px;
+    flex-wrap: wrap;
+  }
+  .flow-container.empty { justify-content: center; }
+
+  .emp-node {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    position: relative;
+    width: 240px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    animation: card-in 0.3s ease-out;
+    transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+    box-shadow: var(--shadow-sm);
+  }
+  /* Arrow between adjacent nodes in the flow */
+  .emp-node:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    right: -32px;
+    top: 50%;
+    width: 32px;
+    height: 2px;
+    background: var(--border-strong);
+    transform: translateY(-1px);
+  }
+  .emp-node:not(:last-child)::before {
+    content: '';
+    position: absolute;
+    right: -12px;
+    top: 50%;
+    width: 0; height: 0;
+    border-left: 8px solid var(--border-strong);
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+    transform: translateY(-5px);
+    z-index: 1;
+  }
+  @keyframes card-in {
+    from { opacity: 0; transform: translateY(6px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .emp-node:hover { border-color: var(--border-strong); }
+  .emp-node.is-working {
+    border-color: var(--info);
+    box-shadow: 0 0 0 1px var(--info), 0 0 24px -8px rgba(37, 99, 235, 0.5);
+  }
+  .emp-node.has-result { border-color: rgba(22, 163, 74, 0.4); }
+  .emp-node.has-fabrication { border-color: rgba(217, 119, 6, 0.4); }
+  /* Arrow line color when the source has completed */
+  .emp-node.has-result:not(:last-child)::after,
+  .emp-node.has-result:not(:last-child)::before {
+    background: var(--ok);
+    border-left-color: var(--ok);
+  }
+
+  .emp-node .top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .emp-node .top-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    flex: 1;
+  }
+  .emp-node .avatar {
+    width: 32px; height: 32px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .emp-node.is-working .avatar {
+    background: linear-gradient(135deg, var(--info), #7dd3fc);
+    animation: avatar-pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes avatar-pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.06)} }
+
+  /* Supervisor is visually distinct — sits at the front of the flow */
+  .emp-node.is-supervisor {
+    background: linear-gradient(180deg, var(--accent-soft), var(--panel));
+    border-color: var(--accent);
+  }
+  .emp-node.is-supervisor .avatar {
+    background: linear-gradient(135deg, #eab308, #ca8a04);
+  }
+  .emp-node.is-supervisor .role-badge {
+    display: inline-block;
+    background: var(--accent);
+    color: white;
+    font-size: 9.5px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 4px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .team-list-item.is-supervisor .mini-avatar {
+    background: linear-gradient(135deg, #eab308, #ca8a04);
+  }
+  .team-list-item.is-supervisor .role::after {
+    content: 'SUPERVISOR';
+    font-size: 9px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 0.06em;
+    margin-left: 6px;
+  }
+
+  /* Connectors */
+  .connector-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 6px;
+    font-size: 12.5px;
+  }
+  .connector-item .name { flex: 1; font-weight: 600; color: var(--text); }
+  .connector-item .tool-count { color: var(--text-dim); font-size: 11px; font-family: ui-monospace, monospace; }
+  .connector-item.disabled { opacity: 0.5; }
+  #connectors-form input { margin-bottom: 6px; font-size: 12.5px; }
+  #connectors-form button { width: 100%; margin-top: 4px; }
+  .emp-node .role-name {
+    font-weight: 600;
+    font-size: 13.5px;
+    color: var(--text);
+    line-height: 1.25;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .emp-node .working-badge, .emp-node .done-badge {
+    display: none;
+    font-size: 10.5px;
+    font-weight: 600;
+    margin-top: 2px;
+    letter-spacing: 0.02em;
+  }
+  .emp-node .working-badge { color: var(--info); }
+  .emp-node .done-badge { color: var(--ok); }
+  .emp-node.is-working .working-badge { display: block; }
+  .emp-node.has-result:not(.is-working) .done-badge { display: block; }
+  .emp-node .mandate {
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.5;
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .emp-node .metadata {
+    font-size: 10.5px;
+    color: var(--text-dim);
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    display: none;
+    font-family: ui-monospace, monospace;
+  }
+  .emp-node.has-result:not(.is-working) .metadata { display: block; }
+  .fab-warn { color: var(--warn); font-weight: 600; }
+  .fab-ok { color: var(--ok); }
+
+  .canvas-empty {
+    margin: 60px auto;
+    max-width: 460px;
+    text-align: center;
+    padding: 36px 24px;
+    border: 1.5px dashed var(--border-strong);
+    border-radius: 14px;
+    background: var(--panel-2);
+  }
+  .canvas-empty .headline {
+    font-size: 15px;
+    color: var(--text);
+    margin-bottom: 6px;
+    font-weight: 600;
+  }
+  .canvas-empty .hint { color: var(--text-muted); font-size: 13px; line-height: 1.55; }
+
+  /* Output tab */
+  .result-panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px 28px;
+    box-shadow: var(--shadow-sm);
+    max-width: 900px;
+    margin: 0 auto;
+  }
+  /* Past-output history. A new run used to overwrite the Output tab with
+     no way back to what came before — the founder reported losing every
+     earlier deliverable. */
+  .output-history { border-bottom: 1px solid var(--line); background: var(--surface-2); }
+  .output-history .oh-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 14px; font-size: 12px; font-weight: 600; color: var(--text-dim);
+  }
+  .output-history .oh-title { flex: 1; }
+  .output-history .oh-list { max-height: 170px; overflow-y: auto; padding: 0 8px 8px; }
+  .oh-item {
+    display: flex; gap: 8px; align-items: baseline;
+    padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 12.5px;
+  }
+  .oh-item:hover { background: var(--surface); }
+  .oh-item.active { background: var(--surface); font-weight: 600; }
+  .oh-item .oh-when { color: var(--text-dim); font-size: 11px; white-space: nowrap; }
+  .oh-item .oh-task {
+    flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .oh-item.failed .oh-task { color: var(--danger, #c13350); }
+
+  .result-body {
+    font-size: 14px;
+    line-height: 1.65;
+    color: var(--text);
+  }
+  /* Markdown-rendered content — used in Output and in assistant chat
+     messages. Keeps prose readable and makes tables actually usable
+     instead of a wall of pipes. */
+  .md h1, .md h2, .md h3, .md h4 {
+    color: var(--text);
+    font-weight: 700;
+    line-height: 1.3;
+    margin: 20px 0 8px;
+  }
+  .md h1 { font-size: 22px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  .md h2 { font-size: 18px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+  .md h3 { font-size: 15.5px; }
+  .md h4 { font-size: 14px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .md p { margin: 8px 0; }
+  .md ul, .md ol { margin: 8px 0 8px 22px; padding: 0; }
+  .md li { margin: 3px 0; }
+  .md li > p { margin: 0; }
+  .md hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 18px 0;
+  }
+  .md a { color: var(--info); text-decoration: underline; }
+  .md a:hover { color: var(--accent); }
+  .md strong { color: var(--text); font-weight: 700; }
+  .md em { color: var(--text); font-style: italic; }
+  .md code {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12.5px;
+    color: var(--accent);
+  }
+  .md pre {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    overflow-x: auto;
+    margin: 10px 0;
+  }
+  .md pre code {
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: var(--text);
+    font-size: 12.5px;
+    line-height: 1.55;
+  }
+  .md blockquote {
+    border-left: 3px solid var(--accent);
+    background: var(--panel-2);
+    color: var(--text-muted);
+    padding: 8px 14px;
+    margin: 10px 0;
+    border-radius: 0 6px 6px 0;
+  }
+  .md table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 12px 0;
+    font-size: 13px;
+    overflow-x: auto;
+    display: block;
+  }
+  .md thead { background: var(--panel-2); }
+  .md th, .md td {
+    border: 1px solid var(--border);
+    padding: 7px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+  .md th {
+    font-weight: 700;
+    color: var(--text);
+    background: var(--panel-2);
+  }
+  .md tbody tr:nth-child(even) { background: rgba(0, 0, 0, 0.02); }
+  @media (prefers-color-scheme: dark) {
+    .md tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.02); }
+  }
+  .result-empty {
+    color: var(--text-dim);
+    text-align: center;
+    padding: 60px 20px;
+    font-size: 14px;
+  }
+
+  /* Evidence ledger — makes verification status visible instead of
+     leaving it buried in prose. A blind benchmark proved readers (even
+     AI judges) skip checking sources unless the status is right there
+     to look at, so this sits directly above the deliverable, not in a
+     collapsed footnote. */
+  .evidence-panel {
+    margin: 0 auto 14px auto;
+    max-width: 900px;
+  }
+  .evidence-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 12.5px;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+  }
+  .evidence-toggle:hover { border-color: var(--border-strong); }
+  .evidence-toggle .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .evidence-toggle .chip.verified { background: rgba(77, 124, 15, 0.14); color: var(--ok); }
+  .evidence-toggle .chip.unknown { background: rgba(161, 98, 7, 0.14); color: var(--warn); }
+  .evidence-toggle .chip.unsourced { background: rgba(194, 65, 12, 0.14); color: var(--danger); }
+  .evidence-toggle .caret { margin-left: auto; transition: transform 0.15s ease; }
+  .evidence-toggle.open .caret { transform: rotate(180deg); }
+  .evidence-list {
+    display: none;
+    margin-top: 6px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .evidence-list.open { display: block; }
+  .evidence-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 9px 14px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  .evidence-row:last-child { border-bottom: none; }
+  .evidence-row .badge {
+    flex-shrink: 0;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .evidence-row .text { color: var(--text); flex: 1; }
+  .evidence-row .source {
+    display: block;
+    margin-top: 2px;
+    font-size: 11px;
+    color: var(--info);
+    word-break: break-all;
+  }
+  .evidence-row.unsourced .text { color: var(--danger); }
+
+  /* Pending actions — when the AI wants to actually DO something
+     (send email, post Slack, write a file), the request lands here and
+     waits for the founder's tap. Sits above the deliverable so it's
+     the first thing you see. */
+  .pending-actions-panel {
+    margin: 0 auto 14px auto;
+    max-width: 900px;
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    background: var(--panel-2);
+    overflow: hidden;
+  }
+  .pending-actions-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--accent);
+    background: rgba(139, 30, 47, 0.06);
+    border-bottom: 1px solid var(--border);
+  }
+  .pa-title { flex: 0 0 auto; }
+  .pa-count {
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .pa-refresh {
+    margin-left: auto;
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 2px 8px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .pa-refresh:hover { color: var(--accent); border-color: var(--accent); }
+  .pending-actions-list { display: flex; flex-direction: column; }
+  .pa-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12.5px;
+  }
+  .pa-row:last-child { border-bottom: none; }
+  .pa-row .pa-meta {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .pa-row .pa-action-name {
+    font-weight: 600;
+    color: var(--text);
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.03em;
+  }
+  .pa-row .pa-preview {
+    color: var(--text-muted);
+    line-height: 1.5;
+    word-break: break-word;
+  }
+  .pa-row .pa-buttons {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .pa-btn {
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+  }
+  .pa-btn.approve {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  .pa-btn.approve:hover { background: var(--accent-2); }
+  .pa-btn.reject:hover { border-color: var(--danger); color: var(--danger); }
+  .pa-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+  .pa-row.executed .pa-action-name { color: var(--ok); }
+  .pa-row.rejected .pa-action-name { color: var(--danger); }
+  /* Time-sensitive items (a real browser window is open right now,
+     waiting on the founder) — found via a real session where a
+     browser_login_wait item sat unnoticed in this panel for 10 minutes
+     until it timed out. A plain uniform-styled row was too easy to
+     miss mid-conversation; this makes it visually impossible to. */
+  .pa-row.urgent {
+    background: rgba(217, 119, 6, 0.08);
+    border-left: 3px solid var(--warn, #d97706);
+    animation: pa-urgent-pulse 2s ease-in-out infinite;
+  }
+  .pa-row.urgent .pa-action-name { color: var(--warn, #d97706); }
+  @keyframes pa-urgent-pulse {
+    0%, 100% { background: rgba(217, 119, 6, 0.08); }
+    50%      { background: rgba(217, 119, 6, 0.18); }
+  }
+  .pa-row .pa-status {
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: var(--panel);
+  }
+
+  /* ---------- RIGHT: Edit ---------- */
+  .right {
+    grid-area: right;
+    background: var(--bg-2);
+    border-left: 1px solid var(--border);
+    padding: 18px 16px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    min-height: 0;
+  }
+  .right .section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .right .section .head {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .right .section .hint {
+    font-size: 12px;
+    color: var(--text-dim);
+    line-height: 1.5;
+  }
+  .team-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .team-list-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .team-list-item .mini-avatar {
+    width: 22px; height: 22px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: white;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 700;
+    flex-shrink: 0;
+  }
+  .team-list-item .role {
+    flex: 1;
+    font-size: 12.5px;
+    color: var(--text);
+    font-weight: 500;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Sessions selector at top of right panel */
+  .session-select {
+    display: flex; gap: 6px; align-items: center;
+  }
+  .session-select select { flex: 1; }
+
+  /* Company section (Phase 3a — top of right sidebar, above Unit) */
+  .company-section input, .company-section textarea, .company-section select {
+    width: 100%; margin-bottom: 6px;
+    padding: 7px 9px;
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: inherit; font-size: 12.5px;
+  }
+  .company-section textarea { min-height: 60px; resize: vertical; }
+  .company-section .row { display: flex; gap: 6px; }
+  .company-section .row > * { flex: 1; }
+  .company-mode-toggle {
+    display: flex;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 2px;
+    gap: 2px;
+  }
+  .company-mode-toggle button {
+    flex: 1;
+    padding: 5px 8px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 500;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .company-mode-toggle button.on {
+    background: var(--accent);
+    color: #fff;
+  }
+  .ceo-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #fff;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+  .company-purpose {
+    font-size: 11.5px;
+    color: var(--text-muted);
+    line-height: 1.5;
+    padding: 6px 0;
+  }
+  .hierarchy-proposal {
+    margin-top: 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel);
+    max-height: 340px;
+    overflow-y: auto;
+  }
+  .hierarchy-proposal .proposed-unit {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .hierarchy-proposal .proposed-unit:last-child { border-bottom: none; }
+  .hierarchy-proposal .u-name {
+    font-size: 12px; font-weight: 600;
+    color: var(--text);
+    margin-bottom: 3px;
+  }
+  .hierarchy-proposal .u-purpose {
+    font-size: 11px; color: var(--text-muted); line-height: 1.4;
+    margin-bottom: 4px;
+  }
+  .hierarchy-proposal .u-specialists {
+    display: flex; flex-wrap: wrap; gap: 4px;
+  }
+  .hierarchy-proposal .u-specialist {
+    padding: 2px 8px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 10.5px;
+    color: var(--text-muted);
+  }
+
+  /* Org tree Canvas — the whole Company hierarchy rendered as a tree */
+  .org-tree {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 30px 20px;
+    gap: 24px;
+  }
+  .org-empty {
+    color: var(--text-muted);
+    font-size: 13px;
+    text-align: center;
+    padding: 60px 20px;
+    max-width: 500px;
+  }
+  .org-empty h3 {
+    color: var(--text); font-size: 15px; margin-bottom: 8px;
+  }
+  .org-node {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 16px;
+    min-width: 220px;
+    max-width: 320px;
+  }
+  .org-node.ceo {
+    border-color: var(--accent);
+    background: linear-gradient(135deg, rgba(139,30,47,0.10), rgba(184,48,67,0.06));
+  }
+  .org-node .role {
+    font-size: 13.5px; font-weight: 700; color: var(--text);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .org-node .mandate {
+    font-size: 11.5px; color: var(--text-muted); line-height: 1.5;
+    margin-top: 4px;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .org-tree-connector {
+    width: 2px; height: 18px; background: var(--border-strong);
+  }
+  .org-units-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    justify-content: center;
+    align-items: flex-start;
+    width: 100%;
+  }
+  .org-unit-column {
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+    min-width: 240px;
+  }
+  .org-unit-card {
+    background: var(--panel);
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    padding: 12px 14px;
+    width: 100%;
+  }
+  .org-unit-card .unit-title {
+    font-size: 13px; font-weight: 700; color: var(--text);
+    margin-bottom: 3px;
+  }
+  .org-unit-card .unit-purpose {
+    font-size: 11px; color: var(--text-muted); line-height: 1.4;
+    margin-bottom: 8px;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .org-unit-card .unit-members {
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .org-member {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 8px;
+    background: var(--panel-2);
+    border-radius: 6px;
+    font-size: 11.5px;
+    color: var(--text);
+  }
+  .org-member.supervisor {
+    background: rgba(139,30,47,0.10);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .org-member .role-name {
+    flex: 1;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  /* ==================================================================
+     Tree view — the shared SVG-based branching tree used by BOTH the
+     Canvas tab (session roster) and the Org tab (whole Company).
+     Same visual language as the marketing hero.
+     ================================================================== */
+  .tree-viz {
+    position: relative;
+    width: 100%;
+    /* CRITICAL: min-width: 0 stops the tree-inner's large min-width from
+       propagating up the flexbox chain and inflating the whole app past
+       the viewport. Without this the "can't move the tree" bug returns —
+       the app scrolls horizontally instead of the tree scrolling
+       internally. */
+    min-width: 0;
+    max-width: 100%;
+    padding: 24px 20px;
+    box-sizing: border-box;
+    overflow: auto;
+    cursor: grab;
+    /* Height cap so a big tree doesn't push the page infinitely tall —
+       overflow-y scrolls too. */
+    max-height: calc(100vh - 200px);
+  }
+  .tree-viz.dragging { cursor: grabbing; }
+  .tree-viz.dragging .tree-node,
+  .tree-viz.dragging .tn-del { pointer-events: none; }
+  /* Custom scrollbar so it's clearly visible against the dark bg */
+  .tree-viz::-webkit-scrollbar { height: 10px; width: 10px; }
+  .tree-viz::-webkit-scrollbar-track { background: var(--panel-2); border-radius: 999px; }
+  .tree-viz::-webkit-scrollbar-thumb {
+    background: var(--border-strong); border-radius: 999px;
+    border: 2px solid var(--panel-2);
+  }
+  .tree-viz::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+  .tree-viz { scrollbar-color: var(--border-strong) var(--panel-2); scrollbar-width: thin; }
+  .tree-viz .tree-inner {
+    position: relative;
+    width: 100%;
+    /* height is set inline per-render based on tree depth */
+  }
+  .tree-viz svg.tree-lines {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    overflow: visible;
+    pointer-events: none;
+  }
+  .tree-lines .branch {
+    fill: none;
+    stroke: var(--border-strong);
+    stroke-width: 1.4;
+    stroke-linecap: round;
+    vector-effect: non-scaling-stroke;
+    opacity: 0;
+    transition: opacity .35s ease, stroke .3s ease, stroke-width .3s ease;
+  }
+  .tree-lines .branch.show { opacity: 1; }
+  .tree-lines .branch.active { stroke: var(--accent); stroke-width: 1.8; }
+  .tree-lines .branch.done   { stroke: var(--accent-dim, var(--accent)); stroke-width: 1.5; }
+  .tree-node {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 8px 14px;
+    font-size: 12px;
+    color: var(--text);
+    display: inline-flex; align-items: center; gap: 8px;
+    white-space: nowrap;
+    box-shadow: var(--shadow-sm);
+    transition: border-color .2s ease, background .2s ease, box-shadow .2s ease, transform .15s ease;
+    cursor: default;
+  }
+  .tree-node:hover { border-color: var(--border-strong); transform: translate(-50%, -50%) translateY(-1px); }
+  .tree-node.root {
+    background: linear-gradient(135deg, var(--accent), var(--accent-2, var(--accent)));
+    color: #fff; border-color: var(--accent);
+    padding: 10px 18px;
+    font-size: 13px; font-weight: 600;
+    box-shadow: 0 6px 18px -6px rgba(0,0,0,0.35), 0 0 20px -6px rgba(184,48,67,0.4);
+  }
+  .tree-node.supervisor {
+    background: var(--panel);
+    border-color: var(--accent);
+    color: var(--text);
+    font-weight: 600;
+  }
+  .tree-node.is-working {
+    border-color: var(--info, var(--accent));
+    box-shadow: 0 0 0 4px rgba(3, 105, 161, 0.12);
+    background: rgba(3, 105, 161, 0.06);
+  }
+  .tree-node.has-result { border-color: var(--ok, #4d7c0f); }
+  .tree-node.has-fabrication { border-color: var(--warn, #a16207); }
+  .tree-node .tn-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--text-muted); flex: none;
+  }
+  .tree-node.root .tn-dot { background: #fff; }
+  .tree-node.supervisor .tn-dot { background: var(--accent); }
+  .tree-node.is-working .tn-dot {
+    background: var(--info, var(--accent));
+    animation: tree-pulse 1s ease-in-out infinite;
+  }
+  .tree-node.has-result .tn-dot { background: var(--ok, #4d7c0f); }
+  .tree-node.has-fabrication .tn-dot { background: var(--warn, #a16207); }
+  @keyframes tree-pulse {
+    0%,100% { opacity: 1; transform: scale(1); }
+    50%     { opacity: .55; transform: scale(.75); }
+  }
+  .tree-node .tn-name {
+    font-weight: 500;
+    max-width: 140px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tree-node .tn-tag {
+    color: var(--text-muted); font-size: 10.5px;
+    max-width: 100px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", monospace;
+  }
+  .tree-node.root .tn-name { max-width: 180px; }
+  .tree-node .tn-del {
+    display: none;
+    margin-left: 2px;
+    width: 16px; height: 16px; line-height: 14px; text-align: center;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 14px; font-weight: 600;
+    cursor: pointer;
+    padding: 0; border: none;
+  }
+  .tree-node:hover .tn-del { display: inline-block; }
+  .tree-node .tn-del:hover { color: var(--danger, var(--accent)); background: rgba(255,255,255,0.05); }
+  .tree-viz .tree-empty {
+    padding: 60px 20px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+    max-width: 500px;
+    margin: 0 auto;
+  }
+  .tree-viz .tree-empty h3 {
+    color: var(--text); font-size: 15px; margin: 0 0 8px;
+  }
+  .tree-viz .tree-title {
+    text-align: center;
+    margin-bottom: 8px;
+  }
+  .tree-viz .tree-title-name {
+    font-size: 16px; font-weight: 600; color: var(--text);
+  }
+  .tree-viz .tree-title-sub {
+    font-size: 12px; color: var(--text-muted); margin-top: 2px;
+    max-width: 600px; margin-left: auto; margin-right: auto;
+    line-height: 1.5;
+  }
+
+  .chat-target-badge {
+    padding: 3px 8px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-left: 8px;
+  }
+  .chat-target-badge.company-mode {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+    font-weight: 600;
+  }
+
+  /* Plan / Work mode toggle in the chat header */
+  .mode-toggle {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    overflow: hidden;
+    margin-right: 4px;
+  }
+  .mode-btn {
+    border: none;
+    background: var(--panel);
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 11px;
+    cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease;
+  }
+  .mode-btn:hover { color: var(--text); }
+  .mode-btn.active[data-mode="plan"] {
+    background: var(--info, #2563eb);
+    color: #fff;
+  }
+  .mode-btn.active[data-mode="work"] {
+    background: var(--accent);
+    color: #fff;
+  }
+
+  /* Toolbar row under the chat input — mode toggle + attach button */
+  .chat-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 14px 10px;
+  }
+
+  /* Attached-file chips, shown above the input box while composing */
+  .attached-files {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 14px 0;
+  }
+  .file-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 9px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 11.5px;
+    color: var(--text);
+    max-width: 220px;
+  }
+  .file-chip .file-chip-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .file-chip.uploading { color: var(--text-muted); font-style: italic; }
+  .file-chip-remove {
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0;
+    flex-shrink: 0;
+  }
+  .file-chip-remove:hover { color: var(--danger); }
+
+  /* Scrollbars */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+
+  /* ---- Employee configuration modal ---- */
+  /* The node has to LOOK clickable — the first person to use this could
+     not find the editor, having no reason to think a card was a button. */
+  .tree-node.is-configurable { cursor: pointer; }
+  .tree-node.is-configurable:hover,
+  .tree-node.is-configurable:focus-visible {
+    border-color: var(--accent-2);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+    outline: none;
+  }
+  .tree-node.is-configurable::after {
+    content: "⚙";
+    position: absolute; right: 8px; bottom: 4px;
+    font-size: 10px; color: var(--text-dim);
+    opacity: 0; transition: opacity .12s ease;
+  }
+  .tree-node.is-configurable:hover::after { opacity: .85; }
+
+  .emp-modal-backdrop {
+    position: fixed; inset: 0; z-index: 200;
+    background: rgba(0, 0, 0, 0.44);
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  .emp-modal-backdrop[hidden] { display: none; }
+  .emp-modal {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; box-shadow: var(--shadow-lg, 0 12px 40px rgba(0,0,0,.22));
+    width: min(680px, 100%); max-height: 90vh;
+    display: flex; flex-direction: column;
+  }
+  .emp-modal-head {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 12px; padding: 18px 20px 14px; border-bottom: 1px solid var(--border);
+  }
+  .emp-modal-title { font-size: 15px; font-weight: 650; color: var(--text); }
+  .emp-modal-sub { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
+  .emp-x {
+    background: none; border: none; color: var(--text-dim);
+    font-size: 22px; line-height: 1; cursor: pointer; padding: 0 4px;
+  }
+  .emp-x:hover { color: var(--text); }
+
+  .emp-tabs {
+    display: flex; gap: 4px; padding: 0 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .emp-tab {
+    background: none; border: none; border-bottom: 2px solid transparent;
+    padding: 9px 12px; margin-bottom: -1px;
+    font: inherit; font-size: 12.5px; font-weight: 600;
+    color: var(--text-muted); cursor: pointer;
+  }
+  .emp-tab:hover { color: var(--text); }
+  .emp-tab.active { color: var(--accent-2); border-bottom-color: var(--accent-2); }
+  .emp-pane.hidden { display: none; }
+
+  /* The prompt as the model really receives it. Read-only on purpose:
+     it is assembled from several layers, and the editable box below is
+     the one that replaces them. */
+  .emp-rendered {
+    margin: 6px 0 0; padding: 12px 14px; max-height: 240px; overflow: auto;
+    background: var(--panel-3); border: 1px solid var(--border); border-radius: 7px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px; line-height: 1.55; color: var(--text-muted);
+    white-space: pre-wrap; word-break: break-word;
+  }
+
+  .emp-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  .emp-tool-group { margin-top: 14px; }
+  .emp-tool-group-head {
+    display: flex; align-items: baseline; gap: 8px;
+    font-size: 11.5px; font-weight: 700; color: var(--text);
+    margin-bottom: 2px;
+  }
+  .emp-tool-group-head span { font-weight: 500; font-size: 10.5px; color: var(--text-dim); }
+  .emp-tool {
+    display: flex; gap: 10px; align-items: baseline;
+    padding: 6px 0; border-bottom: 1px solid var(--border);
+  }
+  .emp-tool:last-child { border-bottom: none; }
+  .emp-tool code {
+    flex: 0 0 34%; font-size: 11px; color: var(--accent-2);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    word-break: break-all;
+  }
+  .emp-tool p { margin: 0; font-size: 11.5px; color: var(--text-muted); line-height: 1.45; }
+  .emp-mut {
+    flex: 0 0 auto; font-size: 9px; color: var(--warn);
+    border: 1px solid var(--warn); border-radius: 3px; padding: 0 4px;
+  }
+
+  .emp-modal-body { padding: 16px 20px; overflow-y: auto; }
+  .emp-label {
+    display: block; font-size: 11.5px; font-weight: 600;
+    color: var(--text-muted); margin: 14px 0 5px;
+  }
+  .emp-modal-body > .emp-label:first-child { margin-top: 0; }
+  .emp-input {
+    width: 100%; box-sizing: border-box; margin-top: 5px;
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 7px; padding: 8px 10px;
+    font: inherit; font-size: 12.5px; color: var(--text);
+  }
+  .emp-input:focus {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .emp-ta { resize: vertical; line-height: 1.5; }
+  .emp-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+  .emp-hint { font-size: 11px; color: var(--text-dim); margin-top: 5px; line-height: 1.5; }
+
+  .emp-radios, .emp-checks { display: flex; flex-direction: column; gap: 7px; margin-top: 4px; }
+  .emp-radios label, .emp-checks label {
+    display: flex; align-items: flex-start; gap: 8px;
+    font-size: 12px; color: var(--text); line-height: 1.45; cursor: pointer;
+  }
+  .emp-radios b, .emp-checks b { font-weight: 620; }
+
+  .emp-adv-toggle {
+    margin-top: 18px; background: none; border: none; padding: 0;
+    color: var(--accent-2); font: inherit; font-size: 12px;
+    font-weight: 600; cursor: pointer;
+  }
+  .emp-advanced {
+    margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--border);
+  }
+  .emp-advanced[hidden] { display: none; }
+  .emp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .emp-prov {
+    font-weight: 500; font-size: 10px; color: var(--text-dim);
+    background: var(--panel-3); border-radius: 4px; padding: 1px 5px;
+  }
+  .emp-actions-inline { display: flex; align-items: center; gap: 12px; margin-top: 6px; }
+  .emp-warn {
+    margin-top: 12px; padding: 10px 12px; border-radius: 7px;
+    background: var(--accent-soft); border: 1px solid var(--border);
+    font-size: 11px; line-height: 1.55; color: var(--text-muted);
+  }
+
+  .emp-modal-foot {
+    display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+    padding: 13px 20px; border-top: 1px solid var(--border);
+  }
+  .emp-status { margin-right: auto; font-size: 11.5px; color: var(--text-muted); }
+  .emp-btn {
+    background: var(--accent); color: var(--accent-fg);
+    border: none; border-radius: 7px; padding: 8px 16px;
+    font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+  }
+  .emp-btn:hover { background: var(--accent-2); }
+  .emp-btn:disabled { opacity: .55; cursor: default; }
+  .emp-btn-ghost {
+    background: none; border: 1px solid var(--border);
+    color: var(--text-muted); border-radius: 7px; padding: 8px 14px;
+    font: inherit; font-size: 12.5px; cursor: pointer;
+  }
+  .emp-btn-ghost:hover { color: var(--text); border-color: var(--border-strong); }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <header id="app-header">
+    <div class="brand">
+      <div class="brand-mark">V</div>
+      <div>
+        <h1>Vision AI <span class="subtitle">· Playground</span></h1>
+      </div>
+    </div>
+    <div class="header-status">
+      <!-- Build stamp. Exists because "I can't see any changes" turned out
+           to be a cached app shell twice, and there was no way to tell a
+           stale tab from a broken feature by looking. If this is missing
+           or the time is old, the browser is serving an old copy. -->
+      <span id="build-stamp" title="Loading build info…">·</span>
+      <span class="pulse"></span>
+      <span id="header-status"></span>
+    </div>
+  </header>
+
+  <!-- LEFT: Studio Chat -->
+  <aside class="left">
+    <div class="chat-header">
+      <div class="title">Studio Chat<span id="chat-target-badge" class="chat-target-badge">Unit</span></div>
+      <div class="actions">
+        <button class="ghost small" id="clear-chat-btn" title="Clear chat history (does not delete Units or Companies)">Clear</button>
+        <button class="ghost small" id="new-session-btn">+ New</button>
+      </div>
+    </div>
+
+    <div class="chat-messages" id="chat-messages"></div>
+
+    <div class="chat-input">
+      <div class="attached-files" id="attached-files" style="display:none;"></div>
+      <div class="chat-input-inner">
+        <textarea id="chat-input" rows="1" placeholder="Ask, build…  (Shift + Enter for new line)"></textarea>
+        <button class="send-btn" id="send-btn">Send ↑</button>
+      </div>
+      <div class="chat-toolbar">
+        <div class="mode-toggle" id="mode-toggle" title="Plan = the AI only drafts a plan. Work = the AI does the tasks.">
+          <button type="button" class="mode-btn" data-mode="plan" id="mode-plan-btn">Plan</button>
+          <button type="button" class="mode-btn active" data-mode="work" id="mode-work-btn">Work</button>
+        </div>
+        <button type="button" class="ghost small" id="attach-btn" title="Attach a file — the AI will read it (txt, md, csv, json, docx, xlsx, pptx)">📎 Attach</button>
+        <input type="file" id="file-input" multiple style="display:none;">
+      </div>
+    </div>
+  </aside>
+
+  <!-- CENTER: Canvas / Output tabs -->
+  <main class="center">
+    <div class="tabs">
+      <button class="tab active" data-tab="canvas">Canvas</button>
+      <button class="tab" data-tab="org">Org</button>
+      <button class="tab" data-tab="output">Output<span class="dot"></span></button>
+      <div class="spacer"></div>
+      <span class="canvas-count" id="canvas-count"></span>
+    </div>
+
+    <div class="canvas-body" id="tab-canvas">
+      <div id="flow-container" class="flow-container"></div>
+    </div>
+
+    <div class="canvas-body hidden" id="tab-org">
+      <div class="tree-viz" id="org-tree">
+        <div class="tree-empty">
+          <h3>No Company selected</h3>
+          <div>Create a Company in the right sidebar, describe what you're building, and the CEO will propose an org chart. Once applied, every CEO / Supervisor / specialist shows up here as a tree.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="canvas-body hidden" id="tab-output">
+      <div class="pending-actions-panel" id="pending-actions-panel" style="display:none;">
+        <div class="pending-actions-head">
+          <span class="pa-title">Pending actions</span>
+          <span class="pa-count" id="pa-count">0</span>
+          <button class="pa-refresh" id="pa-refresh" type="button" title="Refresh">↻</button>
+        </div>
+        <div class="pending-actions-list" id="pending-actions-list"></div>
+      </div>
+      <div class="evidence-panel" id="evidence-panel" style="display:none;">
+        <div class="evidence-toggle" id="evidence-toggle"></div>
+        <div class="evidence-list" id="evidence-list"></div>
+      </div>
+      <div class="output-history" id="output-history" style="display:none;">
+        <div class="oh-head">
+          <span class="oh-title">Past outputs</span>
+          <button class="pa-refresh" id="oh-refresh" type="button" title="Refresh">↻</button>
+        </div>
+        <div class="oh-list" id="oh-list"></div>
+      </div>
+      <div class="result-panel">
+        <div class="result-body" id="result-body">
+          <div class="result-empty">No output yet — send a task to your team and it will show up here.</div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Employee configuration. Appended to body-level markup rather than
+       inside a tab, so a progress poll that re-renders a tree can never
+       tear the open modal out from under the founder. -->
+  <div class="emp-modal-backdrop" id="emp-modal" hidden>
+    <div class="emp-modal" role="dialog" aria-modal="true" aria-labelledby="emp-modal-title">
+      <div class="emp-modal-head">
+        <div>
+          <div class="emp-modal-title" id="emp-modal-title">Employee</div>
+          <div class="emp-modal-sub" id="emp-modal-sub"></div>
+        </div>
+        <button class="emp-x" id="emp-close" type="button" title="Close">&times;</button>
+      </div>
+
+      <div class="emp-tabs" id="emp-tabs">
+        <button class="emp-tab active" type="button" data-etab="prompt">System prompt</button>
+        <button class="emp-tab" type="button" data-etab="behaviour">Behaviour</button>
+        <button class="emp-tab" type="button" data-etab="tools">Tools</button>
+      </div>
+
+      <div class="emp-modal-body" id="emp-modal-body">
+
+        <!-- ---------- SYSTEM PROMPT ---------- -->
+        <div class="emp-pane" id="epane-prompt">
+          <div class="emp-label">What this employee actually runs on
+            <span class="emp-prov" id="emp-rendered-count"></span>
+          </div>
+          <pre class="emp-rendered" id="emp-rendered">Loading…</pre>
+          <div class="emp-hint">Rendered by the same code the real run uses. Runtime context
+            (fetched pages, teammates' work, memory) is appended below this at run time.</div>
+
+          <div class="emp-label" style="margin-top:18px;">Your prompt — replaces the block above
+            <span class="emp-prov" id="emp-prompt-count"></span>
+          </div>
+          <textarea class="emp-input emp-ta emp-mono" id="emp-prompt" rows="14"></textarea>
+          <div class="emp-actions-inline">
+            <button class="emp-btn-ghost" id="emp-prompt-reset" type="button">Reset to default</button>
+            <span class="emp-hint">Placeholders: {role} {mandate} {task} {domain_rules}</span>
+          </div>
+          <div class="emp-warn">This replaces the entire instruction block, including the
+            do-not-fabricate line. The mechanical guards &mdash; compute gate, source ledger,
+            number-provenance and hand-back checks &mdash; run outside the prompt and are
+            unaffected by anything you write here.</div>
+        </div>
+
+        <!-- ---------- BEHAVIOUR ---------- -->
+        <div class="emp-pane hidden" id="epane-behaviour">
+          <label class="emp-label">Role
+            <input class="emp-input" id="emp-role" type="text" />
+          </label>
+          <div class="emp-hint">Role text also decides which specialist is assigned computation
+            and which tools rank first. Renaming changes behaviour.</div>
+
+          <label class="emp-label">Mandate &mdash; what only this employee owns
+            <textarea class="emp-input emp-ta" id="emp-mandate" rows="3"></textarea>
+          </label>
+
+          <label class="emp-label">Standing rules &mdash; one per line, applied to every task
+            <textarea class="emp-input emp-ta" id="emp-rules" rows="4"
+              placeholder="always use adjusted close&#10;execute on T+1, never same-bar&#10;252 trading days"></textarea>
+          </label>
+
+          <div class="emp-label">How strictly it stays in its lane</div>
+          <div class="emp-radios" id="emp-collab">
+            <label><input type="radio" name="collab" value="team">
+              <b>Team</b> &mdash; do only its own part, skip work that belongs to another role</label>
+            <label><input type="radio" name="collab" value="flexible">
+              <b>Flexible</b> &mdash; stay in lane, but never refuse work its required outputs demand</label>
+            <label><input type="radio" name="collab" value="solo">
+              <b>Solo</b> &mdash; no teammates exist; do the whole job itself</label>
+          </div>
+
+          <div class="emp-label">Required outputs &mdash; refuses to finish without these</div>
+          <div class="emp-checks" id="emp-required">
+            <label><input type="checkbox" value="executed_code"> must actually execute code and print a result</label>
+            <label><input type="checkbox" value="fetched_url"> must actually fetch a live page or dataset</label>
+            <label><input type="checkbox" value="file_written"> must actually produce a file that exists on disk</label>
+          </div>
+
+          <button class="emp-adv-toggle" id="emp-adv-toggle" type="button">Limits &#9656;</button>
+          <div class="emp-advanced" id="emp-advanced" hidden>
+            <div class="emp-grid">
+              <label class="emp-label">Max steps <span class="emp-prov" id="prov-max_steps"></span>
+                <input class="emp-input" id="emp-max-steps" type="number" min="1" max="60" />
+              </label>
+              <label class="emp-label">Time budget (s) <span class="emp-prov" id="prov-deadline_seconds"></span>
+                <input class="emp-input" id="emp-deadline" type="number" min="10" max="900" />
+              </label>
+              <label class="emp-label">Tokens per step <span class="emp-prov" id="prov-step_max_tokens"></span>
+                <input class="emp-input" id="emp-step-tokens" type="number" min="100" max="4000" />
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- ---------- TOOLS ---------- -->
+        <div class="emp-pane hidden" id="epane-tools">
+          <div class="emp-label">Everything this employee can reach
+            <span class="emp-prov" id="emp-tool-count"></span>
+          </div>
+          <div class="emp-hint" id="emp-tool-scope"></div>
+          <div id="emp-tool-groups"></div>
+
+          <div class="emp-label" style="margin-top:20px;">Connect another tool</div>
+          <div class="emp-radios" id="emp-conn-kind">
+            <label><input type="radio" name="connkind" value="http" checked>
+              <b>HTTP API</b> &mdash; any endpoint with a URL</label>
+            <label><input type="radio" name="connkind" value="mcp">
+              <b>MCP server</b> &mdash; Notion, Slack, anything speaking MCP over stdio</label>
+          </div>
+
+          <div id="emp-conn-http">
+            <div class="emp-grid2">
+              <label class="emp-label">Name
+                <input class="emp-input" id="conn-name" placeholder="crm_lookup" />
+              </label>
+              <label class="emp-label">Method
+                <input class="emp-input" id="conn-method" placeholder="GET" value="GET" />
+              </label>
+            </div>
+            <label class="emp-label">URL
+              <input class="emp-input" id="conn-url" placeholder="https://api.example.com/v1/customers" />
+            </label>
+            <label class="emp-label">What it does &mdash; the employee reads this to decide when to call it
+              <input class="emp-input" id="conn-desc" placeholder="Look up a customer record by email." />
+            </label>
+            <div class="emp-grid2">
+              <label class="emp-label">Auth
+                <select class="emp-input" id="conn-auth">
+                  <option value="none">None</option>
+                  <option value="bearer">Bearer token</option>
+                  <option value="api_key_header">API key header</option>
+                  <option value="basic">Basic</option>
+                </select>
+              </label>
+              <label class="emp-label">Token / key <span class="emp-prov">stored locally</span>
+                <input class="emp-input" id="conn-token" type="password" placeholder="leave blank if none" />
+              </label>
+            </div>
+          </div>
+
+          <div id="emp-conn-mcp" hidden>
+            <div class="emp-grid2">
+              <label class="emp-label">Name
+                <input class="emp-input" id="mcp-name" placeholder="notion" />
+              </label>
+              <label class="emp-label">Command
+                <input class="emp-input" id="mcp-cmd" placeholder="npx" value="npx" />
+              </label>
+            </div>
+            <label class="emp-label">Arguments &mdash; space separated
+              <input class="emp-input" id="mcp-args" placeholder="-y @notionhq/notion-mcp-server" />
+            </label>
+            <div class="emp-hint">First connect downloads the server and can take ~30s.</div>
+          </div>
+
+          <div class="emp-actions-inline" style="margin-top:10px;">
+            <button class="emp-btn" id="emp-conn-add" type="button">Connect</button>
+            <span class="emp-hint" id="emp-conn-status"></span>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="emp-modal-foot">
+        <span class="emp-status" id="emp-status"></span>
+        <button class="emp-btn-ghost" id="emp-cancel" type="button">Cancel</button>
+        <button class="emp-btn" id="emp-save" type="button">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: Edit / manage employees -->
+  <aside class="right">
+    <div class="section company-section">
+      <div class="head">Company</div>
+      <div class="row">
+        <select id="company-selector"><option value="">(no Company yet)</option></select>
+      </div>
+      <div id="company-detail" style="display:none;">
+        <div style="display:flex;align-items:center;gap:6px;margin-top:4px;">
+          <span class="ceo-badge">★ CEO hired</span>
+          <span id="company-unit-count" style="font-size:11px;color:var(--text-dim);"></span>
+        </div>
+        <div class="company-purpose" id="company-purpose-display"></div>
+      </div>
+      <div class="hint" id="company-empty-hint" style="font-size:11.5px;color:var(--text-muted);line-height:1.5;">
+        Type what you want to build in the chat — e.g. <em>"build me an AI agency with market, growth, and outreach units — CEO picks the specialists."</em> The CEO will propose the whole hierarchy, and one <strong>yes</strong> hires everyone.
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="head">Unit</div>
+      <div class="session-select">
+        <select id="session-selector"></select>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="head">
+        <span>Your Team</span>
+        <span id="team-list-count" style="text-transform:none;letter-spacing:0;color:var(--text-dim);font-weight:400;font-size:11px;"></span>
+      </div>
+      <div class="team-list" id="team-list"></div>
+      <div class="hint" id="team-list-empty" style="display:none;">No employees yet — describe your project in the chat and the AI will build a team for you.</div>
+    </div>
+
+    <div class="section">
+      <div class="head">Add Employee</div>
+      <input id="new-role" type="text" placeholder="Role (e.g. Growth Lead)">
+      <textarea id="new-mandate" placeholder="Mandate — what they own on this team"></textarea>
+      <button class="secondary" id="add-btn">+ Add</button>
+    </div>
+
+    <div class="section">
+      <div class="head">
+        <span>Connectors</span>
+        <button class="ghost small" id="connectors-toggle">▾</button>
+      </div>
+      <div class="hint" id="connectors-hint">Give your team access to real tools (Notion, Slack, GitHub…) via MCP. Nothing connected yet.</div>
+      <div id="connectors-list" style="display:none;"></div>
+      <div id="connectors-form" style="display:none; margin-top:10px;">
+        <input id="conn-name" type="text" placeholder="Short name (e.g. notion)">
+        <input id="conn-command" type="text" placeholder="Command (e.g. npx)">
+        <input id="conn-args" type="text" placeholder="Args, space-separated">
+        <input id="conn-env" type="text" placeholder="ENV_VAR=value ENV_VAR2=value (optional)">
+        <button class="secondary" id="conn-add-btn">+ Connect</button>
+      </div>
+    </div>
+  </aside>
+
+</div>
+
+<script>
+const API_BASE = (window.location.protocol === 'http:' || window.location.protocol === 'https:')
+  ? window.location.origin
+  : 'http://127.0.0.1:8000';
+
+const $ = id => document.getElementById(id);
+const chatMessagesEl = $('chat-messages');
+const chatInputEl = $('chat-input');
+const flowContainer = $('flow-container');
+const teamListEl = $('team-list');
+const teamListCount = $('team-list-count');
+const teamListEmpty = $('team-list-empty');
+const sessionSelector = $('session-selector');
+const canvasCount = $('canvas-count');
+const headerEl = $('app-header');
+const headerStatus = $('header-status');
+const resultBody = $('result-body');
+
+// ---- Past outputs -------------------------------------------------
+// Every finished run stays reachable. Before this, each new run
+// overwrote the Output tab and the previous deliverable was simply gone
+// — and because the run store was memory-only, a server restart erased
+// them all. Runs now persist server-side (backend/app/chat/async_runs.py)
+// and this lists them.
+let activeRunId = null;
+
+function ohWhen(ts) {
+  if (!ts) return '';
+  const d = new Date(ts * 1000);
+  const today = new Date();
+  const sameDay = d.toDateString() === today.toDateString();
+  return sameDay
+    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+async function refreshOutputHistory() {
+  const panel = $('output-history');
+  const list = $('oh-list');
+  if (!panel || !list) return;
+  let runs = [];
+  try {
+    const data = await api('GET', '/api/runs?limit=50');
+    runs = (data && data.runs) || [];
+  } catch (e) {
+    panel.style.display = 'none';
+    return;
+  }
+  if (!runs.length) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+  list.innerHTML = runs.map(r => {
+    const cls = 'oh-item' + (r.id === activeRunId ? ' active' : '')
+      + (r.status === 'failed' ? ' failed' : '');
+    const label = escapeHtml(r.task || '(untitled task)');
+    return `<div class="${cls}" data-run-id="${escapeHtml(r.id)}" title="${label}">
+      <span class="oh-when">${ohWhen(r.finished_at)}</span>
+      <span class="oh-task">${label}</span>
+    </div>`;
+  }).join('');
+  list.querySelectorAll('.oh-item').forEach(el => {
+    el.addEventListener('click', () => openPastRun(el.dataset.runId));
+  });
+}
+
+async function openPastRun(runId) {
+  if (!runId) return;
+  try {
+    const rec = await api('GET', `/api/runs/${runId}`);
+    activeRunId = runId;
+    resultBody.classList.add('md');
+    resultBody.innerHTML = renderMarkdown(rec.output || '_(empty output)_');
+    renderEvidence(rec.evidence || []);
+    switchTab('output');
+    refreshOutputHistory();
+  } catch (e) {
+    /* a run that vanished server-side just leaves the current view alone */
+  }
+}
+
+let currentSessionId = null;
+let lastRunByRole = {};
+let progressTimer = null;
+let currentSteps = null;  // active step-list in the chat log
+
+// ------------------------------------------------------------
+// API helper
+async function api(method, path, body) {
+  const res = await fetch(API_BASE + path, {
+    method,
+    headers: body ? { 'Content-Type': 'application/json' } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `${method} ${path} failed (${res.status})`);
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+// ------------------------------------------------------------
+// Chat message rendering
+// Self-contained markdown -> HTML renderer. Handles the shapes real
+// deliverables use: headings, tables (GFM), bold/italic, ordered +
+// unordered lists, inline + fenced code, links, hr, blockquote.
+// Purposely NOT a full CommonMark parser — no image/reference/nested
+// list support. The output is HTML injected inside a .md container so
+// its CSS wraps every element.
+function renderMarkdown(md) {
+  if (!md) return '';
+  const lines = String(md).replace(/\r\n/g, '\n').split('\n');
+  const out = [];
+  let listStack = []; // stack of 'ul' | 'ol'
+  const closeAllLists = () => { while (listStack.length) out.push(`</${listStack.pop()}>`); };
+
+  const escapeHtml = (s) => String(s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+
+  const renderInline = (s) => {
+    let x = escapeHtml(s);
+    // Inline code first — protects contents from further processing
+    const codeSlots = [];
+    x = x.replace(/`([^`]+)`/g, (m, code) => {
+      const idx = codeSlots.length;
+      codeSlots.push(`<code>${code}</code>`);
+      return `C${idx}`;
+    });
+    // Bold  **text**
+    x = x.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+    // Italic  *text* — negative-look tricks kept simple; runs after bold
+    x = x.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
+    // Links  [text](url)
+    x = x.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, txt, url) => {
+      const safe = /^(https?:|mailto:|#|\/)/i.test(url) ? url : '#';
+      return `<a href="${safe}" target="_blank" rel="noopener">${txt}</a>`;
+    });
+    // Restore inline code
+    x = x.replace(/C(\d+)/g, (m, i) => codeSlots[parseInt(i, 10)]);
+    return x;
+  };
+
+  let i = 0;
+  while (i < lines.length) {
+    let line = lines[i];
+
+    // Fenced code block
+    if (line.trim().startsWith('```')) {
+      closeAllLists();
+      const lang = line.trim().slice(3).trim();
+      i++;
+      const buf = [];
+      while (i < lines.length && !lines[i].trim().startsWith('```')) { buf.push(lines[i]); i++; }
+      const cls = lang ? ` class="lang-${escapeHtml(lang)}"` : '';
+      out.push(`<pre><code${cls}>${escapeHtml(buf.join('\n'))}</code></pre>`);
+      i++; // skip closing ```
+      continue;
+    }
+
+    // GFM table: header line, separator line, then data rows
+    if (line.trim().startsWith('|') && i + 1 < lines.length &&
+        /^\s*\|[\s:\-|]+\|\s*$/.test(lines[i + 1])) {
+      closeAllLists();
+      const splitCells = (row) => row.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+      const headers = splitCells(line);
+      i += 2;
+      const rows = [];
+      while (i < lines.length && lines[i].trim().startsWith('|')) { rows.push(splitCells(lines[i])); i++; }
+      let t = '<table><thead><tr>';
+      headers.forEach(h => { t += `<th>${renderInline(h)}</th>`; });
+      t += '</tr></thead><tbody>';
+      rows.forEach(cells => {
+        t += '<tr>';
+        cells.forEach(c => { t += `<td>${renderInline(c)}</td>`; });
+        t += '</tr>';
+      });
+      t += '</tbody></table>';
+      out.push(t);
+      continue;
+    }
+
+    // Headings
+    let m = line.match(/^\s*(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (m) {
+      closeAllLists();
+      const level = m[1].length;
+      out.push(`<h${level}>${renderInline(m[2])}</h${level}>`);
+      i++; continue;
+    }
+
+    // Horizontal rule
+    if (/^\s*(?:-{3,}|_{3,}|\*{3,})\s*$/.test(line)) {
+      closeAllLists();
+      out.push('<hr>');
+      i++; continue;
+    }
+
+    // Blockquote
+    if (/^\s*>\s?/.test(line)) {
+      closeAllLists();
+      const buf = [];
+      while (i < lines.length && /^\s*>\s?/.test(lines[i])) {
+        buf.push(lines[i].replace(/^\s*>\s?/, ''));
+        i++;
+      }
+      out.push(`<blockquote>${renderInline(buf.join(' '))}</blockquote>`);
+      continue;
+    }
+
+    // Ordered list item
+    m = line.match(/^\s*\d+\.\s+(.+)$/);
+    if (m) {
+      if (listStack[listStack.length - 1] !== 'ol') { closeAllLists(); out.push('<ol>'); listStack.push('ol'); }
+      out.push(`<li>${renderInline(m[1])}</li>`);
+      i++; continue;
+    }
+
+    // Unordered list item
+    m = line.match(/^\s*[-*+]\s+(.+)$/);
+    if (m) {
+      if (listStack[listStack.length - 1] !== 'ul') { closeAllLists(); out.push('<ul>'); listStack.push('ul'); }
+      out.push(`<li>${renderInline(m[1])}</li>`);
+      i++; continue;
+    }
+
+    // Blank line — close open lists, otherwise skip
+    if (!line.trim()) {
+      closeAllLists();
+      i++; continue;
+    }
+
+    // Paragraph — merge subsequent non-blank, non-block lines
+    closeAllLists();
+    const buf = [line];
+    i++;
+    while (i < lines.length) {
+      const l = lines[i];
+      if (!l.trim()) break;
+      if (/^\s*#{1,6}\s+/.test(l)) break;
+      if (l.trim().startsWith('|')) break;
+      if (l.trim().startsWith('```')) break;
+      if (/^\s*(?:-{3,}|_{3,}|\*{3,})\s*$/.test(l)) break;
+      if (/^\s*\d+\.\s+/.test(l)) break;
+      if (/^\s*[-*+]\s+/.test(l)) break;
+      if (/^\s*>\s?/.test(l)) break;
+      buf.push(l);
+      i++;
+    }
+    out.push(`<p>${renderInline(buf.join(' '))}</p>`);
+  }
+  closeAllLists();
+  return out.join('\n');
+}
+
+function appendMessage(role, text, className) {
+  const msg = document.createElement('div');
+  msg.className = 'msg ' + role + (className ? ' ' + className : '');
+  // Assistant replies are frequently markdown (proposals, headings,
+  // tables). Render them. User messages stay plain — the founder isn't
+  // trying to inject HTML at themselves.
+  if (role === 'assistant') {
+    msg.classList.add('md');
+    msg.innerHTML = renderMarkdown(text);
+  } else {
+    msg.textContent = text;
+  }
+  chatMessagesEl.appendChild(msg);
+  chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+  saveChatHistory(role, text);
+  return msg;
+}
+
+// ---- Chat + selection persistence (localStorage) ----------------
+// Founder reloads the page, prior chat is still there — like Claude
+// or ChatGPT. Also persist currentCompanyId + currentSessionId so
+// reload restores focus.
+const CHAT_KEY = 'vision_ai_chat_history_v1';
+const SELECTION_KEY = 'vision_ai_selection_v1';
+const CHAT_MAX_MESSAGES = 200;
+
+function saveChatHistory(role, text) {
+  try {
+    const arr = JSON.parse(localStorage.getItem(CHAT_KEY) || '[]');
+    arr.push({ role, text, ts: Date.now() });
+    if (arr.length > CHAT_MAX_MESSAGES) arr.splice(0, arr.length - CHAT_MAX_MESSAGES);
+    localStorage.setItem(CHAT_KEY, JSON.stringify(arr));
+  } catch (e) { /* quota exceeded — silently drop */ }
+}
+
+function clearChatHistory() {
+  localStorage.removeItem(CHAT_KEY);
+}
+
+function restoreChatHistory() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(CHAT_KEY) || '[]');
+    if (!arr.length) return;
+    const emptyState = chatMessagesEl.querySelector('.chat-empty');
+    if (emptyState) emptyState.remove();
+    // Replay without re-saving each one — bypass appendMessage's save
+    arr.forEach(entry => {
+      const msg = document.createElement('div');
+      msg.className = 'msg ' + entry.role;
+      if (entry.role === 'assistant') {
+        msg.classList.add('md');
+        msg.innerHTML = renderMarkdown(entry.text);
+      } else {
+        msg.textContent = entry.text;
+      }
+      chatMessagesEl.appendChild(msg);
+    });
+    chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+  } catch (e) { /* corrupt storage — ignore */ }
+}
+
+function saveSelection() {
+  try {
+    localStorage.setItem(SELECTION_KEY, JSON.stringify({
+      company_id: currentCompanyId || null,
+      session_id: currentSessionId || null,
+    }));
+  } catch (e) {}
+}
+
+function readSelection() {
+  try { return JSON.parse(localStorage.getItem(SELECTION_KEY) || '{}'); }
+  catch (e) { return {}; }
+}
+
+function appendStatusWithSteps(text, steps) {
+  // Assistant status message with a checklist of steps below
+  const msg = document.createElement('div');
+  msg.className = 'msg assistant status';
+  const label = document.createElement('div');
+  label.textContent = text;
+  const stepsWrap = document.createElement('div');
+  stepsWrap.className = 'msg-steps';
+  steps.forEach((s, i) => {
+    const step = document.createElement('div');
+    step.className = 'step';
+    step.dataset.role = s;
+    const icon = document.createElement('span');
+    icon.className = 'icon';
+    const lbl = document.createElement('span');
+    lbl.textContent = s;
+    step.appendChild(icon);
+    step.appendChild(lbl);
+    stepsWrap.appendChild(step);
+  });
+  msg.appendChild(label);
+  msg.appendChild(stepsWrap);
+  chatMessagesEl.appendChild(msg);
+  chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+  currentSteps = stepsWrap;
+  return msg;
+}
+
+function updateStep(role, phase) {
+  if (!currentSteps) return;
+  currentSteps.querySelectorAll('.step').forEach(step => {
+    if (step.dataset.role === role) {
+      step.classList.remove('working', 'done');
+      if (phase === 'working') step.classList.add('working');
+      if (phase === 'done') step.classList.add('done');
+    }
+  });
+}
+
+function clearChat() {
+  chatMessagesEl.innerHTML = `
+    <div class="chat-empty">
+      Type what you want to get done. The AI will design your team, show you who they are, and get to work — all right here.
+    </div>`;
+  currentSteps = null;
+}
+
+// ------------------------------------------------------------
+// Team rendering (center canvas + right panel list)
+function initials(role) {
+  return role.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
+}
+
+// ==================================================================
+// Shared tree renderer. Takes a tree spec:
+//   {
+//     title:     "Fundraising Ops",
+//     subtitle:  "Optional purpose text",
+//     root:      { role: 'CEO', kind: 'root' },
+//     children:  [ { role: 'Supervisor A', kind: 'supervisor',
+//                    children: [ { role: 'Specialist 1' } ] }, ... ]
+//   }
+// Every node may also carry: { tag, onDelete, meta }
+// Renders SVG branches + HTML nodes into `container` (must be
+// position: relative). Returns nothing — caller sets container size /
+// manages lifecycle. Nodes get data-role="<role>" so external code
+// (progress polling, deletion) can find them.
+// ==================================================================
+const TREE_SVGNS = 'http://www.w3.org/2000/svg';
+
+// Attach mouse-drag + wheel-to-horizontal-scroll behavior to a tree
+// container. Idempotent — safe to call every render; only wires once
+// per container (dataset flag).
+function enableTreePan(container) {
+  if (container.dataset.panWired === '1') return;
+  container.dataset.panWired = '1';
+  let isDown = false, startX = 0, startY = 0, startScrollLeft = 0, startScrollTop = 0;
+  container.addEventListener('mousedown', (e) => {
+    // Don't hijack clicks on interactive children (delete buttons etc.)
+    //
+    // `[role="button"]` matters as much as the real tags: an employee
+    // node is a DIV, so `closest('button')` misses it and this handler
+    // ate the whole interaction — mousedown fired, then preventDefault
+    // plus the drag-scroll meant mouseup landed elsewhere and the
+    // browser never synthesised a click at all. Clicking an employee
+    // silently did nothing, while a scripted .click() worked fine,
+    // which is exactly the combination that makes this hard to spot.
+    if (e.target.closest('button, a, input, textarea, select, [role="button"]')) return;
+    isDown = true;
+    container.classList.add('dragging');
+    startX = e.pageX;
+    startY = e.pageY;
+    startScrollLeft = container.scrollLeft;
+    startScrollTop  = container.scrollTop;
+    e.preventDefault();
+  });
+  const stop = () => { isDown = false; container.classList.remove('dragging'); };
+  window.addEventListener('mouseup', stop);
+  window.addEventListener('mouseleave', stop);
+  window.addEventListener('mousemove', (e) => {
+    if (!isDown) return;
+    container.scrollLeft = startScrollLeft - (e.pageX - startX);
+    container.scrollTop  = startScrollTop  - (e.pageY - startY);
+  });
+  // Mouse wheel → horizontal scroll when there's overflow-x and the
+  // tree isn't taller than the viewport. Shift+wheel always horizontal.
+  container.addEventListener('wheel', (e) => {
+    const canScrollX = container.scrollWidth > container.clientWidth;
+    if (!canScrollX) return;
+    if (e.shiftKey || Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+      container.scrollLeft += (e.deltaY || e.deltaX);
+      e.preventDefault();
+    }
+  }, { passive: false });
+}
+
+
+function renderTreeInto(container, tree) {
+  container.innerHTML = '';
+  container.classList.add('tree-viz');
+  enableTreePan(container);
+
+  // Header (title + subtitle)
+  if (tree.title || tree.subtitle) {
+    const head = document.createElement('div');
+    head.className = 'tree-title';
+    if (tree.title) {
+      const t = document.createElement('div');
+      t.className = 'tree-title-name';
+      t.textContent = tree.title;
+      head.appendChild(t);
+    }
+    if (tree.subtitle) {
+      const s = document.createElement('div');
+      s.className = 'tree-title-sub';
+      s.textContent = tree.subtitle;
+      head.appendChild(s);
+    }
+    container.appendChild(head);
+  }
+
+  if (!tree.root) {
+    const empty = document.createElement('div');
+    empty.className = 'tree-empty';
+    empty.innerHTML = tree.emptyHtml
+      || '<h3>Empty</h3><div>Nothing to show yet.</div>';
+    container.appendChild(empty);
+    return;
+  }
+
+  // Flatten the tree into (node, level, parentRef) triples so we can
+  // compute layout in a single pass.
+  const levels = [[tree.root]];
+  tree.root.children = tree.root.children || tree.children || [];
+  const walk = (arr, depth) => {
+    if (!arr.length) return;
+    levels[depth] = arr;
+    const nextArr = [];
+    for (const n of arr) for (const c of (n.children || [])) { c._parent = n; nextArr.push(c); }
+    if (nextArr.length) walk(nextArr, depth + 1);
+  };
+  tree.root._parent = null;
+  walk([tree.root], 0);
+
+  const depth = levels.length;
+  // Vertical layout — evenly divide the container height.
+  // For depth=2 we want [15, 75]. For depth=3: [10, 45, 82]. For depth=4: [8, 34, 60, 86].
+  const yFor = (i) => depth === 1 ? 50
+                    : depth === 2 ? (i === 0 ? 22 : 78)
+                    : (10 + (i * (78 / (depth - 1))));
+  levels.forEach((arr, i) => arr.forEach(n => { n._y = yFor(i); }));
+
+  // Horizontal layout — LEAF-WEIGHTED. A Unit with 3 specialists gets
+  // 3x the horizontal band of a Unit with 1. Prevents crushing wide
+  // subtrees when siblings are narrow.
+  // 1) Bottom-up: assign each node a weight = its leaf count (or 1 if leaf).
+  (function assignWeight(n) {
+    if (!n.children || !n.children.length) { n._w = 1; return 1; }
+    n._w = n.children.reduce((s, c) => s + assignWeight(c), 0);
+    return n._w;
+  })(tree.root);
+  // 2) Top-down: give the root the full band, split it among children
+  //    proportionally to weight.
+  tree.root._bandStart = 3;
+  tree.root._bandEnd = 97;
+  (function layoutBand(n) {
+    n._x = (n._bandStart + n._bandEnd) / 2;
+    const kids = n.children || [];
+    if (!kids.length) return;
+    const totalW = kids.reduce((s, c) => s + c._w, 0);
+    const bandW  = n._bandEnd - n._bandStart;
+    let cursor = n._bandStart;
+    for (const c of kids) {
+      const share = (c._w / totalW) * bandW;
+      c._bandStart = cursor;
+      c._bandEnd   = cursor + share;
+      cursor += share;
+      layoutBand(c);
+    }
+  })(tree.root);
+
+  // Height: 92px per level of depth + top/bottom padding
+  const heightPx = Math.max(240, 100 + depth * 92);
+
+  // Width: give the ROOT's total leaf weight ~180px per leaf. The band
+  // spans 94% of the container (from x=3 to x=97), so per-leaf space is
+  // (band / total_leaves) × container_width. Solve for container_width
+  // so per-leaf ≥ MIN_PX_PER_LEAF, and use that as the tree-inner min.
+  const MIN_PX_PER_LEAF = 180;
+  const totalLeaves = tree.root._w || 1;
+  const bandFraction = (97 - 3) / 100;   // 0.94
+  const minInnerWidth = Math.max(
+    280,
+    Math.ceil(totalLeaves * MIN_PX_PER_LEAF / bandFraction)
+  );
+
+  const inner = document.createElement('div');
+  inner.className = 'tree-inner';
+  inner.style.height = heightPx + 'px';
+  inner.style.minWidth = minInnerWidth + 'px';
+  container.appendChild(inner);
+
+  const svg = document.createElementNS(TREE_SVGNS, 'svg');
+  svg.setAttribute('class', 'tree-lines');
+  svg.setAttribute('viewBox', '0 0 100 100');
+  svg.setAttribute('preserveAspectRatio', 'none');
+  inner.appendChild(svg);
+
+  // Draw all branches first (so nodes render on top of them).
+  const allNodes = levels.flat();
+  for (const n of allNodes) {
+    if (!n._parent) continue;
+    const p = n._parent;
+    const midY = (p._y + n._y) / 2;
+    const path = document.createElementNS(TREE_SVGNS, 'path');
+    path.setAttribute('class', 'branch show');
+    path.setAttribute(
+      'd',
+      `M ${p._x} ${p._y} C ${p._x} ${midY}, ${n._x} ${midY}, ${n._x} ${n._y}`
+    );
+    svg.appendChild(path);
+  }
+
+  // Draw nodes.
+  for (const n of allNodes) {
+    const el = document.createElement('div');
+    const classes = ['tree-node'];
+    if (n.kind) classes.push(n.kind);
+    // Bring over any status classes derived from progress polling
+    if (n.stateClasses) classes.push(...n.stateClasses);
+    el.className = classes.join(' ');
+    el.style.left = n._x + '%';
+    el.style.top  = n._y + '%';
+    el.dataset.role = n.role;
+    if (n.meta) el.title = n.meta;
+    // Click-to-configure. Only nodes backed by a real Employee record
+    // are clickable — a pseudo-root or a node whose id didn't survive
+    // the tree mapping would open a modal onto nothing.
+    // The delete button above stops propagation, so removing an
+    // employee never also opens its settings.
+    if (n.employee_id) {
+      el.dataset.employeeId = n.employee_id;
+      el.classList.add('is-configurable');
+      // role/tabindex so the node reads and behaves as the button it is:
+      // without them it is an unfocusable div that screen readers and
+      // keyboard users cannot reach, and nothing signals it is clickable.
+      el.setAttribute('role', 'button');
+      el.setAttribute('tabindex', '0');
+      const open = () => openEmployeeConfig(n.employee_id, n.role);
+      el.addEventListener('click', open);
+      el.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); open(); }
+      });
+    }
+
+    const dot = document.createElement('span'); dot.className = 'tn-dot';
+    const name = document.createElement('span'); name.className = 'tn-name'; name.textContent = n.role;
+    el.appendChild(dot); el.appendChild(name);
+    if (n.tag) {
+      const tag = document.createElement('span'); tag.className = 'tn-tag'; tag.textContent = '· ' + n.tag;
+      el.appendChild(tag);
+    }
+    if (n.onDelete) {
+      const del = document.createElement('button');
+      del.className = 'tn-del'; del.type = 'button';
+      del.textContent = '×'; del.title = 'Remove this employee';
+      del.onclick = (ev) => { ev.stopPropagation(); n.onDelete(); };
+      el.appendChild(del);
+    }
+    inner.appendChild(el);
+  }
+
+  // Auto-center: if the tree is wider than the container, scroll so
+  // the root sits at the horizontal centre of the viewport. Without
+  // this, a wide tree loads with the root left-of-centre and the right
+  // half of the roster cut off — the founder can't find the pan
+  // affordance without the scrollbar being obvious.
+  // Runs synchronously (forces layout via scrollWidth read) AND again
+  // after a rAF, so it's robust to (a) initial layout not settled yet
+  // and (b) fonts being loaded async and reshuffling widths.
+  const centerRoot = () => {
+    const overflow = container.scrollWidth - container.clientWidth;
+    if (overflow <= 0) return;
+    const rootCenterPx = inner.getBoundingClientRect().width * 0.5;
+    container.scrollLeft = Math.max(0, rootCenterPx - container.clientWidth / 2);
+  };
+  centerRoot();
+  requestAnimationFrame(centerRoot);
+}
+
+
+function renderTeam(members) {
+  // Canvas tab — session-level tree (this Unit's Supervisor +
+  // specialists). Right-sidebar team list is populated separately below.
+  canvasCount.textContent = members.length
+    ? `${members.length} employee${members.length===1?'':'s'}`
+    : '';
+
+  const supervisor = members.find(m => m.is_supervisor);
+  const specialists = members.filter(m => !m.is_supervisor);
+
+  if (!supervisor && !specialists.length) {
+    renderTreeInto(flowContainer, {
+      emptyHtml: '<h3>No employees on this team yet</h3><div>Send a message in the chat on the left. The AI will design a team and show it here as a visual tree.</div>',
+    });
+  } else {
+    // Turn each member into a tree node, threading in the fabrication
+    // state we already tracked in `lastRunByRole`.
+    const stateFor = (role) => {
+      const meta = lastRunByRole[role];
+      if (!meta) return [];
+      const s = ['has-result'];
+      if ((meta.fabricated_claims || []).length) s.push('has-fabrication');
+      return s;
+    };
+    const metaFor = (role) => {
+      const meta = lastRunByRole[role];
+      if (!meta) return '';
+      const fabCount = (meta.fabricated_claims || []).length;
+      const fab = fabCount ? `⚠ ${fabCount} fabricated` : '✓ clean';
+      return `completeness ${meta.completeness_score ?? 'n/a'} · ${fab}`;
+    };
+
+    const rootNode = supervisor
+      ? {
+          role: supervisor.role,
+          kind: 'root',
+          tag: 'Supervisor',
+          meta: supervisor.mandate,
+          employee_id: supervisor.employee_id,
+          stateClasses: stateFor(supervisor.role),
+          children: specialists.map(s => ({
+            role: s.role,
+            tag: '',
+            meta: s.mandate + (metaFor(s.role) ? ' · ' + metaFor(s.role) : ''),
+            employee_id: s.employee_id,
+            stateClasses: stateFor(s.role),
+            onDelete: () => removeMember(s.role),
+          })),
+        }
+      // No supervisor (shouldn't normally happen — safety fallback):
+      // treat the first specialist as pseudo-root so the tree still renders.
+      : {
+          role: specialists[0].role,
+          kind: 'root',
+          tag: '',
+          children: specialists.slice(1).map(s => ({
+            role: s.role, onDelete: () => removeMember(s.role),
+            meta: s.mandate,
+          })),
+        };
+
+    renderTreeInto(flowContainer, {
+      root: rootNode,
+    });
+  }
+
+  // Right panel: compact list — Supervisor first, no delete button
+  teamListEl.innerHTML = '';
+  teamListCount.textContent = members.length ? `${members.length}` : '';
+  teamListEmpty.style.display = members.length ? 'none' : 'block';
+  const sortedList = [...members].sort((a, b) => (b.is_supervisor ? 1 : 0) - (a.is_supervisor ? 1 : 0));
+  sortedList.forEach(m => {
+    const item = document.createElement('div');
+    item.className = 'team-list-item';
+    if (m.is_supervisor) item.classList.add('is-supervisor');
+    const avatar = document.createElement('div');
+    avatar.className = 'mini-avatar';
+    avatar.textContent = m.is_supervisor ? '★' : initials(m.role);
+    const role = document.createElement('div');
+    role.className = 'role'; role.textContent = m.role;
+    item.appendChild(avatar);
+    item.appendChild(role);
+    if (!m.is_supervisor) {
+      const del = document.createElement('button');
+      del.className = 'icon'; del.textContent = '×';
+      del.onclick = () => removeMember(m.role);
+      item.appendChild(del);
+    }
+    teamListEl.appendChild(item);
+  });
+}
+
+// ------------------------------------------------------------
+// Sessions
+async function refreshSessions() {
+  const sessions = await api('GET', '/api/sessions');
+  sessionSelector.innerHTML = '';
+  if (!sessions.length) {
+    const opt = document.createElement('option');
+    opt.value = ''; opt.textContent = '(none)';
+    sessionSelector.appendChild(opt);
+  } else {
+    sessions.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s.session_id;
+      opt.textContent = `${s.session_id.replace('session_', '')} · ${s.member_count} member${s.member_count===1?'':'s'}`;
+      sessionSelector.appendChild(opt);
+    });
+    if (currentSessionId) sessionSelector.value = currentSessionId;
+  }
+  return sessions;
+}
+
+async function selectSession(id) {
+  currentSessionId = id;
+  lastRunByRole = {};
+  // Note: no longer clearChat() here. Chat is app-level and persists
+  // across selections; switching between Units doesn't wipe the log.
+  // The founder taps "Clear" if they want a fresh window.
+  switchTab('canvas');
+  await refreshSessions();
+  sessionSelector.value = id;
+  await loadTeam(id);
+  saveSelection();
+}
+
+async function loadTeam(sessionId) {
+  const data = await api('GET', `/api/sessions/${sessionId}/team`);
+  renderTeam(data.members);
+}
+
+async function newSession() {
+  // "+ New" = HARD RESET. Nothing from past sessions bleeds through:
+  // chat wiped, Company deselected, Unit deselected, Team hidden,
+  // saved localStorage state cleared. No server-side session gets
+  // created here — nothing is real until the founder types something.
+  clearChatHistory();       // wipes localStorage chat
+  clearChat();              // resets DOM chat area to empty state
+  currentCompanyId = null;
+  currentCompanyMeta = null;
+  currentSessionId = null;
+  currentProposal = null;
+  try { localStorage.removeItem(SELECTION_KEY); } catch (_) {}
+  companySelector.value = '';
+  companyDetailEl.style.display = 'none';
+  if (companyEmptyHint) companyEmptyHint.style.display = '';
+  // Blank the Unit dropdown so no old session is auto-selected
+  sessionSelector.innerHTML = '<option value="">(no Unit)</option>';
+  // Blank the team list
+  const teamList = $('team-list');
+  if (teamList) teamList.innerHTML = '';
+  const teamEmpty = $('team-list-empty');
+  if (teamEmpty) teamEmpty.style.display = '';
+  const teamCount = $('team-list-count');
+  if (teamCount) teamCount.textContent = '';
+  // Reset chat target badge + placeholder
+  refreshChatTargetBadge();
+  // Return to Canvas tab (empty state) — no output to show
+  switchTab('canvas');
+  const flow = $('flow-container');
+  if (flow) flow.innerHTML = '';
+  // Result body / evidence panel — clean slate
+  resultBody.classList.remove('md');
+  resultBody.innerHTML = '<div class="result-empty">No output yet — send a task to your team and it will show up here.</div>';
+  renderEvidence([]);
+}
+
+// ------------------------------------------------------------
+// Progress polling
+function applyProgressToCards(progress) {
+  const doneMap = {};
+  (progress.completed || []).forEach(c => { doneMap[c.role] = c; });
+
+  // Canvas now renders as .tree-node (Supervisor is .root .tree-node,
+  // specialists are plain .tree-node). Each carries data-role="<role>"
+  // set by the shared renderer so we can find them cheaply.
+  document.querySelectorAll('.tree-node').forEach(card => {
+    const role = card.dataset.role;
+    if (!role) return;
+    card.classList.remove('is-working', 'has-result', 'has-fabrication');
+    if (progress.current_role === role) {
+      card.classList.add('is-working');
+      updateStep(role, 'working');
+    } else if (doneMap[role]) {
+      const meta = doneMap[role];
+      lastRunByRole[role] = meta;
+      card.classList.add('has-result');
+      const fabCount = (meta.fabricated_claims || []).length;
+      if (fabCount) card.classList.add('has-fabrication');
+      updateStep(role, 'done');
+      // Roll the score + fabrication-count into the hover tooltip
+      // (there's no dedicated metadata line on a tree-node).
+      const fabLabel = fabCount ? `⚠ ${fabCount} fabricated` : '✓ clean';
+      const base = card.title.split(' · ')[0] || '';
+      card.title = base
+        ? `${base} · completeness ${meta.completeness_score ?? 'n/a'} · ${fabLabel}`
+        : `completeness ${meta.completeness_score ?? 'n/a'} · ${fabLabel}`;
+    }
+  });
+
+  if (progress.phase === 'role_working' && progress.current_role) {
+    headerStatus.textContent = `${progress.current_role} is working…`;
+  } else if (progress.phase === 'synthesizing') {
+    headerStatus.textContent = 'Merging everyone\'s work…';
+  } else if (progress.phase === 'starting') {
+    headerStatus.textContent = 'Kicking off the team…';
+  }
+}
+
+async function pollProgress() {
+  if (!currentSessionId) return;
+  try {
+    const p = await api('GET', `/api/sessions/${currentSessionId}/progress`);
+    applyProgressToCards(p);
+    if (p.phase === 'complete' || p.phase === 'error' || p.phase === 'idle') {
+      if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
+    }
+  } catch (e) { /* silent */ }
+}
+function startProgressPolling() {
+  if (progressTimer) clearInterval(progressTimer);
+  progressTimer = setInterval(pollProgress, 2000);
+  pollProgress();
+}
+function stopProgressPolling() {
+  if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
+}
+
+function setBusy(busy, msg) {
+  document.querySelectorAll('button').forEach(b => b.disabled = busy);
+  headerEl.classList.toggle('busy', busy);
+  headerStatus.textContent = busy ? (msg || 'Working…') : '';
+}
+
+// Escalating busy label — swaps text as time passes so a long-running
+// run doesn't look frozen at "Understanding…". Any subsequent
+// setBusy(true, ...) call cancels the escalation and shows its own
+// label; setBusy(false) clears everything.
+let _busyEscalationTimer = null;
+function startBusyEscalation(steps) {
+  stopBusyEscalation();
+  let i = 0;
+  const tick = () => {
+    if (i >= steps.length) return;
+    const step = steps[i++];
+    setBusy(true, step.label);
+    _busyEscalationTimer = setTimeout(tick, step.after_ms || 6000);
+  };
+  tick();
+}
+function stopBusyEscalation() {
+  if (_busyEscalationTimer) {
+    clearTimeout(_busyEscalationTimer);
+    _busyEscalationTimer = null;
+  }
+}
+
+// Poll a background run kicked off by /api/chat until it finishes.
+// Non-blocking — chat stays usable. Escalating busy label + subtle
+// header status so the founder sees this is a live long-running job,
+// not a stuck request. Runs concurrently: multiple polls at once are
+// fine because each poll only touches its own run_id.
+const _activePolls = new Map(); // run_id -> intervalId
+function startRunPolling(runId, opts = {}) {
+  if (_activePolls.has(runId)) return; // already polling
+  const started = Date.now();
+  const intervalMs = 4000;
+  appendMessage('assistant', `Background run started (${runId}). Deliverable will pop onto the Output tab when ready.`);
+  const tick = async () => {
+    let rec;
+    try {
+      rec = await api('GET', `/api/runs/${encodeURIComponent(runId)}`);
+    } catch (err) {
+      // Transient — keep polling. Real errors surface as failed status.
+      return;
+    }
+    if (rec.status === 'done') {
+      clearInterval(_activePolls.get(runId));
+      _activePolls.delete(runId);
+      resultBody.classList.add('md');
+      resultBody.innerHTML = renderMarkdown(rec.output || '_(empty output)_');
+      activeRunId = runId;
+      refreshOutputHistory();
+      renderEvidence(rec.evidence || []);
+      fetchPendingActions();
+      switchTab('output');
+      const secs = Math.round((Date.now() - started) / 1000);
+      appendMessage('assistant', `Done in ${secs}s. Full deliverable is on the Output tab.`);
+      return;
+    }
+    if (rec.status === 'failed') {
+      clearInterval(_activePolls.get(runId));
+      _activePolls.delete(runId);
+      appendMessage('assistant', `Run failed: ${rec.error || 'unknown error'}`);
+      return;
+    }
+    // still queued or running — update a lightweight status hint in the header
+    const elapsed = Math.round((Date.now() - started) / 1000);
+    if (!_busyEscalationTimer) {
+      headerStatus.textContent = `Run in progress · ${elapsed}s`;
+    }
+  };
+  const iv = setInterval(tick, intervalMs);
+  _activePolls.set(runId, iv);
+  tick(); // fire once immediately so the first status shows fast
+}
+
+// ------------------------------------------------------------
+// The main "send a message" flow — this is what the chat does
+async function sendMessage() {
+  const text = chatInputEl.value.trim();
+  if (!text && !attachedFiles.length) return;
+
+  chatInputEl.value = '';
+  chatInputEl.style.height = 'auto';
+
+  const emptyState = chatMessagesEl.querySelector('.chat-empty');
+  if (emptyState) emptyState.remove();
+
+  // Fold attached files' extracted content into what the AI actually
+  // sees, but keep the chat bubble showing what the founder typed
+  // (plus a note of which files were attached) — the raw preview dump
+  // would be unreadable noise in the transcript.
+  let effectiveText = text;
+  if (attachedFiles.length) {
+    const blocks = attachedFiles.map(f =>
+      `[Attached file: ${f.filename}]\n---\n${f.preview}\n---`
+    ).join('\n\n');
+    effectiveText = text ? `${blocks}\n\n${text}` : blocks;
+  }
+  const displayText = attachedFiles.length
+    ? `${text}${text ? '\n' : ''}📎 ${attachedFiles.map(f => f.filename).join(', ')}`
+    : text;
+
+  appendMessage('user', displayText);
+  attachedFiles = [];
+  renderAttachedFiles();
+
+  try {
+    // Router calls can be fast (casual_chat, add_unit) or take many
+    // minutes (run_task_company cascades a whole pipeline). We don't
+    // know which until the response comes back, so escalate the busy
+    // label over time — "Understanding…" that never changes reads as
+    // "frozen" even when the backend is actively working.
+    startBusyEscalation([
+      { label: 'Understanding…', after_ms: 5000 },
+      { label: 'Model is thinking — this may take a while.', after_ms: 15000 },
+      { label: 'Still working — long reports run 30s to a few minutes.', after_ms: 30000 },
+      { label: 'Deep work in progress — do not close the tab.', after_ms: 60000 },
+      { label: 'Company-level runs can take 15–30 minutes on gpt-oss.', after_ms: 120000 },
+      { label: 'Still going. Watch the browser tab title for updates.' },
+    ]);
+
+    // ONE endpoint above Unit + Company altitudes. Router picks the
+    // intent from the message + current selection and does the right
+    // thing. Everything below is just plumbing the side_effects back
+    // into the UI — no mode toggles, no wrong-path errors.
+    const chatRes = await api('POST', `/api/chat`, {
+      message: effectiveText,
+      current_company_id: currentCompanyId || null,
+      current_session_id: currentSessionId || null,
+      mode: chatMode,
+    });
+
+    appendMessage('assistant', chatRes.reply);
+
+    const fx = chatRes.side_effects || {};
+    let refreshedCompanies = false;
+    let refreshedOrg = false;
+
+    if (fx.company_id) {
+      // A Company was created or focused — pull the list, select it,
+      // update sidebar detail + org tree.
+      await refreshCompanies();
+      companySelector.value = fx.company_id;
+      await selectCompany(fx.company_id);
+      refreshedCompanies = true;
+    }
+
+    if (fx.pending_proposal) {
+      // The CEO's proposal is already in the chat reply text —
+      // nothing extra to render on the sidebar in v1.
+      currentProposal = fx.pending_proposal.units || null;
+    }
+
+    if (fx.applied_units && fx.applied_units.length) {
+      // Fresh Units were materialized — refresh sessions, refresh the
+      // org tree, and auto-select the first new Unit so Canvas has
+      // real content (Supervisor + specialists as horizontal cards)
+      // instead of a stale placeholder.
+      await refreshSessions();
+      if (fx.company_id) await selectCompany(fx.company_id);
+      const firstUnitId = fx.applied_units[0].unit_id;
+      if (firstUnitId) {
+        await selectSession(firstUnitId);
+      }
+      switchTab('org');
+      refreshedOrg = true;
+    }
+
+    if (fx.session_id && !(fx.applied_units && fx.applied_units.length)) {
+      // The router auto-created (or focused) a Unit — load its team into
+      // Canvas so the founder sees who's on the case.
+      if (fx.session_id !== currentSessionId) {
+        await selectSession(fx.session_id);
+      } else {
+        // Same session, but team may have changed — refresh Canvas cards
+        const teamNow = await api('GET', `/api/sessions/${currentSessionId}/team`);
+        renderTeam(teamNow.members || []);
+      }
+    }
+
+    if (fx.run_output != null) {
+      resultBody.classList.add('md');
+      resultBody.innerHTML = renderMarkdown(fx.run_output || '_(empty output)_');
+      refreshOutputHistory();
+      renderEvidence(fx.evidence || []);
+      fetchPendingActions();
+      switchTab('output');
+    }
+
+    if (fx.run_id) {
+      // Background run kicked off — client polls until done, then
+      // renders the deliverable on the Output tab. Chat is free to
+      // continue in the meantime.
+      startRunPolling(fx.run_id);
+    }
+
+    if (fx.org_refreshed && !refreshedOrg) {
+      await refreshOrgTree();
+    }
+
+    // If nothing more interesting happened but a Company is now
+    // selected, keep the sidebar in sync with any Unit-count change.
+    if (fx.company_id && !fx.applied_units?.length && !fx.run_output) {
+      // (selectCompany already ran above when company_id was set)
+    }
+    refreshChatTargetBadge();
+
+    stopBusyEscalation();
+    setBusy(false);
+    return;
+  } catch (e) {
+    stopBusyEscalation();
+    appendMessage('assistant', 'Something went wrong: ' + e.message);
+    setBusy(false);
+    return;
+  } finally {
+    stopProgressPolling();
+    stopBusyEscalation();
+    setBusy(false);
+  }
+}
+
+async function addMember() {
+  const role = $('new-role').value.trim();
+  const mandate = $('new-mandate').value.trim();
+  if (!role || !mandate) { appendMessage('assistant', 'Both role and mandate are required to add an employee.'); return; }
+  if (!currentSessionId) await newSession();
+  setBusy(true, 'Adding…');
+  try {
+    const data = await api('POST', `/api/sessions/${currentSessionId}/team/members`, { role, mandate });
+    renderTeam(data.members);
+    await refreshSessions();
+    sessionSelector.value = currentSessionId;
+    $('new-role').value = '';
+    $('new-mandate').value = '';
+    appendMessage('assistant', `Added ${role} to your team.`);
+  } catch (e) {
+    appendMessage('assistant', 'Error adding: ' + e.message);
+  } finally { setBusy(false); }
+}
+
+async function removeMember(role) {
+  if (!currentSessionId) return;
+  if (!confirm(`Remove "${role}" from this team?`)) return;
+  setBusy(true, 'Removing…');
+  try {
+    const data = await api('DELETE', `/api/sessions/${currentSessionId}/team/members/${encodeURIComponent(role)}`);
+    delete lastRunByRole[role];
+    renderTeam(data.members);
+    await refreshSessions();
+    sessionSelector.value = currentSessionId;
+    appendMessage('assistant', `Removed ${role} from your team.`);
+  } catch (e) {
+    appendMessage('assistant', 'Error removing: ' + e.message);
+  } finally { setBusy(false); }
+}
+
+/* ---------------- Employee configuration modal ----------------
+   Settings that change how one employee behaves at run time. Every
+   field here maps to an observed failure, not a hypothetical knob:
+   the lane posture resolves a contradiction where the prompt told a
+   specialist to skip work the compute gate demanded; required outputs
+   let a role own a guarantee instead of re-earning it from the task
+   wording each run; standing rules put domain standards where the
+   agentic loop can see them, since the loop never sees the mandate. */
+
+let empModalState = null;   // { id, role, dirty, loaded }
+
+// Fallback only. The real prompt comes from the server so the founder is
+// never editing a copy that has drifted from what the model receives;
+// this is what "Reset to default" writes when that fetch failed.
+const EMP_DEFAULT_PROMPT_HINT =
+  'You are the {role} on this project team.\n\n' +
+  'Your mandate — what only you are responsible for:\n{mandate}\n\n' +
+  'Task the whole team is working on:\n{task}\n\n' +
+  'Do the part of this task that belongs to your role, and only your part.\n' +
+  'If a piece of the task belongs to a different role on this team, say so\n' +
+  'briefly and skip it — do not do work outside your mandate.\n\n' +
+  'Do not fabricate specific statistics, survey results, or claims that\n' +
+  'work has already been completed. If you don\'t know a real number,\n' +
+  'describe things qualitatively (unless the web results below give you a\n' +
+  'real one).';
+
+function updatePromptCount() {
+  // Shown because the founder asked for a high prompt context length —
+  // seeing the size is how you know you actually have the room.
+  const n = ($('emp-prompt').value || "").length;
+  const el = $('emp-prompt-count');
+  if (el) el.textContent = n.toLocaleString() + ' chars';
+}
+
+function empSetStatus(msg, isError) {
+  const el = $('emp-status');
+  el.textContent = msg || '';
+  el.style.color = isError ? 'var(--danger)' : 'var(--text-muted)';
+}
+
+function empShowTab(name) {
+  document.querySelectorAll('.emp-tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.etab === name));
+  ['prompt', 'behaviour', 'tools'].forEach(p =>
+    $('epane-' + p).classList.toggle('hidden', p !== name));
+  $('emp-modal-body').scrollTop = 0;
+}
+
+// ---- tools -----------------------------------------------------------
+
+const EMP_TOOL_GROUP_LABELS = {
+  action: ['Built-in actions', 'email, browser, code, files — always available'],
+  mcp: ['Connected MCP servers', 'anything you have plugged in'],
+  custom: ['Your HTTP tools', 'endpoints you registered yourself'],
+};
+
+async function renderToolCatalogue() {
+  const wrap = $('emp-tool-groups');
+  wrap.innerHTML = '<div class="emp-hint">Loading…</div>';
+  let data;
+  try {
+    data = await api('GET', '/api/tools');
+  } catch (e) {
+    wrap.innerHTML = '';
+    $('emp-tool-scope').textContent = 'Could not load tools: ' + e.message;
+    return;
+  }
+  $('emp-tool-count').textContent = data.total + ' available';
+  $('emp-tool-scope').textContent = data.scope || '';
+  wrap.innerHTML = '';
+
+  for (const key of ['action', 'mcp', 'custom']) {
+    const tools = (data.groups || {})[key] || [];
+    const [label, sub] = EMP_TOOL_GROUP_LABELS[key];
+    const g = document.createElement('div');
+    g.className = 'emp-tool-group';
+    const head = document.createElement('div');
+    head.className = 'emp-tool-group-head';
+    head.innerHTML = escapeHtml(label) + ' <span>' +
+      (tools.length ? escapeHtml(sub) : 'none connected yet') + '</span>';
+    g.appendChild(head);
+
+    tools.forEach(t => {
+      const row = document.createElement('div');
+      row.className = 'emp-tool';
+      const code = document.createElement('code');
+      code.textContent = t.qualified_name;
+      const p = document.createElement('p');
+      p.textContent = t.description || '';
+      row.appendChild(code);
+      row.appendChild(p);
+      if (t.mutating) {
+        // Worth calling out: these are the ones that stop for approval.
+        const m = document.createElement('span');
+        m.className = 'emp-mut';
+        m.textContent = 'asks first';
+        m.title = 'Mutating — queues for your approval before it fires';
+        row.appendChild(m);
+      }
+      g.appendChild(row);
+    });
+    wrap.appendChild(g);
+  }
+}
+
+async function connectTool() {
+  const kind = (document.querySelector('#emp-conn-kind input:checked') || {}).value;
+  const status = $('emp-conn-status');
+  const setS = (m, err) => {
+    status.textContent = m || '';
+    status.style.color = err ? 'var(--danger)' : 'var(--text-muted)';
+  };
+  $('emp-conn-add').disabled = true;
+  setS('Connecting…');
+  try {
+    if (kind === 'mcp') {
+      const name = $('mcp-name').value.trim();
+      if (!name) throw new Error('Name is required.');
+      await api('POST', '/api/connectors', {
+        name,
+        transport: 'stdio',
+        command: $('mcp-cmd').value.trim() || 'npx',
+        args: $('mcp-args').value.trim().split(/\s+/).filter(Boolean),
+        env: {},
+      });
+    } else {
+      const name = $('conn-name').value.trim();
+      const url = $('conn-url').value.trim();
+      if (!name || !url) throw new Error('Name and URL are both required.');
+      const authType = $('conn-auth').value;
+      const token = $('conn-token').value.trim();
+      const body = {
+        name,
+        description: $('conn-desc').value.trim() || ('Call ' + url),
+        method: ($('conn-method').value.trim() || 'GET').toUpperCase(),
+        url,
+        parameters: [],
+      };
+      if (authType !== 'none' && token) body.auth = { type: authType, token };
+      await api('POST', '/api/http-tools', body);
+    }
+    setS('Connected — it is now available to every employee.');
+    ['conn-name', 'conn-url', 'conn-desc', 'conn-token', 'mcp-name', 'mcp-args']
+      .forEach(id => { if ($(id)) $(id).value = ''; });
+    await renderToolCatalogue();
+  } catch (e) {
+    setS(e.message, true);
+  } finally {
+    $('emp-conn-add').disabled = false;
+  }
+}
+
+// ---- open / save -----------------------------------------------------
+
+async function openEmployeeConfig(employeeId, roleHint) {
+  empModalState = { id: employeeId, role: roleHint || '', dirty: false, loaded: {} };
+  $('emp-modal').hidden = false;
+  $('emp-modal-title').textContent = roleHint || 'Employee';
+  $('emp-modal-sub').textContent = 'Loading…';
+  $('emp-rendered').textContent = 'Loading…';
+  empSetStatus('');
+  empShowTab('prompt');
+  $('emp-advanced').hidden = true;
+  $('emp-adv-toggle').textContent = 'Limits ▸';
+
+  let emp, eff, prompt;
+  try {
+    [emp, eff, prompt] = await Promise.all([
+      api('GET', `/api/employees/${encodeURIComponent(employeeId)}`),
+      api('GET', `/api/employees/${encodeURIComponent(employeeId)}/effective-config`),
+      api('GET', `/api/employees/${encodeURIComponent(employeeId)}/system-prompt`)
+        .catch(() => null),
+    ]);
+  } catch (e) {
+    $('emp-modal-sub').textContent = '';
+    empSetStatus('Could not load: ' + e.message, true);
+    return;
+  }
+
+  const s = (eff && eff.settings) || {};
+  const cfg = emp.config || {};
+  empModalState.role = emp.role;
+  $('emp-modal-title').textContent = emp.role;
+  $('emp-modal-sub').textContent =
+    (emp.is_supervisor ? 'Supervisor · ' : 'Employee · ') + employeeId;
+
+  // What the model really receives, straight from the server.
+  const rendered = prompt ? prompt.rendered : '(could not render — showing the template)';
+  $('emp-rendered').textContent = rendered;
+  $('emp-rendered-count').textContent = prompt
+    ? prompt.chars.toLocaleString() + ' chars' + (prompt.is_custom ? ' · yours' : ' · default')
+    : '';
+
+  // The editable box starts from whatever it actually runs on, so a
+  // founder edits rather than writes from scratch — writing from scratch
+  // is how the anti-fabrication line gets dropped by accident.
+  empModalState.defaultPrompt =
+    (prompt && !prompt.is_custom) ? prompt.rendered : EMP_DEFAULT_PROMPT_HINT;
+  $('emp-prompt').value = cfg.prompt_override || empModalState.defaultPrompt;
+  updatePromptCount();
+
+  $('emp-role').value = emp.role || '';
+  $('emp-mandate').value = emp.mandate || '';
+
+  // The RESOLVED posture, so the founder sees what it actually runs with:
+  // when required outputs promoted team→flexible, showing the stored
+  // "team" would misrepresent their own employee.
+  const collab = (s.effective_collaboration && s.effective_collaboration.value) || 'team';
+  document.querySelectorAll('#emp-collab input').forEach(r => {
+    r.checked = (r.value === collab);
+  });
+
+  const required = (s.required_outputs && s.required_outputs.value) || [];
+  document.querySelectorAll('#emp-required input').forEach(c => {
+    c.checked = required.includes(c.value);
+  });
+
+  $('emp-rules').value = ((s.domain_rules && s.domain_rules.value) || []).join('\n');
+  $('emp-max-steps').value = s.max_steps ? s.max_steps.value : '';
+  $('emp-deadline').value = s.deadline_seconds ? s.deadline_seconds.value : '';
+  $('emp-step-tokens').value = s.step_max_tokens ? s.step_max_tokens.value : '';
+
+  // Remember what was LOADED and where it came from, so save can tell a
+  // value the founder chose from one merely displayed. Without this,
+  // opening the modal and pressing Save would pin all three budgets as
+  // explicit overrides and the employee would stop tracking the defaults.
+  empModalState.loaded = {
+    max_steps: { value: $('emp-max-steps').value, from: (s.max_steps || {}).from },
+    deadline_seconds: { value: $('emp-deadline').value, from: (s.deadline_seconds || {}).from },
+    step_max_tokens: { value: $('emp-step-tokens').value, from: (s.step_max_tokens || {}).from },
+  };
+
+  ['max_steps', 'deadline_seconds', 'step_max_tokens'].forEach(k => {
+    const chip = $('prov-' + k);
+    if (!chip) return;
+    const from = (s[k] && s[k].from) || 'default';
+    chip.textContent = from === 'employee' ? 'set here'
+      : from === 'default' ? 'default'
+      : from.replace('template:', 'from ');
+  });
+
+  renderToolCatalogue();
+}
+
+function closeEmployeeConfig(force) {
+  if (!force && empModalState && empModalState.dirty) {
+    if (!confirm('Discard unsaved changes to this employee?')) return;
+  }
+  $('emp-modal').hidden = true;
+  empModalState = null;
+}
+
+async function saveEmployeeConfig() {
+  if (!empModalState) return;
+  const id = empModalState.id;
+  const collabEl = document.querySelector('#emp-collab input:checked');
+  const required = [...document.querySelectorAll('#emp-required input:checked')]
+    .map(c => c.value);
+  const rules = $('emp-rules').value.split('\n')
+    .map(r => r.trim()).filter(Boolean);
+  const promptVal = $('emp-prompt').value.trim();
+
+  // A budget is only SET if the founder changed it, or it was already
+  // set on this employee. Left as loaded from a default it goes as null
+  // — "keep inheriting" — so the employee tracks the shared value.
+  const num = (el, key) => {
+    const v = $(el).value.trim();
+    const was = (empModalState.loaded || {})[key] || {};
+    if (v === '') return null;
+    if (v === was.value && was.from !== 'employee') return null;
+    return Number(v);
+  };
+
+  const body = {
+    role: $('emp-role').value.trim(),
+    mandate: $('emp-mandate').value.trim(),
+    config: {
+      collaboration: collabEl ? collabEl.value : 'team',
+      required_outputs: required,
+      domain_rules: rules,
+      // Storing the unedited default as an override would freeze a copy
+      // of today's wording onto this employee forever — it would stop
+      // tracking every future improvement to the shared prompt.
+      prompt_override: (promptVal && promptVal !== (empModalState.defaultPrompt || '').trim())
+        ? promptVal : null,
+      budget: {
+        max_steps: num('emp-max-steps', 'max_steps'),
+        deadline_seconds: num('emp-deadline', 'deadline_seconds'),
+        step_max_tokens: num('emp-step-tokens', 'step_max_tokens'),
+      },
+    },
+  };
+
+  $('emp-save').disabled = true;
+  empSetStatus('Saving…');
+  try {
+    await api('PATCH', `/api/employees/${encodeURIComponent(id)}`, body);
+    empModalState.dirty = false;
+    empSetStatus('Saved');
+    if (currentSessionId) await loadTeam(currentSessionId);
+    if (!$('tab-org').classList.contains('hidden')) await refreshOrgTree();
+    setTimeout(() => closeEmployeeConfig(true), 350);
+  } catch (e) {
+    empSetStatus(e.message, true);
+  } finally {
+    $('emp-save').disabled = false;
+  }
+}
+
+function wireEmployeeModal() {
+  $('emp-close').onclick = () => closeEmployeeConfig();
+  $('emp-cancel').onclick = () => closeEmployeeConfig();
+  $('emp-save').onclick = saveEmployeeConfig;
+  $('emp-conn-add').onclick = connectTool;
+
+  document.querySelectorAll('.emp-tab').forEach(t => {
+    t.onclick = () => empShowTab(t.dataset.etab);
+  });
+  document.querySelectorAll('#emp-conn-kind input').forEach(r => {
+    r.onchange = () => {
+      $('emp-conn-http').hidden = (r.value !== 'http');
+      $('emp-conn-mcp').hidden = (r.value !== 'mcp');
+    };
+  });
+
+  $('emp-adv-toggle').onclick = () => {
+    const adv = $('emp-advanced');
+    adv.hidden = !adv.hidden;
+    $('emp-adv-toggle').textContent = adv.hidden ? 'Limits ▸' : 'Limits ▾';
+  };
+  $('emp-prompt-reset').onclick = () => {
+    $('emp-prompt').value = empModalState
+      ? (empModalState.defaultPrompt || EMP_DEFAULT_PROMPT_HINT)
+      : EMP_DEFAULT_PROMPT_HINT;
+    updatePromptCount();
+    if (empModalState) empModalState.dirty = true;
+  };
+  $('emp-prompt').addEventListener('input', updatePromptCount);
+
+  $('emp-modal').addEventListener('click', (ev) => {
+    if (ev.target === $('emp-modal')) closeEmployeeConfig();
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && !$('emp-modal').hidden) closeEmployeeConfig();
+  });
+  $('emp-modal-body').addEventListener('input', () => {
+    if (empModalState) empModalState.dirty = true;
+  });
+  $('emp-modal-body').addEventListener('change', () => {
+    if (empModalState) empModalState.dirty = true;
+  });
+}
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.tab === name);
+    if (t.dataset.tab === name) t.classList.remove('has-new');
+  });
+  $('tab-canvas').classList.toggle('hidden', name !== 'canvas');
+  $('tab-org').classList.toggle('hidden', name !== 'org');
+  $('tab-output').classList.toggle('hidden', name !== 'output');
+  if (name === 'org') refreshOrgTree();
+}
+
+const evidencePanel = $('evidence-panel');
+const evidenceToggle = $('evidence-toggle');
+const evidenceList = $('evidence-list');
+let evidenceOpen = false;
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+const EVIDENCE_BADGE = {
+  verified: '✅',
+  flagged_unknown: '⚠️',
+  unsourced_claim: '❗',
+  // A citation to a URL this run never opened. Ranked worse than
+  // 'unsourced' on purpose: an uncited guess looks like a guess, while a
+  // fabricated citation buys trust it hasn't earned.
+  fabricated_source: '🚫',
+};
+
+// Evidence ledger — renders the structured claims list a deliverable's
+// evidence extraction produced, as visible chips + an expandable list,
+// instead of leaving verification status buried in prose. Hidden
+// entirely when there's nothing to show (e.g. the interim team-hired
+// report, or a deliverable with zero extractable claims).
+function renderEvidence(claims) {
+  claims = Array.isArray(claims) ? claims : [];
+  if (!claims.length) {
+    evidencePanel.style.display = 'none';
+    evidenceList.classList.remove('open');
+    evidenceToggle.classList.remove('open');
+    evidenceOpen = false;
+    return;
+  }
+
+  const counts = { verified: 0, flagged_unknown: 0, unsourced_claim: 0, fabricated_source: 0 };
+  claims.forEach(c => { if (c.status in counts) counts[c.status]++; });
+
+  evidenceToggle.innerHTML = `
+    <span>Evidence</span>
+    <span class="chip verified">✅ ${counts.verified} verified</span>
+    <span class="chip unknown">⚠️ ${counts.flagged_unknown} unknown</span>
+    ${counts.unsourced_claim ? `<span class="chip unsourced">❗ ${counts.unsourced_claim} unsourced</span>` : ''}
+    ${counts.fabricated_source ? `<span class="chip unsourced">🚫 ${counts.fabricated_source} fake citation</span>` : ''}
+    <span class="caret">▾</span>
+  `;
+
+  evidenceList.innerHTML = claims.map(c => {
+    const badge = EVIDENCE_BADGE[c.status] || '•';
+    const rowClass = (c.status === 'unsourced_claim' || c.status === 'fabricated_source') ? ' unsourced' : '';
+    const source = c.source
+      ? `<a class="source" href="${escapeHtml(c.source)}" target="_blank" rel="noopener">${escapeHtml(c.source)}</a>`
+      : '';
+    return `<div class="evidence-row${rowClass}">
+      <span class="badge">${badge}</span>
+      <span class="text">${escapeHtml(c.text)}${source}</span>
+    </div>`;
+  }).join('');
+
+  evidencePanel.style.display = '';
+  // Default open only when there's something worth flagging immediately —
+  // an unsourced claim is the one case a user should see without an extra click.
+  evidenceOpen = counts.unsourced_claim > 0 || counts.fabricated_source > 0;
+  evidenceList.classList.toggle('open', evidenceOpen);
+  evidenceToggle.classList.toggle('open', evidenceOpen);
+}
+
+$('oh-refresh') && $('oh-refresh').addEventListener('click', refreshOutputHistory);
+
+evidenceToggle.addEventListener('click', () => {
+  evidenceOpen = !evidenceOpen;
+  evidenceList.classList.toggle('open', evidenceOpen);
+  evidenceToggle.classList.toggle('open', evidenceOpen);
+});
+
+// Pending actions — the DOING layer's front door. When a specialist
+// calls a mutating action (send_email, post_slack, write_file), the
+// backend queues it here and returns a receipt. The founder taps
+// Approve to actually fire it. Poll every 8s; also fetch right after
+// any run.
+const pendingPanel = $('pending-actions-panel');
+const pendingList = $('pending-actions-list');
+const pendingCount = $('pa-count');
+
+// Action types where a REAL browser window is open right now, actively
+// waiting on the founder — found via a real session where a
+// browser_login_wait item sat unnoticed for the full 10-minute timeout
+// because nothing distinguished it from an ordinary "approve this
+// email" item. These get the urgent pulsing style + a plain-English
+// name instead of the raw action_name.
+const URGENT_ACTION_NAMES = new Set(['browser_login_wait', 'browser_submit']);
+const ACTION_DISPLAY_NAMES = {
+  browser_login_wait: '⏳ Log in now — browser window is open',
+  browser_submit: '⏳ Review before it submits',
+};
+
+function renderPendingActions(items) {
+  items = Array.isArray(items) ? items : [];
+  // Show only the last ~20 to avoid a wall of history; pending first.
+  const sorted = [...items].sort((a, b) => {
+    if (a.status === 'pending' && b.status !== 'pending') return -1;
+    if (b.status === 'pending' && a.status !== 'pending') return 1;
+    return (b.created_at || 0) - (a.created_at || 0);
+  }).slice(0, 20);
+  const pendingN = items.filter(i => i.status === 'pending').length;
+  pendingCount.textContent = pendingN;
+  if (!sorted.length) {
+    pendingPanel.style.display = 'none';
+    return;
+  }
+  pendingPanel.style.display = '';
+  pendingList.innerHTML = sorted.map(a => {
+    const status = a.status || 'pending';
+    const isUrgent = status === 'pending' && URGENT_ACTION_NAMES.has(a.action_name);
+    const displayName = ACTION_DISPLAY_NAMES[a.action_name] || a.action_name;
+    const buttons = status === 'pending'
+      ? `<div class="pa-buttons">
+           <button class="pa-btn approve" data-id="${escapeHtml(a.id)}" data-op="approve">Approve</button>
+           <button class="pa-btn reject" data-id="${escapeHtml(a.id)}" data-op="reject">Reject</button>
+         </div>`
+      : `<span class="pa-status">${escapeHtml(status)}</span>`;
+    const detail = status === 'executed' && a.result
+      ? `<div class="pa-preview" style="color:var(--ok)">✓ ${escapeHtml(String(a.result).slice(0, 200))}</div>`
+      : status === 'failed' && a.error
+      ? `<div class="pa-preview" style="color:var(--danger)">✗ ${escapeHtml(String(a.error).slice(0, 200))}</div>`
+      : '';
+    return `<div class="pa-row ${escapeHtml(status)}${isUrgent ? ' urgent' : ''}">
+      <div class="pa-meta">
+        <span class="pa-action-name">${escapeHtml(displayName)}</span>
+        <div class="pa-preview">${escapeHtml(a.preview || '')}</div>
+        ${detail}
+      </div>
+      ${buttons}
+    </div>`;
+  }).join('');
+}
+
+async function fetchPendingActions() {
+  try {
+    const res = await fetch('/api/pending_actions');
+    if (!res.ok) return;
+    const data = await res.json();
+    renderPendingActions(data.items || []);
+  } catch (err) { /* server may be restarting — silent */ }
+}
+
+pendingList.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.pa-btn');
+  if (!btn) return;
+  const id = btn.dataset.id;
+  const op = btn.dataset.op;
+  if (!id || !op) return;
+  // Disable both buttons on the row to prevent double-taps.
+  btn.parentElement.querySelectorAll('.pa-btn').forEach(b => { b.disabled = true; });
+  try {
+    const res = await fetch(`/api/pending_actions/${encodeURIComponent(id)}/${op}`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    // Refetch so the row re-renders with executed/failed/rejected state.
+    fetchPendingActions();
+  } catch (err) {
+    btn.parentElement.querySelectorAll('.pa-btn').forEach(b => { b.disabled = false; });
+  }
+});
+
+$('pa-refresh').addEventListener('click', fetchPendingActions);
+setInterval(fetchPendingActions, 8000);
+fetchPendingActions();
+
+// ================================================================
+// Company / CEO / hierarchy (Phase 3a UI — the "build my org chart
+// by prompt" flow that used to be curl-only).
+// ================================================================
+
+let currentCompanyId = null;
+let currentProposal = null;       // mirrors server-side pending proposal, for reference
+let currentCompanyMeta = null;    // full Company object from /api/companies/{id}
+
+const companySelector = $('company-selector');
+const companyDetailEl = $('company-detail');
+const companyEmptyHint = $('company-empty-hint');
+const chatTargetBadge = $('chat-target-badge');
+const orgTreeEl = $('org-tree');
+
+function refreshChatTargetBadge() {
+  const inCompany = !!currentCompanyMeta;
+  chatTargetBadge.classList.toggle('company-mode', inCompany);
+  chatTargetBadge.textContent = inCompany
+    ? `CEO of ${currentCompanyMeta.name}`
+    : (currentSessionId ? 'Unit' : 'No target');
+  chatInputEl.placeholder = inCompany
+    ? "Tell the CEO what to build or run. One yes hires the team."
+    : 'Type anything — build me a company, run market research, add a specialist…';
+}
+
+async function refreshCompanies() {
+  try {
+    const data = await api('GET', '/api/companies');
+    const companies = data.companies || [];
+    const prev = currentCompanyId;
+    companySelector.innerHTML = '<option value="">(no Company yet)</option>' +
+      companies.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
+    if (prev && companies.some(c => c.id === prev)) {
+      companySelector.value = prev;
+    }
+  } catch (e) {
+    console.error('refreshCompanies failed', e);
+  }
+}
+
+async function selectCompany(id) {
+  currentCompanyId = id || null;
+  currentProposal = null;
+  if (!id) {
+    companyDetailEl.style.display = 'none';
+    if (companyEmptyHint) companyEmptyHint.style.display = '';
+    currentCompanyMeta = null;
+    refreshChatTargetBadge();
+    refreshOrgTree();
+    saveSelection();
+    return;
+  }
+  try {
+    const meta = await api('GET', `/api/companies/${encodeURIComponent(id)}`);
+    currentCompanyMeta = meta;
+    $('company-purpose-display').textContent = meta.purpose || '(no purpose set)';
+    $('company-unit-count').textContent = `· ${(meta.unit_ids || []).length} Unit${(meta.unit_ids || []).length === 1 ? '' : 's'}`;
+    companyDetailEl.style.display = '';
+    if (companyEmptyHint) companyEmptyHint.style.display = 'none';
+    refreshChatTargetBadge();
+    refreshOrgTree();
+    saveSelection();
+  } catch (e) {
+    appendMessage('assistant', 'Could not load Company: ' + e.message);
+  }
+}
+
+async function refreshOrgTree() {
+  // Empty state — no Company selected.
+  if (!currentCompanyId || !currentCompanyMeta) {
+    renderTreeInto(orgTreeEl, {
+      emptyHtml: `<h3>No Company selected</h3>Create a Company in the right sidebar, describe what you're building, and the CEO will propose an org chart. Once applied, every CEO / Supervisor / specialist shows up here.`,
+    });
+    return;
+  }
+
+  const co = currentCompanyMeta;
+
+  // Pull the CEO record (best-effort — missing CEO shouldn't block the tree).
+  let ceo = null;
+  if (co.ceo_employee_id) {
+    try { ceo = await api('GET', `/api/employees/${encodeURIComponent(co.ceo_employee_id)}`); } catch (e) {}
+  }
+
+  // Pull each Unit's roster in parallel.
+  const unitEntries = await Promise.all((co.unit_ids || []).map(async (uid) => {
+    try {
+      const t = await api('GET', `/api/sessions/${encodeURIComponent(uid)}/team`);
+      return { unit_id: uid, members: t.members || [] };
+    } catch (e) {
+      return { unit_id: uid, members: [] };
+    }
+  }));
+
+  // No Units yet — render just the CEO + a nudge.
+  if (!unitEntries.length) {
+    renderTreeInto(orgTreeEl, {
+      title: co.name,
+      subtitle: co.purpose || '',
+      root: ceo
+        ? { role: ceo.role || 'CEO', kind: 'root', tag: 'CEO', meta: ceo.mandate || '' }
+        : { role: 'CEO', kind: 'root', tag: 'CEO' },
+    });
+    // Append a small hint under the empty tree.
+    const hint = document.createElement('div');
+    hint.className = 'tree-empty';
+    hint.style.padding = '10px';
+    hint.innerHTML = 'No Units yet. Ask the chat to design one — e.g. "add a Content Unit".';
+    orgTreeEl.appendChild(hint);
+    return;
+  }
+
+  // Build the 3-level tree: CEO -> Supervisor (labeled with its Unit
+  // name) -> specialists. If a Unit has no Supervisor, we fall back to
+  // a placeholder node so the branch still renders.
+  const rootRole = ceo ? (ceo.role || 'CEO') : 'CEO';
+  const rootMeta = ceo ? (ceo.mandate || '') : '';
+
+  const supervisorNodes = unitEntries.map(u => {
+    const sup = u.members.find(m => m.is_supervisor);
+    const specialists = u.members.filter(m => !m.is_supervisor);
+    // Derive a display Unit label from the supervisor role.
+    const unitLabel = sup
+      ? (sup.role.replace(/\s+Supervisor$/i, '').trim() || sup.role)
+      : 'Unit';
+    return {
+      role: sup ? sup.role : `${unitLabel} · (no Supervisor)`,
+      kind: 'supervisor',
+      tag: unitLabel,
+      meta: sup?.mandate || '',
+      employee_id: sup?.employee_id,
+      children: specialists.map(s => ({
+        role: s.role,
+        meta: s.mandate || '',
+        employee_id: s.employee_id,
+      })),
+    };
+  });
+
+  renderTreeInto(orgTreeEl, {
+    title: co.name,
+    subtitle: co.purpose || '',
+    root: {
+      role: rootRole,
+      kind: 'root',
+      tag: 'CEO',
+      meta: rootMeta,
+      employee_id: co.ceo_employee_id,
+      children: supervisorNodes,
+    },
+  });
+}
+
+// ---- Event wiring ------------------------------------------------
+// Everything creation-shaped goes through the chat now — the only
+// interactive control left in this section is the Company selector
+// (for switching between companies you've already created).
+
+companySelector.addEventListener('change', (e) => selectCompany(e.target.value));
+
+// Plan / Work mode toggle. Plan = the AI only drafts a plan (no
+// specialists run, no actions fire). Work = the AI does the tasks.
+// Persisted so a reload keeps the founder's chosen mode.
+const MODE_KEY = 'vision_ai_mode_v1';
+let chatMode = (() => {
+  try { const m = localStorage.getItem(MODE_KEY); return m === 'plan' ? 'plan' : 'work'; }
+  catch (_) { return 'work'; }
+})();
+const modePlanBtn = $('mode-plan-btn');
+const modeWorkBtn = $('mode-work-btn');
+function applyModeUI() {
+  if (modePlanBtn) modePlanBtn.classList.toggle('active', chatMode === 'plan');
+  if (modeWorkBtn) modeWorkBtn.classList.toggle('active', chatMode === 'work');
+  // Nudge the input placeholder so the mode is obvious while typing.
+  if (chatMode === 'plan') {
+    chatInputEl.placeholder = 'Plan mode — describe the goal; the AI drafts a plan, no work runs.';
+  } else {
+    chatInputEl.placeholder = 'Type anything — build me a company, run market research, add a specialist…';
+  }
+}
+function setChatMode(m) {
+  chatMode = (m === 'plan') ? 'plan' : 'work';
+  try { localStorage.setItem(MODE_KEY, chatMode); } catch (_) {}
+  applyModeUI();
+}
+if (modePlanBtn) modePlanBtn.addEventListener('click', () => setChatMode('plan'));
+if (modeWorkBtn) modeWorkBtn.addEventListener('click', () => setChatMode('work'));
+applyModeUI();
+
+// ---- File upload ---------------------------------------------------
+// Founder attaches a file; it uploads immediately (not on Send), shows
+// as a chip, and its extracted text preview gets folded into the next
+// chat message so the AI actually sees the content, not just a name.
+let attachedFiles = []; // {file_id, filename, preview, download_url, stored_path}
+
+const attachBtn = $('attach-btn');
+const fileInputEl = $('file-input');
+const attachedFilesEl = $('attached-files');
+
+if (attachBtn && fileInputEl) {
+  attachBtn.addEventListener('click', () => fileInputEl.click());
+
+  fileInputEl.addEventListener('change', async () => {
+    const files = Array.from(fileInputEl.files || []);
+    fileInputEl.value = ''; // allow re-selecting the same file later
+    for (const file of files) {
+      const chip = document.createElement('span');
+      chip.className = 'file-chip uploading';
+      chip.innerHTML = `<span class="file-chip-name">Uploading ${escapeHtml(file.name)}…</span>`;
+      attachedFilesEl.style.display = '';
+      attachedFilesEl.appendChild(chip);
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await fetch('/api/uploads', { method: 'POST', body: formData });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.detail || `upload failed (HTTP ${res.status})`);
+        }
+        const data = await res.json();
+        attachedFiles.push(data);
+        renderAttachedFiles();
+      } catch (err) {
+        chip.remove();
+        appendMessage('assistant', `Couldn't attach ${file.name}: ${err.message}`);
+        if (!attachedFiles.length) attachedFilesEl.style.display = 'none';
+      }
+    }
+  });
+}
+
+function renderAttachedFiles() {
+  if (!attachedFilesEl) return;
+  attachedFilesEl.innerHTML = '';
+  if (!attachedFiles.length) {
+    attachedFilesEl.style.display = 'none';
+    return;
+  }
+  attachedFilesEl.style.display = '';
+  attachedFiles.forEach((f, i) => {
+    const chip = document.createElement('span');
+    chip.className = 'file-chip';
+    chip.innerHTML = `<span class="file-chip-name" title="${escapeHtml(f.filename)}">📄 ${escapeHtml(f.filename)}</span><button type="button" class="file-chip-remove" data-i="${i}" title="Remove">×</button>`;
+    attachedFilesEl.appendChild(chip);
+  });
+}
+
+if (attachedFilesEl) {
+  attachedFilesEl.addEventListener('click', (e) => {
+    const btn = e.target.closest('.file-chip-remove');
+    if (!btn) return;
+    const i = parseInt(btn.dataset.i, 10);
+    attachedFiles.splice(i, 1);
+    renderAttachedFiles();
+  });
+}
+
+// Clear-chat button — nukes local chat log ONLY (does not touch Units,
+// Companies, Employees, or pending actions on the server).
+const clearChatBtn = $('clear-chat-btn');
+if (clearChatBtn) {
+  clearChatBtn.addEventListener('click', () => {
+    if (!confirm('Clear the entire chat history? This does NOT delete any Units, Companies, or Employees.')) return;
+    clearChatHistory();
+    clearChat();
+  });
+}
+
+// Boot: restore prior chat first, then restore selection so any
+// Company / Unit that was focused before the reload comes back.
+(async () => {
+  restoreChatHistory();
+  await refreshCompanies();
+  const sel = readSelection();
+  if (sel.company_id) {
+    // Only auto-select if the Company still exists on the server
+    const opts = Array.from(companySelector.options).map(o => o.value);
+    if (opts.includes(sel.company_id)) {
+      companySelector.value = sel.company_id;
+      await selectCompany(sel.company_id);
+    }
+  }
+  if (sel.session_id) {
+    try { await selectSession(sel.session_id); } catch (e) { /* stale session — ignore */ }
+  }
+})();
+
+function buildTeamHiredReport(members, task) {
+  // Fast, LLM-free "here's who I hired and what they'll do" summary —
+  // shown on the Output tab right after specialists are created so the
+  // user has something concrete to look at before the actual run
+  // finishes. Gets overwritten with the real deliverable when the run
+  // completes.
+  const supervisor = members.find(m => m.is_supervisor);
+  const specialists = members.filter(m => !m.is_supervisor);
+  const divider = '━'.repeat(56);
+  let out = '';
+  out += divider + '\n';
+  out += '  YOUR TEAM IS ON IT\n';
+  out += divider + '\n\n';
+  if (task) {
+    out += 'TASK\n';
+    const trimmed = task.length > 220 ? task.slice(0, 220) + '…' : task;
+    out += trimmed + '\n\n';
+  }
+  if (supervisor) {
+    out += '★ ' + supervisor.role + '\n';
+    out += 'Every task comes to them first. They design the delegation plan, ';
+    out += 'keep the specialists coordinated, and deliver the merged result ';
+    out += 'back to you in one voice.\n';
+  }
+  if (specialists.length) {
+    out += '\nSPECIALISTS (' + specialists.length + ')\n';
+    specialists.forEach((m, i) => {
+      out += '\n' + (i + 1) + '. ' + m.role + '\n';
+      out += '   ' + m.mandate.replace(/\n/g, '\n   ') + '\n';
+    });
+  }
+  out += '\n' + divider + '\n\n';
+  out += 'Working on it now. Watch the Canvas tab to see each specialist\n';
+  out += 'in progress — the full deliverable will replace this report here\n';
+  out += 'when the team finishes (usually a few minutes).\n';
+  return out;
+}
+
+// ------------------------------------------------------------
+// Chat input handlers
+chatInputEl.addEventListener('input', () => {
+  chatInputEl.style.height = 'auto';
+  chatInputEl.style.height = Math.min(140, chatInputEl.scrollHeight) + 'px';
+});
+chatInputEl.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+
+// ------------------------------------------------------------
+// Connectors — MCP servers the team can call as tools
+
+async function refreshConnectors() {
+  try {
+    const data = await api('GET', '/api/connectors');
+    const conns = data.connections || [];
+    const tools = data.tools || [];
+    const listEl = $('connectors-list');
+    const hintEl = $('connectors-hint');
+    listEl.innerHTML = '';
+    if (!conns.length) {
+      hintEl.textContent = 'Give your team access to real tools (Notion, Slack, GitHub…) via MCP. Nothing connected yet.';
+      hintEl.style.display = 'block';
+      listEl.style.display = 'none';
+    } else {
+      hintEl.style.display = 'none';
+      listEl.style.display = 'block';
+      // Tool counts per connection
+      const toolCountByConn = {};
+      tools.forEach(t => {
+        toolCountByConn[t.connection] = (toolCountByConn[t.connection] || 0) + 1;
+      });
+      conns.forEach(c => {
+        const item = document.createElement('div');
+        item.className = 'connector-item' + (c.enabled ? '' : ' disabled');
+        const count = toolCountByConn[c.name] || 0;
+        item.innerHTML = `
+          <div class="name">${c.name}</div>
+          <div class="tool-count">${count} tool${count===1?'':'s'}</div>
+        `;
+        const del = document.createElement('button');
+        del.className = 'icon';
+        del.textContent = '×';
+        del.title = 'Remove connector';
+        del.onclick = () => removeConnector(c.name);
+        item.appendChild(del);
+        listEl.appendChild(item);
+      });
+    }
+  } catch (e) {
+    // Silently ignore — connectors are optional
+    console.warn('Failed to refresh connectors:', e);
+  }
+}
+
+async function addConnector() {
+  const name = $('conn-name').value.trim();
+  const command = $('conn-command').value.trim();
+  const argsRaw = $('conn-args').value.trim();
+  const envRaw = $('conn-env').value.trim();
+  if (!name || !command) {
+    appendMessage('assistant', 'Connector needs at least a name and a command.');
+    return;
+  }
+  const args = argsRaw ? argsRaw.split(/\s+/) : [];
+  // Parse ENV_VAR=value ENV_VAR2=value pairs
+  const env = {};
+  if (envRaw) {
+    envRaw.split(/\s+/).forEach(pair => {
+      const eq = pair.indexOf('=');
+      if (eq > 0) env[pair.slice(0, eq)] = pair.slice(eq + 1);
+    });
+  }
+  try {
+    await api('POST', '/api/connectors', {
+      name, transport: 'stdio', command, args, env, enabled: true,
+    });
+    $('conn-name').value = '';
+    $('conn-command').value = '';
+    $('conn-args').value = '';
+    $('conn-env').value = '';
+    $('connectors-form').style.display = 'none';
+    $('connectors-toggle').textContent = '▾';
+    appendMessage('assistant', `Connected ${name}. Fetching its tools now — the team will use them automatically.`);
+    await refreshConnectors();
+  } catch (e) {
+    appendMessage('assistant', 'Connect failed: ' + e.message);
+  }
+}
+
+async function removeConnector(name) {
+  if (!confirm(`Disconnect "${name}"? Its tools will no longer be available to your team.`)) return;
+  try {
+    await api('DELETE', `/api/connectors/${encodeURIComponent(name)}`);
+    appendMessage('assistant', `Disconnected ${name}.`);
+    await refreshConnectors();
+  } catch (e) {
+    appendMessage('assistant', 'Disconnect failed: ' + e.message);
+  }
+}
+
+function toggleConnectorsForm() {
+  const form = $('connectors-form');
+  const btn = $('connectors-toggle');
+  const show = form.style.display === 'none';
+  form.style.display = show ? 'block' : 'none';
+  btn.textContent = show ? '▴' : '▾';
+}
+
+// ------------------------------------------------------------
+// Wire the rest
+$('send-btn').onclick = sendMessage;
+$('new-session-btn').onclick = newSession;
+$('add-btn').onclick = addMember;
+$('connectors-toggle').onclick = toggleConnectorsForm;
+$('conn-add-btn').onclick = addConnector;
+sessionSelector.onchange = () => { if (sessionSelector.value) selectSession(sessionSelector.value); };
+document.querySelectorAll('.tab').forEach(t => { t.onclick = () => switchTab(t.dataset.tab); });
+wireEmployeeModal();
+
+// Build stamp — compares the shell the SERVER has on disk against the
+// one this tab is running. A mismatch means the browser served a cached
+// copy, which is otherwise indistinguishable from a broken feature.
+(async function showBuild() {
+  const el = $('build-stamp');
+  if (!el) return;
+  try {
+    const b = await api('GET', '/api/build');
+    const mine = document.documentElement.outerHTML.length;
+    const stale = Math.abs(mine - b.bytes) > 2000;
+    el.textContent = stale ? 'stale — hard refresh' : ('build ' + b.built_at);
+    el.style.color = stale ? 'var(--danger)' : 'var(--text-dim)';
+    el.title = stale
+      ? 'This tab is running an older copy of the app. Press Ctrl+Shift+R.'
+      : ('App shell built at ' + b.built_at + ' (' + b.bytes + ' bytes)');
+  } catch (e) {
+    el.textContent = '';
+  }
+})();
+
+(async function init() {
+  const sessions = await refreshSessions();
+  if (sessions.length) {
+    await selectSession(sessions[0].session_id);
+  } else {
+    await newSession();
+  }
+  await refreshConnectors();
+  await refreshOutputHistory();
+})();
+</script>
+</body>
+</html>

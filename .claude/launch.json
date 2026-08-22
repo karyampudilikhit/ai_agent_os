@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "vision-ai",
+      "runtimeExecutable": "py",
+      "runtimeArgs": ["-3", "-m", "uvicorn", "backend.app.api.main:app", "--port", "8000"],
+      "port": 8000
+    }
+  ]
+}
